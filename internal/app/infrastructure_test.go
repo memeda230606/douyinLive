@@ -10,8 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	douyinLive "github.com/jwwsjlm/douyinLive/v2"
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
+	"github.com/jwwsjlm/douyinLive/v2/internal/room"
+	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
+	"github.com/jwwsjlm/douyinlive-proto/generated/new_douyin"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
@@ -26,7 +31,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if !bootstrap.Data.Ready || !bootstrap.Data.LoggingReady {
 		t.Fatalf("data status is not ready: %#v", bootstrap.Data)
 	}
-	if bootstrap.Data.SchemaVersion != 2 || bootstrap.Data.Mode != DataModeReadWrite {
+	if bootstrap.Data.SchemaVersion != 3 || bootstrap.Data.Mode != DataModeReadWrite {
 		t.Fatalf("unexpected data status: %#v", bootstrap.Data)
 	}
 	diagnosticsAvailable := false
@@ -51,7 +56,8 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 			t.Fatalf("expected artifact %q: %v", path, err)
 		}
 	}
-	if application.RoomService() == nil || application.SettingsService() == nil || application.CredentialStore() == nil || application.MonitorManager() == nil || application.CaptureCoordinator() == nil {
+	if application.RoomService() == nil || application.SettingsService() == nil || application.CredentialStore() == nil ||
+		application.MonitorManager() == nil || application.CaptureCoordinator() == nil || application.EventStoreManager() == nil {
 		t.Fatal("application services were not initialized")
 	}
 
@@ -66,11 +72,136 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(log) error = %v", err)
 	}
-	if !strings.Contains(string(logData), `"schema_version":2`) {
+	if !strings.Contains(string(logData), `"schema_version":3`) {
 		t.Fatalf("log does not contain schema version: %s", logData)
 	}
 	if strings.Contains(string(logData), root) {
 		t.Fatalf("log exposes data-root path: %s", logData)
+	}
+}
+
+func TestEventSessionDescriptorForOpenPreservesRequestClockLineage(t *testing.T) {
+	startedAt := time.Now()
+	session := capture.LiveSession{
+		ID: "session", DataPath: "rooms/room/sessions/session",
+		PlatformRoomID: "platform-room",
+		StartedAt:      startedAt.Add(-time.Hour).UnixMilli(),
+	}
+	descriptor := eventSessionDescriptorForOpen(session, capture.OpenRequest{
+		StartedAt: startedAt,
+	})
+	if descriptor.StartedAt != startedAt {
+		t.Fatalf("live started_at lost request clock lineage: got=%v want=%v",
+			descriptor.StartedAt, startedAt)
+	}
+	receivedAt := startedAt.Add(1500 * time.Millisecond)
+	if offset := receivedAt.Sub(descriptor.StartedAt); offset != 1500*time.Millisecond {
+		t.Fatalf("live offset = %v, want 1.5s", offset)
+	}
+	fallback := eventSessionDescriptorForOpen(session, capture.OpenRequest{})
+	wantFallback := time.UnixMilli(session.StartedAt).UTC()
+	if !fallback.StartedAt.Equal(wantFallback) || fallback.StartedAt.Location() != time.UTC {
+		t.Fatalf("zero request fallback = %v, want %v", fallback.StartedAt, wantFallback)
+	}
+}
+
+func TestInitializeInfrastructureAppliesSaveDisplayNames(t *testing.T) {
+	const nickname = "privacy-visible-name"
+	for _, test := range []struct {
+		name string
+		save bool
+		want string
+	}{
+		{name: "enabled", save: true, want: nickname},
+		{name: "disabled", save: false, want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			root := filepath.Join(t.TempDir(), "app-data")
+			layout, err := storage.PrepareLayout(root)
+			if err != nil {
+				t.Fatalf("PrepareLayout() error = %v", err)
+			}
+			configured, err := settings.Open(layout.ConfigDir, layout.Root, layout.RoomsDir)
+			if err != nil {
+				t.Fatalf("settings.Open() error = %v", err)
+			}
+			current, err := configured.GetSettings(ctx)
+			if err != nil {
+				t.Fatalf("GetSettings() error = %v", err)
+			}
+			if current.SaveDisplayNames != test.save {
+				_, err = configured.UpdateSettings(ctx, settings.UpdateSettingsInput{
+					RecordingDirectory:      current.RecordingDirectory,
+					DefaultQuality:          current.DefaultQuality,
+					DefaultSegmentMinutes:   current.DefaultSegmentMinutes,
+					MaxConcurrentRecordings: current.MaxConcurrentRecordings,
+					MinimumFreeSpaceGiB:     current.MinimumFreeSpaceGiB,
+					SaveDisplayNames:        test.save,
+				})
+				if err != nil {
+					t.Fatalf("UpdateSettings() error = %v", err)
+				}
+			}
+
+			application := New(Options{Name: "privacy-test", Version: "test"})
+			application.Startup(ctx)
+			if err := application.InitializeInfrastructure(ctx, InfrastructureOptions{DataRoot: root}); err != nil {
+				t.Fatalf("InitializeInfrastructure() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := application.Shutdown(context.Background()); err != nil {
+					t.Errorf("Shutdown() error = %v", err)
+				}
+			})
+
+			roomConfig, err := application.RoomService().CreateRoom(ctx, room.CreateRoomInput{
+				LiveID: "privacy-room", Alias: "privacy",
+				RecordingProfile: room.RecordingProfile{Quality: room.QualityAuto, SegmentMinutes: 10},
+			})
+			if err != nil {
+				t.Fatalf("CreateRoom() error = %v", err)
+			}
+			repository, err := capture.NewSQLiteRepository(
+				application.Store().Writer(), application.Store().Reader(), layout.Root,
+			)
+			if err != nil {
+				t.Fatalf("NewSQLiteRepository() error = %v", err)
+			}
+			session, err := repository.Create(ctx, capture.CreateSessionInput{
+				RoomConfigID: roomConfig.ID, OperationID: mustAppUUIDv7(t),
+			})
+			if err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			sink, err := application.EventStoreManager().OpenSession(ctx, eventSessionDescriptor(session))
+			if err != nil {
+				t.Fatalf("OpenSession() error = %v", err)
+			}
+			payload, err := proto.Marshal(&new_douyin.Webcast_Im_ChatMessage{
+				Common:  &new_douyin.Webcast_Im_Common{MsgId: 7001},
+				User:    &new_douyin.Webcast_Data_User{WebcastUid: "privacy-user", Nickname: nickname},
+				Content: "privacy-content",
+			})
+			if err != nil {
+				t.Fatalf("proto.Marshal() error = %v", err)
+			}
+			sink.Accept(&douyinLive.LiveMessage{
+				Raw:        &new_douyin.Webcast_Im_Message{Method: "WebcastChatMessage", Payload: payload},
+				ReceivedAt: time.UnixMilli(session.StartedAt).UTC().Add(time.Second),
+			})
+			if err := sink.FlushAndClose(ctx); err != nil {
+				t.Fatalf("FlushAndClose() error = %v", err)
+			}
+			var displayName string
+			if err := application.Store().Reader().QueryRow(`SELECT COALESCE(display_name, '')
+				FROM live_events WHERE session_id = ? AND event_role = 'source'`, session.ID).Scan(&displayName); err != nil {
+				t.Fatalf("query persisted display name: %v", err)
+			}
+			if displayName != test.want {
+				t.Fatalf("display_name = %q, want %q when saveDisplayNames=%v", displayName, test.want, test.save)
+			}
+		})
 	}
 }
 

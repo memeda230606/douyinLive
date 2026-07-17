@@ -11,6 +11,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
+	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
@@ -76,6 +77,7 @@ type Application struct {
 	settings            *settings.Service
 	monitor             *room.MonitorManager
 	coordinator         capture.CaptureCoordinator
+	events              *eventstore.Manager
 	roomStatusPublisher room.StatusPublisher
 	credentials         *credentials.FileStore
 	logFile             *diagnostics.FileLogger
@@ -122,6 +124,7 @@ func (a *Application) Startup(ctx context.Context) {
 type applicationCleanup struct {
 	cancel  context.CancelFunc
 	monitor *room.MonitorManager
+	events  *eventstore.Manager
 	store   *storage.Store
 	logFile *diagnostics.FileLogger
 	logger  *slog.Logger
@@ -144,7 +147,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 	if a.state != StateStopping {
 		a.lifecycleGeneration++
 		cleanup := applicationCleanup{
-			cancel: a.cancel, monitor: a.monitor, store: a.store,
+			cancel: a.cancel, monitor: a.monitor, events: a.events, store: a.store,
 			logFile: a.logFile, logger: a.logger, hook: a.beforeShutdownCleanup,
 		}
 		a.store = nil
@@ -152,6 +155,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		a.settings = nil
 		a.monitor = nil
 		a.coordinator = nil
+		a.events = nil
 		a.credentials = nil
 		a.logFile = nil
 		a.logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
@@ -183,6 +187,10 @@ func (a *Application) runShutdown(cleanup applicationCleanup, shutdown *applicat
 	if cleanup.monitor != nil {
 		monitorErr = cleanup.monitor.Shutdown(context.Background())
 	}
+	var eventErr error
+	if cleanup.events != nil {
+		eventErr = cleanup.events.Shutdown(context.Background())
+	}
 	if cleanup.cancel != nil {
 		cleanup.cancel()
 	}
@@ -197,7 +205,7 @@ func (a *Application) runShutdown(cleanup applicationCleanup, shutdown *applicat
 	if cleanup.logFile != nil {
 		logErr = cleanup.logFile.Close()
 	}
-	result := errors.Join(monitorErr, storeErr, logErr)
+	result := errors.Join(monitorErr, eventErr, storeErr, logErr)
 	stoppedLifecycle, cancelStoppedLifecycle := context.WithCancel(context.Background())
 	cancelStoppedLifecycle()
 	a.mu.Lock()
@@ -284,6 +292,12 @@ func (a *Application) CaptureCoordinator() capture.CaptureCoordinator {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.coordinator
+}
+
+func (a *Application) EventStoreManager() *eventstore.Manager {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.events
 }
 
 // SetRoomStatusPublisher must be called before infrastructure initialization.

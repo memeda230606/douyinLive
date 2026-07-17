@@ -40,6 +40,23 @@ func (m *LiveMessage) GetPayload() []byte {
 	return m.Raw.Payload
 }
 
+// cloneLiveMessage gives each subscriber an independent protobuf snapshot.
+// Subscriber code may retain or mutate its copy without affecting later
+// subscribers, method filtering, or durable event capture.
+func cloneLiveMessage(message *LiveMessage) *LiveMessage {
+	if message == nil {
+		return nil
+	}
+	cloned := *message
+	if message.Raw != nil {
+		cloned.Raw = proto.Clone(message.Raw).(*new_douyin.Webcast_Im_Message)
+	}
+	if message.Parsed != nil {
+		cloned.Parsed = proto.Clone(message.Parsed)
+	}
+	return &cloned
+}
+
 // LiveMessageHandler 处理标准化后的直播消息。
 // LiveMessageHandler consumes normalized live messages.
 type LiveMessageHandler func(*LiveMessage)
@@ -196,9 +213,11 @@ func (b *messageBus) hasSubscriber(id string) bool {
 //   - message: 要分发的标准化直播消息。 Normalized live message to dispatch.
 //   - stop: 可选停止条件；返回 true 时中止分发。 Optional stop condition; true aborts dispatch.
 func (b *messageBus) publishWithLoggerUntil(logger logSink, message *LiveMessage, stop func() bool) {
-	if message == nil {
+	snapshot := cloneLiveMessage(message)
+	if snapshot == nil {
 		return
 	}
+	method := snapshot.GetMethod()
 
 	b.mu.RLock()
 	subscribers := append([]messageSubscriber(nil), b.subscribers...)
@@ -211,17 +230,18 @@ func (b *messageBus) publishWithLoggerUntil(logger logSink, message *LiveMessage
 		if !b.hasSubscriber(subscriber.id) {
 			continue
 		}
-		if !subscriber.accepts(message.GetMethod()) {
+		if !subscriber.accepts(method) {
 			continue
 		}
-		func(s messageSubscriber) {
+		delivered := cloneLiveMessage(snapshot)
+		func(s messageSubscriber, value *LiveMessage) {
 			defer func() {
 				if recovered := recover(); recovered != nil && logger != nil {
-					logger.Error("消息订阅处理器发生 panic", "method", message.GetMethod(), "panic", recovered)
+					logger.Error("消息订阅处理器发生 panic", "method", method, "panic", recovered)
 				}
 			}()
-			s.handler(message)
-		}(subscriber)
+			s.handler(value)
+		}(subscriber, delivered)
 	}
 }
 

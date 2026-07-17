@@ -254,6 +254,151 @@ func TestEmitEventClonesParsedMessageForSubscribers(t *testing.T) {
 	}
 }
 
+func TestEmitEventIsolatesRawSnapshotFromLegacyAndMessageSubscribers(t *testing.T) {
+	dl := &DouyinLive{
+		liveID: "live-id",
+		logger: normalizeLogger(log.Default()),
+	}
+	raw := &new_douyin.Webcast_Im_Message{Method: WebcastChatMessage, Payload: []byte("original")}
+	parsed := &new_douyin.Webcast_Im_ChatMessage{Content: "parsed-original"}
+	dl.Subscribe(func(message *new_douyin.Webcast_Im_Message, value proto.Message) {
+		message.Method = WebcastGiftMessage
+		message.Payload[0] = 'L'
+		if chat, ok := value.(*new_douyin.Webcast_Im_ChatMessage); ok {
+			chat.Content = "legacy-mutated"
+		}
+	})
+	dl.SubscribeMessage(func(message *LiveMessage) {
+		message.Raw.Method = WebcastLikeMessage
+		message.Raw.Payload[0] = 'S'
+		message.Parsed.(*new_douyin.Webcast_Im_ChatMessage).Content = "subscriber-mutated"
+	})
+	var got *LiveMessage
+	dl.SubscribeMethod(WebcastChatMessage, func(message *LiveMessage) {
+		got = message
+	})
+
+	dl.emitEvent(raw, parsed)
+
+	if got == nil {
+		t.Fatal("isolated subscriber did not receive the original method")
+	}
+	if got.Raw == raw {
+		t.Fatal("subscriber received the caller-owned raw message")
+	}
+	if got.GetMethod() != WebcastChatMessage {
+		t.Fatalf("method = %q, want %q", got.GetMethod(), WebcastChatMessage)
+	}
+	if string(got.GetPayload()) != "original" {
+		t.Fatalf("payload = %q, want original", got.GetPayload())
+	}
+	chat, ok := got.Parsed.(*new_douyin.Webcast_Im_ChatMessage)
+	if !ok {
+		t.Fatalf("Parsed type = %T", got.Parsed)
+	}
+	if chat.GetContent() != "parsed-original" {
+		t.Fatalf("parsed content = %q, want parsed-original", chat.GetContent())
+	}
+}
+func TestEmitEventCapturesReceivedAtBeforeLegacyHandlers(t *testing.T) {
+	dl := &DouyinLive{
+		liveID: "live-id",
+		logger: normalizeLogger(log.Default()),
+	}
+	legacyStarted := make(chan time.Time, 1)
+	releaseLegacy := make(chan struct{})
+	delivered := make(chan *LiveMessage, 1)
+
+	dl.Subscribe(func(*new_douyin.Webcast_Im_Message, proto.Message) {
+		legacyStarted <- time.Now()
+		<-releaseLegacy
+	})
+	dl.SubscribeMessage(func(message *LiveMessage) {
+		delivered <- message
+	})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dl.emitEvent(&new_douyin.Webcast_Im_Message{Method: WebcastChatMessage}, nil)
+	}()
+
+	started := <-legacyStarted
+	close(releaseLegacy)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emitEvent did not complete")
+	}
+
+	select {
+	case message := <-delivered:
+		if message.ReceivedAt.IsZero() {
+			t.Fatal("ReceivedAt is zero")
+		}
+		if message.ReceivedAt.After(started) {
+			t.Fatalf("ReceivedAt = %v, want no later than legacy handler start %v", message.ReceivedAt, started)
+		}
+	default:
+		t.Fatal("message subscriber did not receive event")
+	}
+}
+
+func TestEmitEventDispatchesMessageBusBeforeBlockingLegacyHandler(t *testing.T) {
+	dl := &DouyinLive{
+		liveID: "live-id",
+		logger: normalizeLogger(log.Default()),
+	}
+	legacyStarted := make(chan struct{}, 1)
+	releaseLegacy := make(chan struct{})
+	delivered := make(chan *LiveMessage, 1)
+	dl.Subscribe(func(*new_douyin.Webcast_Im_Message, proto.Message) {
+		legacyStarted <- struct{}{}
+		<-releaseLegacy
+	})
+	dl.SubscribeMessage(func(message *LiveMessage) {
+		delivered <- message
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		dl.emitEvent(&new_douyin.Webcast_Im_Message{Method: WebcastChatMessage}, nil)
+	}()
+	defer func() {
+		select {
+		case <-releaseLegacy:
+		default:
+			close(releaseLegacy)
+		}
+		<-done
+	}()
+
+	select {
+	case message := <-delivered:
+		if message.GetMethod() != WebcastChatMessage {
+			t.Fatalf("message bus method = %q", message.GetMethod())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("message bus was blocked by legacy handler")
+	}
+	select {
+	case <-legacyStarted:
+	case <-time.After(time.Second):
+		t.Fatal("legacy handler did not start after message bus dispatch")
+	}
+	select {
+	case <-done:
+		t.Fatal("emitEvent returned before blocked legacy handler was released")
+	default:
+	}
+	close(releaseLegacy)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("emitEvent did not finish after legacy handler release")
+	}
+}
+
 func TestDecodeResponseStopsDispatchingAfterClose(t *testing.T) {
 	dl := &DouyinLive{
 		liveID:   "live-id",

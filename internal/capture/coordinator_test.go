@@ -194,11 +194,19 @@ type fakeEventSink struct {
 	flushFunc func(context.Context) error
 }
 
-func (s *fakeEventSink) Accept(*douyinLive.LiveMessage) bool {
+func (s *fakeEventSink) Accept(*douyinLive.LiveMessage) {
 	s.mu.Lock()
 	s.accepted++
 	s.mu.Unlock()
-	return true
+}
+
+func newTestCoordinator(repository SessionRepository, options CoordinatorOptions) (*Coordinator, error) {
+	if options.EventSinkFactory == nil {
+		options.EventSinkFactory = func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return &fakeEventSink{}, nil
+		}
+	}
+	return NewCoordinator(repository, options)
 }
 
 func (s *fakeEventSink) FlushAndClose(ctx context.Context) error {
@@ -259,7 +267,7 @@ func TestCoordinatorOpenRebindFinalizeKeepsOneSessionAndOrdersCleanup(t *testing
 	orderedRepository := &orderedSessionRepository{SessionRepository: repository, order: order}
 	sink := &fakeEventSink{order: &orderedRepository.order}
 	recorder := &fakeRecorder{order: &orderedRepository.order}
-	coordinator, err := NewCoordinator(orderedRepository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(orderedRepository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			orderedRepository.append("sink.open")
@@ -338,7 +346,7 @@ func TestCoordinatorRecorderUnavailableDoesNotFailLiveSession(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
 	factoryCalls := 0
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 			factoryCalls++
@@ -377,7 +385,7 @@ func TestCoordinatorRecordDisabledNeverConstructsRecorder(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
 	factoryCalls := 0
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 			factoryCalls++
@@ -410,7 +418,7 @@ func TestCoordinatorRecorderRebindFailureDegradesWithoutEndingSession(t *testing
 	recorder := &fakeRecorder{rebindFunc: func(context.Context, CaptureSource) error {
 		return errors.New("injected stream refresh failure")
 	}}
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 			return recorder, nil
@@ -445,7 +453,7 @@ func TestCoordinatorFinalizeTimeoutIsBoundedAndMarksIncomplete(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	}}
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now }, CommitTimeout: time.Second,
 		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 			return recorder, nil
@@ -478,7 +486,7 @@ func TestCoordinatorFinalizeTimeoutIsBoundedAndMarksIncomplete(t *testing.T) {
 func TestCoordinatorFinalizeFailureMarksSessionAndRecordingFailed(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 			return &fakeRecorder{}, nil
@@ -518,7 +526,7 @@ func TestCoordinatorCleansCommittedRowsWhenManifestMaterializationReportsError(t
 				SessionRepository: repository,
 				failCreate:        testCase.failCreate, failActivation: testCase.failActivation,
 			}
-			coordinator, err := NewCoordinator(faulty, CoordinatorOptions{Now: func() time.Time { return now }})
+			coordinator, err := newTestCoordinator(faulty, CoordinatorOptions{Now: func() time.Time { return now }})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -542,7 +550,7 @@ func TestCoordinatorCleansCommittedRowsWhenManifestMaterializationReportsError(t
 func TestCoordinatorCancelledFinalizeStillPersistsInterruptedTerminalState(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{Now: func() time.Time { return now }})
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +577,7 @@ func TestCoordinatorOpenSameInitialOperationReusesRuntimeAfterRebind(t *testing.
 	sink := &fakeEventSink{}
 	recorder := &fakeRecorder{}
 	sinkCalls, recorderCalls := 0, 0
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			sinkCalls++
@@ -631,7 +639,7 @@ func TestCoordinatorConcurrentSameOperationOpenRunsFactoriesOnce(t *testing.T) {
 	recorder := &fakeRecorder{}
 	var countsMu sync.Mutex
 	sinkCalls, recorderCalls := 0, 0
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			countsMu.Lock()
@@ -700,7 +708,7 @@ func TestCoordinatorRejectsUnregisteredActiveAndTerminalReplay(t *testing.T) {
 	t.Run("active", func(t *testing.T) {
 		repository, store, _, roomID, now := openRepository(t)
 		defer store.Close()
-		owner, err := NewCoordinator(repository, CoordinatorOptions{
+		owner, err := newTestCoordinator(repository, CoordinatorOptions{
 			Now: func() time.Time { return now },
 			RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 				return &fakeRecorder{}, nil
@@ -718,7 +726,7 @@ func TestCoordinatorRejectsUnregisteredActiveAndTerminalReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		sinkCalls, recorderCalls := 0, 0
-		orphan, err := NewCoordinator(repository, CoordinatorOptions{
+		orphan, err := newTestCoordinator(repository, CoordinatorOptions{
 			Now: func() time.Time { return now },
 			EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 				sinkCalls++
@@ -747,7 +755,7 @@ func TestCoordinatorRejectsUnregisteredActiveAndTerminalReplay(t *testing.T) {
 	t.Run("terminal", func(t *testing.T) {
 		repository, store, _, roomID, now := openRepository(t)
 		defer store.Close()
-		owner, err := NewCoordinator(repository, CoordinatorOptions{Now: func() time.Time { return now }})
+		owner, err := newTestCoordinator(repository, CoordinatorOptions{Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -765,7 +773,7 @@ func TestCoordinatorRejectsUnregisteredActiveAndTerminalReplay(t *testing.T) {
 			t.Fatal(err)
 		}
 		sinkCalls := 0
-		replay, err := NewCoordinator(repository, CoordinatorOptions{
+		replay, err := newTestCoordinator(repository, CoordinatorOptions{
 			Now: func() time.Time { return now },
 			EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 				sinkCalls++
@@ -800,7 +808,7 @@ func TestCoordinatorMarkFinalizingFailureStillCleansAndCanRetryTerminal(t *testi
 	faulty := &markFinalizingFailureRepository{SessionRepository: repository, failures: 1}
 	recorder := &fakeRecorder{}
 	sink := &fakeEventSink{}
-	coordinator, err := NewCoordinator(faulty, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(faulty, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			return sink, nil
@@ -912,7 +920,7 @@ func TestCoordinatorFinalizeRetryUsesFrozenTerminalTarget(t *testing.T) {
 					return &fakeRecorder{}, nil
 				}
 			}
-			coordinator, err := NewCoordinator(faulty, options)
+			coordinator, err := newTestCoordinator(faulty, options)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -967,7 +975,7 @@ func TestCoordinatorMasksEventSinkFactoryErrorAndPreservesDisabledRecording(t *t
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
 	secret := errors.New("sensitive sink setup credential")
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			return nil, secret
@@ -1003,7 +1011,7 @@ func TestCoordinatorMasksFinalizeComponentErrors(t *testing.T) {
 	sinkSecret := errors.New("sensitive sink spool path")
 	recorder := &fakeRecorder{stopFunc: func(context.Context) error { return recorderSecret }}
 	sink := &fakeEventSink{flushFunc: func(context.Context) error { return sinkSecret }}
-	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
 		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
 			return sink, nil
@@ -1031,6 +1039,166 @@ func TestCoordinatorMasksFinalizeComponentErrors(t *testing.T) {
 	}
 	if finalized.Status != SessionInterrupted || finalized.RecordingStatus != RecordingIncomplete {
 		t.Fatalf("component failure terminal state = %+v", finalized)
+	}
+}
+
+func TestNewCoordinatorRequiresEventSinkFactory(t *testing.T) {
+	repository, store, _, _, _ := openRepository(t)
+	defer store.Close()
+
+	coordinator, err := NewCoordinator(repository, CoordinatorOptions{})
+	if err == nil || coordinator != nil {
+		t.Fatalf("NewCoordinator() = (%v, %v), want configuration error", coordinator, err)
+	}
+	if !strings.Contains(err.Error(), "event sink factory") {
+		t.Fatalf("NewCoordinator() error = %v, want event sink factory detail", err)
+	}
+}
+
+type blockingEventSink struct {
+	entered      chan struct{}
+	release      chan struct{}
+	flushEntered chan struct{}
+	flushOnce    sync.Once
+}
+
+func (s *blockingEventSink) Accept(*douyinLive.LiveMessage) {
+	close(s.entered)
+	<-s.release
+}
+
+func (s *blockingEventSink) FlushAndClose(context.Context) error {
+	if s.flushEntered != nil {
+		s.flushOnce.Do(func() {
+			close(s.flushEntered)
+		})
+	}
+	return nil
+}
+
+func TestEventSinkAcceptDoesNotHoldSessionStateLock(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	sink := &blockingEventSink{entered: make(chan struct{}), release: make(chan struct{})}
+	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return sink, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCaptureSource(nil)
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), StartedAt: now,
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go source.emitCurrent(&douyinLive.LiveMessage{ReceivedAt: now})
+	select {
+	case <-sink.entered:
+	case <-time.After(time.Second):
+		t.Fatal("event sink was not invoked")
+	}
+
+	snapshotDone := make(chan struct{})
+	go func() {
+		_ = session.Snapshot()
+		close(snapshotDone)
+	}()
+	select {
+	case <-snapshotDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("EventSink.Accept held session state lock")
+	}
+
+	close(sink.release)
+	if _, err := session.Finalize(context.Background(), newV7(t), FinalizeShutdown); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinalizeWaitsForInflightEventAcceptBeforeSinkClose(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	sink := &blockingEventSink{
+		entered:      make(chan struct{}),
+		release:      make(chan struct{}),
+		flushEntered: make(chan struct{}),
+	}
+	coordinator, err := NewCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return sink, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCaptureSource(nil)
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), StartedAt: now,
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	emitDone := make(chan struct{})
+	go func() {
+		source.emitCurrent(&douyinLive.LiveMessage{ReceivedAt: now})
+		close(emitDone)
+	}()
+	select {
+	case <-sink.entered:
+	case <-time.After(time.Second):
+		t.Fatal("event sink was not invoked")
+	}
+
+	finalizeDone := make(chan error, 1)
+	go func() {
+		_, finalizeErr := session.Finalize(context.Background(), newV7(t), FinalizeShutdown)
+		finalizeDone <- finalizeErr
+	}()
+	unsubscribeDeadline := time.Now().Add(time.Second)
+	for {
+		source.mu.Lock()
+		unsubscribed := source.unsubscribed > 0
+		source.mu.Unlock()
+		if unsubscribed {
+			break
+		}
+		if time.Now().After(unsubscribeDeadline) {
+			t.Fatal("Finalize did not unsubscribe before waiting for callbacks")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-sink.flushEntered:
+		t.Fatal("sink closed before the in-flight Accept returned")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(sink.release)
+	select {
+	case <-sink.flushEntered:
+	case <-time.After(time.Second):
+		t.Fatal("sink was not closed after the in-flight Accept returned")
+	}
+	select {
+	case err := <-finalizeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Finalize did not complete")
+	}
+	select {
+	case <-emitDone:
+	case <-time.After(time.Second):
+		t.Fatal("message callback did not complete")
 	}
 }
 func containsOrderedSubsequence(values, wanted []string) bool {

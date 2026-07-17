@@ -82,6 +82,9 @@
 | `platform_room_id` | TEXT NULL | 场次中的平台房间 ID |
 | `title` | TEXT | 场次标题快照 |
 | `status` | TEXT | starting/recording/finalizing/completed/interrupted/failed |
+| `recording_status` | TEXT | disabled/pending/starting/recording/unavailable/reconnecting/finalizing/completed/incomplete/failed |
+| `operation_id` | TEXT | Open/Rebind/Finalize 的非敏感 CAS 版本 |
+| `manifest_dirty` | INTEGER | `session.json` 镜像尚未耐久确认 |
 | `started_at` | INTEGER | 场次墙钟起点 |
 | `ended_at` | INTEGER NULL | 场次结束 |
 | `media_epoch_at` | INTEGER NULL | 媒体基准墙钟 |
@@ -92,7 +95,7 @@
 | `schema_version` | INTEGER | `session.json` 版本 |
 | `created_at`/`updated_at` | INTEGER | 审计时间 |
 
-索引：`(room_config_id, started_at DESC)`、`status`。
+索引：`(room_config_id, started_at DESC)`、`status`；数据库以部分唯一索引保证同一房间至多一个 `starting/recording/finalizing` 场次。状态变更使用旧场次状态、旧录制状态和旧 operation ID 联合 CAS；`manifest_dirty` 只有在文件原子替换及健康日志 Sync 后才能精确清除。
 
 ### 4.3 `live_events`
 
@@ -100,8 +103,10 @@
 | --- | --- | --- |
 | `id` | TEXT PK | 事件 ID |
 | `session_id` | TEXT FK | 所属场次 |
+| `ingest_sequence` | INTEGER | 场次 source 接纳顺序；0 只保留给 v2 迁移行 |
 | `method` | TEXT | 平台 method |
 | `kind` | TEXT | chat/gift/like/member/follow/system/unknown |
+| `event_role` | TEXT | source/aggregate |
 | `platform_message_id` | TEXT NULL | 平台消息 ID |
 | `dedupe_key` | TEXT | 场次内唯一去重键 |
 | `message_create_at` | INTEGER NULL | 平台时间 |
@@ -115,8 +120,10 @@
 | `normalized_json` | TEXT | 扩展标准化字段 |
 | `raw_file`/`raw_offset`/`raw_length` | TEXT/INTEGER | 原始载荷引用 |
 | `parse_status` | TEXT | parsed/unknown/failed |
+| `parse_error_code` | TEXT NULL | 稳定、脱敏的解析失败码 |
+| `normalizer_version` | TEXT | 标准化器版本 |
 
-唯一约束：`(session_id, dedupe_key)`；索引：`(session_id, session_offset_ms)`、`(session_id, kind, session_offset_ms)`、`user_hash`。
+唯一约束：`(session_id, dedupe_key)`；新 source 事件还受 `(session_id, ingest_sequence)` 条件唯一索引保护，aggregate 可与其来源共享序列。索引：`(session_id, ingest_sequence, event_role)`、`(session_id, session_offset_ms)`、`(session_id, kind, session_offset_ms)`、`user_hash`。
 
 ### 4.4 `media_segments`
 
@@ -171,33 +178,61 @@
 - `kind`：message_disconnect/recording_restart/stream_unavailable/disk_full/process_crash/clock_uncertain。
 - `started_at`、`ended_at`、`start_offset_ms`、`end_offset_ms`。
 - `severity`、`recovered`、`reason_code`、脱敏 `details_json`。
+- `kind` 另包含 `event_persistence`，用于本地队列、spool 或 SQLite 事件链路缺口。
+- `dedupe_key` 在场次内唯一，使恢复和重试可以幂等物化同一缺口。
+
+### 4.9 `event_ingest_checkpoints`
+
+每个场次一行：
+
+- `session_id` 主键并级联引用 `live_sessions`。
+- `committed_sequence`：最后一个与全部派生状态共同提交的 source 序列。
+- `state`：`open/closing/closed/degraded`；触发器限制正向转换，closed 后位置和时间不可变。
+- `privacy_key_id`：HMAC 密钥的非敏感标识；场次建立后不可修改，恢复时不匹配即 fail closed。
+- `spool_file/spool_offset` 与 `raw_file/raw_offset`：最后完整提交记录之后的相对文件和字节位置。
+- `updated_at`：UTC 毫秒；序列为 0 时文件和位置必须同时为空/0，正序列时两组位置必须同时有效。
+
+### 4.10 `gift_combo_states`
+
+每个 `(session_id, combo_key)` 一行：
+
+- `status`：`open/closed`；closed 行由触发器保持不可变。
+- `user_hash`、`gift_id`、可选 `gift_name`、`total_count` 和可选 `total_value`。
+- `first_ingest_sequence/last_ingest_sequence`、`started_at/updated_at`。
+- closed 行必须同时具有 `closed_at` 和 `aggregate_event_id`，后者以 `(session_id, id)` 外键指向同场次 `live_events`。
+- `normalizer_version` 固定派生规则版本；恢复只查询当前批触及状态，空闲和收尾扫描使用固定页大小。
 
 ## 5. 写入链路与恢复
 
 ### 5.1 Spool 优先
 
-事件先写场次 JSONL/WAL，再批量写 SQLite：
+事件先写场次 raw binpack 和元数据 WAL，再批量写 SQLite：
 
-1. 回调将 `IngestEnvelope` 放入有界通道。
-2. spool writer 按顺序追加记录，记录长度、CRC32C 和 schema 版本。
-3. 每 250 条或 500 ms 提交一次 SQLite 事务。
-4. 事务成功后更新 checkpoint；已落库块可延迟压缩归档。
-5. 崩溃恢复从 checkpoint 后重放，依赖唯一约束保证幂等。
+1. 回调深拷贝 payload，将带场次序列的 `IngestEnvelope` 非阻塞放入条数与字节双有界的单 FIFO；紧急额度只是接纳预留，不建立第二条乱序通道。
+2. 单 worker 先追加 raw 帧，再追加只含 envelope 元数据和 raw 引用的 WAL 帧；两者都包含版本、长度和 CRC32C。
+3. 每批严格执行 raw flush/Sync，再执行 WAL flush/Sync；只有两者都耐久后才进入标准化与数据库提交。
+4. 默认每 250 条或 500 ms 把 source/aggregate 事件、礼物折叠、缺口和 checkpoint 放入同一 SQLite 事务，并以旧 checkpoint 序列做 CAS。
+5. 事务成功才更新内存 checkpoint；失败时 source 和派生状态均不确认，WAL 尾部保持可重放。
+6. 崩溃或降级恢复只从 checkpoint 后按固定批次重放，重新执行去重和礼物折叠，依赖唯一约束及 closed 不可变约束保证幂等。
 
-默认每秒 `fsync` 一次；正常收尾强制 flush + sync。用户可选择“更高可靠性”每批 sync，但 UI 必须说明性能影响。
+事件管理器每批建立 Sync 屏障，spool 的 1 秒定时 Sync 是未显式建屏障写入的最长默认窗口；正常收尾仍强制排空、flush、Sync，并把 checkpoint 从 closing 推进为 closed。
 
 ### 5.2 原始载荷
 
-- 原始 protobuf 使用 binpack：固定头、事件 ID、长度、CRC 和字节内容。
-- 单文件达到 128 MiB 或场次跨小时后轮转。
+- 原始 protobuf 使用 binpack：固定头、版本、压缩标志、原始/存储长度、头与正文 CRC32C 和字节内容。
+- 大于 256 字节且压缩后确实更小时使用单并发 zstd；解压设置最大内存与最大 payload 限制，禁止压缩炸弹。
+- raw 单文件达到 128 MiB 或跨小时后轮转；WAL 单文件达到 64 MiB 或跨小时后轮转。
 - 数据库只保存相对文件、offset 和 length。
 - 校验失败不阻止其他事件读取，并创建 `DATA_CORRUPTED` 诊断。
+- 每场次 raw+WAL 默认总上限 4 GiB；启动恢复发现的既有分片计入同一预算，零值配置不表示无限制。
 
 ### 5.3 数据库忙与损坏
 
 - `SQLITE_BUSY` 在 5 秒窗口内指数退避；spool 继续接收。
-- 超过阈值进入 `degraded_persistence`，UI 告警但不立即断开直播。
-- spool 超出配置上限时停止录制并保留消息链路最后诊断；禁止无提示丢弃。
+- 超过阈值进入 `degraded_persistence`，UI 告警但不立即断开直播；不得 source-only 推进 checkpoint，也不得把 deferred 事件或全场礼物状态无限保留在内存。
+- 降级期间继续写有界 spool；后续批次或关闭时从最后 checkpoint 尾部恢复。每个恢复事务完整提交 source、aggregate、礼物状态和 checkpoint，失败仍停留在原位置。
+- 队列最终拒绝、payload 超限或 spool 致命失败必须累计为 `EVENT_DROPPED_LOCAL`，并以稳定 dedupe key 写入 `event_persistence` 缺口；缺口事务失败时保留累计状态，不能误报已审计。
+- spool 超出 4 GiB 上限、发生中段损坏或无法 Sync 时停止该事件 sink 的接纳并保留严重诊断；不得绕过损坏继续推进 checkpoint，也不得无提示丢弃。
 - 完整性检查失败时复制数据库、进入只读模式并提供“从 session.json/spool 重建索引”工具。
 
 ## 6. 统一时间轴
@@ -318,6 +353,7 @@ type ASRProvider interface {
 - 清理顺序：可重建缓存 → 代理文件 → 用户确认的旧场次；原始媒体和事件不会无提示删除。
 - 正在录制、分析、导出或标记保留的场次不可清理。
 - 用户平台 ID 使用安装级随机盐 HMAC-SHA256；盐保存在凭据存储。
+- 事件 HMAC 使用独立 32 字节凭据；数据库只保存 `privacy_key_id`，同一场次 checkpoint 建立后不可更换密钥，恢复时不匹配即拒绝处理。
 - 昵称和弹幕属于个人数据，设置允许“不保存昵称”或导出时进一步匿名化。
 - 诊断日志不记录完整弹幕正文；需要调试时仅记录长度、hash 和事件 ID。
 
@@ -325,8 +361,10 @@ type ASRProvider interface {
 
 ### 12.1 数据与迁移
 
-- 每个 schema 版本升级、失败回滚、旧备份恢复和空数据库初始化。
-- WAL 崩溃重放、重复事件、CRC 错误、数据库忙和磁盘空间不足。
+- 每个 schema 版本升级、失败回滚、旧备份恢复和空数据库初始化；Schema v2→v3 必须保留旧事件和旧缺口，并在失败时完整恢复表名、列和版本。
+- raw/WAL 崩溃重放、重复事件、CRC/截断错误、Sync 顺序、数据库忙/满/损坏和 spool 总空间边界。
+- checkpoint CAS、事务中途失败、closed checkpoint/combo 不可变、privacy key 不匹配和 source/aggregate 唯一约束。
+- 高基数礼物、长时间数据库降级、连续本地拒绝和重启迟到消息必须验证内存、恢复批次及辅助耐久状态有界。
 - 相对路径、Windows 长路径、非法字符和目录迁移。
 
 ### 12.2 时间轴
@@ -344,7 +382,7 @@ type ASRProvider interface {
 
 ## 13. 完成标准
 
-- 崩溃后 spool 可幂等重放，场次和媒体可从 manifest 恢复索引。
+- 崩溃后只从 checkpoint 尾部有界、幂等重放 spool；source、aggregate、礼物折叠和缺口不会出现部分提交，场次和媒体可从 manifest 恢复索引。
 - 所有指标和报告带版本、输入 fingerprint 与完整性信息。
 - 时间轴原始值、估计值和校准值互不覆盖。
 - 基础分析不依赖 ASR 或云服务。

@@ -21,50 +21,39 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T18:14:00+08:00"
+updated_at: "2026-07-17T20:40:00+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "e73f474af8d06cdc681c8b720f250eaaacde12aa"
+last_verified_head: "61ad27cf5d2e6ce15a446090eb6ca8205afdc1f5"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 46
+overall_completion_percent: 52
 current_phase: "PHASE-3-CAPTURE-MVP"
-current_task: "P3-EVT-001"
-next_task: "P3-REC-001"
+current_task: "P3-REC-001"
+next_task: "P3-MEDIA-001"
 expected_dirty_paths:
+  - "cmd/desktop/app.go"
   - "cmd/desktop/app_test.go"
   - "docs/00-master-development-plan.md"
   - "docs/02-capture-and-recording-development-plan.md"
-  - "docs/validation/2026-07-17-p3-cap-session-lifecycle.md"
-  - "frontend/src/features/overview/OverviewPage.tsx"
-  - "frontend/src/features/rooms/RoomStatusBadge.tsx"
-  - "frontend/src/features/rooms/RoomsPage.tsx"
-  - "frontend/src/generated/wailsjs/go/models.ts"
-  - "frontend/src/lib/contracts.test.ts"
-  - "frontend/src/lib/contracts.ts"
-  - "frontend/src/lib/desktop.ts"
-  - "frontend/src/styles/index.css"
+  - "docs/03-data-and-analysis-development-plan.md"
+  - "docs/validation/2026-07-17-p3-evt-durable-event-ingest.md"
+  - "events.go"
+  - "go.mod"
   - "internal/app/application.go"
-  - "internal/app/application_shutdown_test.go"
   - "internal/app/infrastructure.go"
   - "internal/app/infrastructure_test.go"
-  - "internal/app/manifest_health_reporter_test.go"
   - "internal/app/p3_capture_acceptance_test.go"
   - "internal/capture/coordinator.go"
   - "internal/capture/coordinator_test.go"
-  - "internal/capture/manifest_dirty_test.go"
-  - "internal/capture/manifest_health.go"
-  - "internal/capture/repository.go"
-  - "internal/capture/repository_test.go"
-  - "internal/capture/session.go"
-  - "internal/capture/session_test.go"
-  - "internal/room/supervisor.go"
-  - "internal/room/supervisor_test.go"
+  - "internal/eventstore/"
   - "internal/storage/migrations.go"
   - "internal/storage/sqlite_test.go"
+  - "live_message.go"
+  - "live_message_test.go"
 blockers: []
-last_completed_task: "P3-CAP-001"
-last_completion_evidence: "完成 Schema v2 场次/录制双状态、operation_id CAS、单房间活动唯一性、CaptureCoordinator 与 RoomSupervisor 单一编排；manifest_dirty 以文件落盘、健康日志耐久确认和精确 CAS 清标形成崩溃恢复闭环。全量 Go test/vet/build、capture/room/app/storage/desktop 20 轮重复测试、前端 typecheck/5 项 Vitest/build、P2/P3 验收标签与两种 Wails 生产构建全部通过，171 个工作树文件隐私扫描通过。用户授权直播间当时被平台明确判定为离线，隔离验收按 P3ACC_OFFLINE 安全跳过并完成资源清理，不声明在线场次链路已通过。"
-resume_instruction: "执行 P3-EVT-001：先以 Schema v3 建立 ingest_sequence/checkpoint、gift_combo_states 与 event_persistence 缺口契约，再实现单一有序条数+字节有界队列、raw binpack→WAL 的 Sync 顺序、SQLite 事件与 checkpoint 同事务、allowlist 标准化/HMAC 身份、短窗去重和礼物连击；EventSink 回调只复制并接纳，关闭必须共享排空且先于 SQLite。"
+last_completed_task: "P3-EVT-001"
+last_completion_evidence: "完成 Schema v3、条数+字节双有界单 FIFO、raw binpack→WAL 双 Sync、SQLite source/aggregate/礼物折叠/缺口/checkpoint 同事务、allowlist 标准化、HMAC 身份、运行时昵称策略、事务后有界去重与耐久 drop ledger。恢复只修复可证明的最终崩溃尾，并同时保护 WAL/raw 双游标；容量预检零写入，跨段故障仅审计未耐久后缀。全量 Go test/vet/build、7 个核心包 20 轮、7 项高风险回归 100 轮、前端 typecheck/5 项 Vitest/build、P2/P3 标签与两种 Wails 构建通过；授权直播间当时离线，按 P3ACC_OFFLINE 安全跳过。最终审计无剩余 P0/P1。"
+resume_instruction: "执行 P3-REC-001：复用 ResolveStreams 候选序列，实现独立于监督器 context 的 FFmpeg 录制进程、Windows Job Object fail-closed 管理、-progress pipe:1 有界解析、候选逐一尝试、q\\n→5 秒→Job kill→3 秒的分级停止和异步退出事件；不得把完整流 URL 写入日志、数据库、manifest 或前端。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -97,10 +86,10 @@ resume_instruction: "执行 P3-EVT-001：先以 Schema v3 建立 ingest_sequence
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
-| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 20% | 6/30 点完成；场次双状态、监督器编排和可恢复 manifest 已完成 | 完成事件、录制、恢复、实时 UI 与 10 分钟验收 |
+| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 40% | 12/30 点完成；场次编排与有界事件耐久链路已完成 | 完成录制、媒体、恢复、实时 UI 与 10 分钟验收 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **46%** | 已完成文档、流解析、桌面房间管理和场次编排闭环 | 执行 P3-EVT-001 有界事件持久化链路 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **52%** | 已完成文档、流解析、桌面房间管理、场次编排与事件耐久链路 | 执行 P3-REC-001 FFmpeg 与进程控制 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -125,8 +114,8 @@ resume_instruction: "执行 P3-EVT-001：先以 Schema v3 建立 ingest_sequence
 | P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `DONE` | 四个基础页面、房间 CRUD/监控动作、设置表单、严格运行时 schema 与单例状态事件桥完成；4 项 Vitest、全量前端/Go/Wails 门禁及真实 GUI 截图通过 | 执行 P2-ACC-001 重启、CRUD 与关闭验收 |
 | P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `DONE` | [验收记录](validation/2026-07-17-phase-2-acceptance.md)：真实 GUI 三轮 CRUD、监控、设置及重启持久化通过；活动监控下 WM_CLOSE 61 ms 自然退出，三轮均小于 10 秒、退出码 0、无残留 | PHASE-2 完成；进入 P3-CAP-001 |
 | P3-CAP-001 | 建立场次契约、仓储与监督器编排 | 6 | P2-ACC-001 | `DONE` | [验收记录](validation/2026-07-17-p3-cap-session-lifecycle.md)：Schema v2 双状态/CAS、单场次编排、manifest 耐久恢复、共享收尾与 UI 锁定完成；全量门禁、20 轮重复测试及故障注入通过 | 执行 P3-EVT-001 |
-| P3-EVT-001 | 实现有界事件采集、spool、标准化、去重与批写 | 6 | P3-CAP-001 | `READY` | 场次与 EventSink 编排骨架、Schema v2 和关闭顺序已就绪 | 实施 Schema v3、durable spool/checkpoint、标准化、去重和批写 |
-| P3-REC-001 | 实现 FFmpeg、流候选、Job Object 与进程控制 | 6 | P3-EVT-001 | `NOT_STARTED` | — | 等待事件链路完成 |
+| P3-EVT-001 | 实现有界事件采集、spool、标准化、去重与批写 | 6 | P3-CAP-001 | `DONE` | [验收记录](validation/2026-07-17-p3-evt-durable-event-ingest.md)：Schema v3、双有界 FIFO、raw/WAL 双 Sync、原子批写、隐私/去重/礼物折叠、drop ledger 与双游标恢复完成；全量门禁及高风险 100 轮回归通过，终审无 P0/P1 | 执行 P3-REC-001 |
+| P3-REC-001 | 实现 FFmpeg、流候选、Job Object 与进程控制 | 6 | P3-EVT-001 | `READY` | Go、FFmpeg 8.1.2、ffprobe 与 Windows Job Object API 已就绪；录制器边界已预研 | 实现候选解析、FFmpeg 进程、Job Object、进度与分级停止 |
 | P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `NOT_STARTED` | — | 等待录制器核心完成 |
 | P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `NOT_STARTED` | — | 等待媒体收尾完成 |
 | P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `NOT_STARTED` | — | 等待恢复链路完成 |
@@ -183,6 +172,7 @@ resume_instruction: "执行 P3-EVT-001：先以 Schema v3 建立 ingest_sequence
 | 2026-07-17 15:02 | PLAN-TEST-DURATION | `DONE` | 按用户决策将录制变更门禁从 2 小时缩短为 10 分钟、候选发布稳定性改为 30 分钟、正式发布稳定性改为 60 分钟、实时 UI 连续测试改为 10 分钟，并同步提高采样频率、缩短资源重复次数 | 继续执行 P2-ACC-001 |
 | 2026-07-17 15:57 | P2-ACC-001 | `DONE` | 隔离根内三轮真实 GUI 完成 CRUD、监控、设置和重启持久化；活动监控下及其余两轮 WM_CLOSE 均在 61 ms 内自然退出，退出码 0、无残留；全量 Go/前端/Wails 与普通生产 GUI 冒烟通过，验收数据和一次性任务已精确清理 | PHASE-2 完成，执行 P3-CAP-001 场次契约与仓储编排 |
 | 2026-07-17 18:14 | P3-CAP-001 | `DONE` | 完成 Schema v2 双状态与 CAS、CaptureCoordinator/RoomSupervisor 单场次编排、manifest_dirty 耐久恢复和 STOPPING 共享收尾；全量 Go/前端/Wails 门禁、20 轮重复测试、129 条分页和故障注入通过；授权直播间当时离线，真实验收安全跳过且未冒充成功 | 执行 P3-EVT-001 有界事件持久化 |
+| 2026-07-17 20:40 | P3-EVT-001 | `DONE` | 完成 Schema v3、有界 FIFO、raw/WAL 双 Sync、SQLite 原子批写、隐私去重、礼物折叠、drop ledger 与双游标 fail-closed 恢复；全量/20 轮/关键 100 轮、前端与 Wails 门禁通过，授权直播间离线安全跳过，终审无 P0/P1 | 执行 P3-REC-001 FFmpeg 与进程控制 |
 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
@@ -483,3 +473,4 @@ UI 只能调用应用服务，不直接持有 `DouyinLive`、数据库连接或 
 - 禁止把真实 Cookie、签名、主播隐私或仍有效的流 URL 写入文档、fixture、日志和提交历史。
 - 2026-07-17，决策：将长耗时稳定性门禁改为 10/30/60 分钟分层验证；理由：避免 2/24/72 小时测试阻塞迭代；替代方案：保留原时长或仅在最终发布前执行，均不采用；影响：提高采样频率并保留恢复、资源趋势和缺口审计，后续发现分钟级测试无法暴露的问题时再按故障证据定向延长。
 - 2026-07-17，决策：SQLite Schema v2 为 `live_sessions` 增加独立 `recording_status`、`operation_id` 与 `manifest_dirty`，保留现有场次 `status` 约束，并以 CAS 和部分唯一索引保证每房间最多一个活动场次；理由：消息场次可在录制禁用或无流时继续存在，异步旧结果不能覆盖较新状态，且数据库提交后即使进程崩溃也能发现未确认的文件镜像；替代方案：把 `unavailable` 塞入场次状态、仅以内存记录镜像失败或重建被多张表引用的父表，均不采用；影响：`status=recording` 在 v2 表示活动场次阶段，真实录制生命周期由 `recording_status` 表达；`session.json` 只有在同目录原子替换、健康日志 Sync 确认和精确版本 CAS 后才清除脏标记，启动时按页修复。
+- 2026-07-17，决策：SQLite Schema v3 以场次 `ingest_sequence` 和双位置 checkpoint 为事件提交边界，单 FIFO 同时受条数与字节限制，先 raw binpack Sync、再 WAL Sync，最后在一个 SQLite 事务中提交 source/aggregate、礼物折叠、缺口和 checkpoint；理由：崩溃、数据库降级和高基数礼物下仍需可证明的顺序、幂等和内存上界；替代方案：source-only 推进 checkpoint、普通/紧急双队列、无限 deferred map、零值无限 spool 或只保护 WAL 游标，均不采用；影响：每场次 raw+WAL 默认上限 4 GiB，容量批次先验零写入，致命故障只审计未双 Sync 后缀，恢复只修复 checkpoint 之后可证明的最终崩溃尾，privacy key 不匹配或 WAL/raw 游标不一致时 fail closed。

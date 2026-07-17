@@ -9,7 +9,7 @@ import (
 )
 
 // emitEvent 向旧版原始订阅者和新版标准化订阅者分发事件。
-// emitEvent dispatches events to legacy raw subscribers and normalized message subscribers.
+// emitEvent dispatches to the normalized bus before legacy raw subscribers so critical consumers such as durable capture cannot be blocked by legacy code.
 // 参数/Parameters:
 //   - msg: 抖音原始 protobuf 消息。 Raw Douyin protobuf message.
 //   - parsed: 可选的解析后 protobuf 消息。 Optional parsed protobuf payload.
@@ -18,14 +18,30 @@ func (dl *DouyinLive) emitEvent(msg *new_douyin.Webcast_Im_Message, parsed proto
 		return
 	}
 
+	receivedAt := time.Now()
 	dl.mu.Lock()
 	handlers := append([]eventHandler(nil), dl.eventHandlers...)
 	dl.mu.Unlock()
 
+	rawSnapshot := proto.Clone(msg).(*new_douyin.Webcast_Im_Message)
 	parsedSnapshot := parsed
 	if parsedSnapshot != nil {
 		parsedSnapshot = proto.Clone(parsedSnapshot)
 	}
+
+	roomInfo := dl.roomInfoSnapshot()
+	dl.eventBus().publishWithLoggerUntil(dl.logger, &LiveMessage{
+		LiveID:      roomInfo.liveID,
+		RoomID:      roomInfo.roomID,
+		LiveName:    roomInfo.liveName,
+		Title:       roomInfo.title,
+		AvatarThumb: roomInfo.avatarThumb,
+		Raw:         rawSnapshot,
+		Parsed:      parsedSnapshot,
+		ReceivedAt:  receivedAt,
+	}, func() bool {
+		return dl.isManualClose()
+	})
 
 	for _, handler := range handlers {
 		if dl.isManualClose() {
@@ -43,20 +59,6 @@ func (dl *DouyinLive) emitEvent(msg *new_douyin.Webcast_Im_Message, parsed proto
 			h.handler(msg, parsed)
 		}(handler)
 	}
-
-	roomInfo := dl.roomInfoSnapshot()
-	dl.eventBus().publishWithLoggerUntil(dl.logger, &LiveMessage{
-		LiveID:      roomInfo.liveID,
-		RoomID:      roomInfo.roomID,
-		LiveName:    roomInfo.liveName,
-		Title:       roomInfo.title,
-		AvatarThumb: roomInfo.avatarThumb,
-		Raw:         msg,
-		Parsed:      parsedSnapshot,
-		ReceivedAt:  time.Now(),
-	}, func() bool {
-		return dl.isManualClose()
-	})
 }
 
 // hasEventHandler 判断旧版订阅 ID 是否仍然有效。

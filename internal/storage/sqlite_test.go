@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,8 +132,8 @@ func TestSchemaV1UpgradeBackfillsRecordingStatusAndCreatesBackup(t *testing.T) {
 		t.Fatalf("Open() upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 2 {
-		t.Fatalf("SchemaVersion() = %d, want 2", got)
+	if got, want := store.SchemaVersion(), latestSchemaVersion(schemaMigrations); got != want {
+		t.Fatalf("SchemaVersion() = %d, want %d", got, want)
 	}
 	want := map[string]string{
 		"starting": "starting", "recording": "recording", "finalizing": "finalizing",
@@ -281,8 +282,8 @@ func TestSchemaV1ActiveSessionCanBeClaimedTerminatedAndReplacedAfterUpgrade(t *t
 		t.Fatalf("Open() upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 2 {
-		t.Fatalf("SchemaVersion() = %d, want 2", got)
+	if got, want := store.SchemaVersion(), latestSchemaVersion(schemaMigrations); got != want {
+		t.Fatalf("SchemaVersion() = %d, want %d", got, want)
 	}
 	repo, err := capture.NewSQLiteRepository(store.Writer(), store.Reader(), layout.Root)
 	if err != nil {
@@ -393,6 +394,366 @@ func TestQuickCheckErrorClassification(t *testing.T) {
 	}
 }
 
+func TestSchemaV3EmptyDatabaseCreatesEventIngestObjects(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	store, err := Open(ctx, layout, OpenOptions{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	for _, table := range []string{"event_ingest_checkpoints", "gift_combo_states"} {
+		assertSQLiteObject(t, store.Reader(), "table", table)
+	}
+	for _, column := range []string{"ingest_sequence", "event_role", "normalizer_version", "parse_error_code"} {
+		if !tableHasColumn(t, store.Reader(), "live_events", column) {
+			t.Fatalf("live_events missing column %q", column)
+		}
+	}
+	if !tableHasColumn(t, store.Reader(), "capture_gaps", "dedupe_key") {
+		t.Fatal("capture_gaps missing dedupe_key")
+	}
+	for _, index := range []string{
+		"idx_live_events_session_ingest", "idx_live_events_source_sequence",
+		"idx_live_events_role_offset",
+		"idx_event_ingest_checkpoints_sequence", "idx_gift_combo_states_status_updated",
+		"idx_capture_gaps_kind_recovered",
+	} {
+		assertSQLiteObject(t, store.Reader(), "index", index)
+	}
+	for _, trigger := range []string{
+		"trg_event_checkpoint_privacy_key_immutable",
+		"trg_event_checkpoint_state_transition",
+		"trg_event_checkpoint_closed_immutable",
+		"trg_gift_combo_closed_immutable",
+	} {
+		assertSQLiteObject(t, store.Reader(), "trigger", trigger)
+	}
+}
+
+func TestSchemaV2UpgradePreservesLegacyEventsAndCaptureGaps(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(layout.Database, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(ctx, db, schemaMigrations[:2], time.Unix(1_700_000_000, 0)); err != nil {
+		db.Close()
+		t.Fatalf("apply schema v2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO rooms(id, live_id, alias, created_at, updated_at)
+		VALUES ('room-v2', 'live-v2', 'legacy', 1, 1)`); err != nil {
+		db.Close()
+		t.Fatalf("insert v2 room: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO live_sessions(
+		id, room_config_id, status, started_at, clock_source, data_path,
+		schema_version, created_at, updated_at
+	) VALUES ('session-v2', 'room-v2', 'completed', 1, 'received', 'rooms/legacy', 1, 1, 1)`); err != nil {
+		db.Close()
+		t.Fatalf("insert v2 session: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO live_events(
+		id, session_id, method, kind, dedupe_key, received_at,
+		session_offset_ms, clock_confidence, parse_status
+	) VALUES ('event-v2', 'session-v2', 'LegacyMethod', 'unknown', 'legacy-event', 2, 1, 0, 'unknown')`); err != nil {
+		db.Close()
+		t.Fatalf("insert v2 event: %v", err)
+	}
+	// Schema v2 permitted these reversed terminal values. The v3 rebuild must
+	// preserve every v2-valid row instead of silently dropping or rewriting it.
+	if _, err := db.Exec(`INSERT INTO capture_gaps(
+		id, session_id, kind, started_at, ended_at, start_offset_ms,
+		end_offset_ms, severity, recovered, reason_code, details_json
+	) VALUES ('gap-v2', 'session-v2', 'message_disconnect', 20, 10, 20, 10,
+		'warning', 0, 'LEGACY_GAP', '{}')`); err != nil {
+		db.Close()
+		t.Fatalf("insert v2 gap: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close v2 database: %v", err)
+	}
+
+	upgradeAt := time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC)
+	store, err := Open(ctx, layout, OpenOptions{Now: upgradeAt, CreateBackups: true})
+	if err != nil {
+		t.Fatalf("Open() v3 upgrade error = %v", err)
+	}
+	defer store.Close()
+	if got := store.SchemaVersion(); got != 3 {
+		t.Fatalf("SchemaVersion() = %d, want 3", got)
+	}
+
+	var sequence int64
+	var role, normalizer string
+	var parseCode sql.NullString
+	if err := store.Reader().QueryRow(`SELECT ingest_sequence, event_role,
+		normalizer_version, parse_error_code FROM live_events WHERE id = 'event-v2'`).Scan(
+		&sequence, &role, &normalizer, &parseCode,
+	); err != nil {
+		t.Fatalf("read upgraded legacy event: %v", err)
+	}
+	if sequence != 0 || role != "source" || normalizer != "legacy-v1" || parseCode.Valid {
+		t.Fatalf("legacy event v3 defaults = (%d, %q, %q, %+v)", sequence, role, normalizer, parseCode)
+	}
+	var startedAt, endedAt, startOffset, endOffset int64
+	var dedupeKey string
+	if err := store.Reader().QueryRow(`SELECT started_at, ended_at, start_offset_ms,
+		end_offset_ms, dedupe_key FROM capture_gaps WHERE id = 'gap-v2'`).Scan(
+		&startedAt, &endedAt, &startOffset, &endOffset, &dedupeKey,
+	); err != nil {
+		t.Fatalf("read upgraded legacy gap: %v", err)
+	}
+	if startedAt != 20 || endedAt != 10 || startOffset != 20 || endOffset != 10 || dedupeKey != "legacy:gap-v2" {
+		t.Fatalf("upgraded legacy gap = (%d, %d, %d, %d, %q)", startedAt, endedAt, startOffset, endOffset, dedupeKey)
+	}
+	rows, err := store.Reader().Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatalf("foreign_key_check: %v", err)
+	}
+	if rows.Next() {
+		rows.Close()
+		t.Fatal("schema v3 upgrade left a foreign-key violation")
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close foreign_key_check rows: %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(layout.BackupsDir, "app-v2-*.db"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("v2 backup files = (%v, %v), want one", backups, err)
+	}
+	backupDB, err := sql.Open("sqlite", sqliteDSN(backups[0], true))
+	if err != nil {
+		t.Fatalf("open v2 backup: %v", err)
+	}
+	defer backupDB.Close()
+	if tableHasColumn(t, backupDB, "live_events", "ingest_sequence") ||
+		tableHasColumn(t, backupDB, "capture_gaps", "dedupe_key") {
+		t.Fatal("v2 backup unexpectedly contains schema v3 columns")
+	}
+}
+
+func TestSchemaV3FailureRollsBackRebuildAndVersion(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v3-rollback.db")
+	db, err := sql.Open("sqlite", sqliteDSN(path, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(ctx, db, schemaMigrations[:2], time.Now()); err != nil {
+		t.Fatalf("apply schema v2: %v", err)
+	}
+	brokenV3 := schemaMigrations[2]
+	brokenV3.Statements = []string{
+		brokenV3.Statements[0],
+		`ALTER TABLE capture_gaps RENAME TO capture_gaps_v2`,
+		`THIS IS NOT SQL`,
+	}
+	if _, err := applyMigrationSet(ctx, db, []migration{brokenV3}, time.Now()); err == nil {
+		t.Fatal("broken schema v3 migration succeeded")
+	}
+	if tableHasColumn(t, db, "live_events", "ingest_sequence") {
+		t.Fatal("failed schema v3 migration left live_events column behind")
+	}
+	assertSQLiteObject(t, db, "table", "capture_gaps")
+	var renamedCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'capture_gaps_v2'`).Scan(&renamedCount); err != nil {
+		t.Fatalf("query capture_gaps_v2: %v", err)
+	}
+	if renamedCount != 0 {
+		t.Fatal("failed schema v3 migration left renamed capture_gaps_v2 behind")
+	}
+	version, err := currentSchemaVersion(ctx, db)
+	if err != nil {
+		t.Fatalf("currentSchemaVersion() error = %v", err)
+	}
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2 after v3 rollback", version)
+	}
+}
+
+func TestSchemaV3EnforcesCheckpointComboAndGapConstraints(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	store, err := Open(ctx, layout, OpenOptions{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	db := store.Writer()
+	for _, roomID := range []string{"room-a", "room-b"} {
+		if _, err := db.Exec(`INSERT INTO rooms(id, live_id, alias, created_at, updated_at) VALUES (?, ?, ?, 1, 1)`, roomID, roomID, roomID); err != nil {
+			t.Fatalf("insert room %q: %v", roomID, err)
+		}
+		sessionID := "session-" + roomID
+		if _, err := db.Exec(`INSERT INTO live_sessions(
+			id, room_config_id, status, started_at, clock_source, data_path,
+			schema_version, created_at, updated_at
+		) VALUES (?, ?, 'completed', 1, 'received', ?, 1, 1, 1)`, sessionID, roomID, "rooms/"+roomID); err != nil {
+			t.Fatalf("insert session %q: %v", sessionID, err)
+		}
+	}
+	insertEvent := `INSERT INTO live_events(
+		id, session_id, ingest_sequence, event_role, method, kind, dedupe_key,
+		received_at, session_offset_ms, clock_confidence, normalized_json,
+		parse_status, normalizer_version
+	) VALUES (?, ?, 1, ?, 'GiftMethod', 'gift', ?, 2, 1, 1, '{}', 'parsed', 'v1')`
+	if _, err := db.Exec(insertEvent, "aggregate-a", "session-room-a", "aggregate", "aggregate-a"); err != nil {
+		t.Fatalf("insert aggregate event: %v", err)
+	}
+	if _, err := db.Exec(insertEvent, "source-a", "session-room-a", "source", "source-a"); err != nil {
+		t.Fatalf("insert source event: %v", err)
+	}
+	if _, err := db.Exec(insertEvent, "source-b", "session-room-a", "source", "source-b"); err == nil {
+		t.Fatal("duplicate source ingest_sequence insert succeeded")
+	}
+	if _, err := db.Exec(insertEvent, "aggregate-b", "session-room-a", "aggregate", "aggregate-b"); err != nil {
+		t.Fatalf("second aggregate at shared ingest_sequence: %v", err)
+	}
+	if _, err := db.Exec(insertEvent, "bad-role", "session-room-a", "not-a-role", "bad-role"); err == nil {
+		t.Fatal("invalid event_role insert succeeded")
+	}
+
+	insertCheckpoint := `INSERT INTO event_ingest_checkpoints(
+		session_id, committed_sequence, state, privacy_key_id,
+		spool_file, spool_offset, raw_file, raw_offset, updated_at
+	) VALUES ('session-room-a', 0, ?, ?, '', 0, '', 0, 1)`
+	if _, err := db.Exec(insertCheckpoint, "invalid", "key-a"); err == nil {
+		t.Fatal("invalid checkpoint state insert succeeded")
+	}
+	if _, err := db.Exec(insertCheckpoint, "open", ""); err == nil {
+		t.Fatal("empty checkpoint privacy_key_id insert succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO event_ingest_checkpoints(
+		session_id, committed_sequence, state, privacy_key_id,
+		spool_file, spool_offset, raw_file, raw_offset, updated_at
+	) VALUES ('session-room-b', 1, 'open', 'key-b', 'spool/a.wal', 1, '', 0, 1)`); err == nil {
+		t.Fatal("positive checkpoint without raw position succeeded")
+	}
+	if _, err := db.Exec(insertCheckpoint, "open", "key-a"); err != nil {
+		t.Fatalf("insert valid checkpoint: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE event_ingest_checkpoints SET privacy_key_id = 'key-b' WHERE session_id = 'session-room-a'`); err == nil {
+		t.Fatal("checkpoint privacy key mutation succeeded")
+	}
+	if _, err := db.Exec(`UPDATE event_ingest_checkpoints SET state = 'closed' WHERE session_id = 'session-room-a'`); err == nil {
+		t.Fatal("checkpoint open-to-closed transition succeeded")
+	}
+	if _, err := db.Exec(`UPDATE event_ingest_checkpoints SET state = 'closing' WHERE session_id = 'session-room-a'`); err != nil {
+		t.Fatalf("checkpoint open-to-closing transition: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE event_ingest_checkpoints SET state = 'closed' WHERE session_id = 'session-room-a'`); err != nil {
+		t.Fatalf("checkpoint closing-to-closed transition: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE event_ingest_checkpoints SET updated_at = 2 WHERE session_id = 'session-room-a'`); err == nil {
+		t.Fatal("closed checkpoint mutation succeeded")
+	}
+
+	insertCombo := `INSERT INTO gift_combo_states(
+		session_id, combo_key, status, gift_id, total_count,
+		first_ingest_sequence, last_ingest_sequence, started_at, updated_at,
+		closed_at, aggregate_event_id, normalizer_version
+	) VALUES (?, ?, ?, 'gift-1', 2, 1, 1, 1, 2, ?, ?, 'v1')`
+	if _, err := db.Exec(insertCombo, "session-room-a", "bad-open", "open", int64(3), "aggregate-a"); err == nil {
+		t.Fatal("open combo with close fields insert succeeded")
+	}
+	if _, err := db.Exec(insertCombo, "session-room-b", "cross-session", "closed", int64(3), "aggregate-a"); err == nil {
+		t.Fatal("cross-session aggregate reference succeeded")
+	}
+	if _, err := db.Exec(insertCombo, "session-room-a", "closed-combo", "closed", int64(3), "aggregate-a"); err != nil {
+		t.Fatalf("insert valid closed combo: %v", err)
+	}
+	closedMutations := []struct {
+		name       string
+		assignment string
+	}{
+		{name: "session_id", assignment: "session_id = 'session-room-b'"},
+		{name: "combo_key", assignment: "combo_key = 'renamed-combo'"},
+		{name: "status", assignment: "status = 'open'"},
+		{name: "user_hash", assignment: "user_hash = 'changed-user'"},
+		{name: "gift_id", assignment: "gift_id = 'gift-2'"},
+		{name: "gift_name", assignment: "gift_name = 'changed-gift'"},
+		{name: "total_count", assignment: "total_count = 3"},
+		{name: "total_value", assignment: "total_value = 6"},
+		{name: "first_ingest_sequence", assignment: "first_ingest_sequence = 2"},
+		{name: "last_ingest_sequence", assignment: "last_ingest_sequence = 2"},
+		{name: "started_at", assignment: "started_at = 0"},
+		{name: "updated_at", assignment: "updated_at = 3"},
+		{name: "closed_at", assignment: "closed_at = 4"},
+		{name: "aggregate_event_id", assignment: "aggregate_event_id = 'aggregate-b'"},
+		{name: "normalizer_version", assignment: "normalizer_version = 'v2'"},
+	}
+	for _, mutation := range closedMutations {
+		t.Run("closed_combo_rejects_"+mutation.name, func(t *testing.T) {
+			_, err := db.Exec(`UPDATE gift_combo_states SET ` + mutation.assignment +
+				` WHERE session_id = 'session-room-a' AND combo_key = 'closed-combo'`)
+			if err == nil {
+				t.Fatalf("closed combo %s mutation succeeded", mutation.name)
+			}
+			if !strings.Contains(err.Error(), "gift combo is already closed") {
+				t.Fatalf("closed combo %s mutation used wrong constraint: %v", mutation.name, err)
+			}
+		})
+	}
+	if _, err := db.Exec(`UPDATE gift_combo_states SET
+		session_id = session_id,
+		combo_key = combo_key,
+		status = status,
+		user_hash = user_hash,
+		gift_id = gift_id,
+		gift_name = gift_name,
+		total_count = total_count,
+		total_value = total_value,
+		first_ingest_sequence = first_ingest_sequence,
+		last_ingest_sequence = last_ingest_sequence,
+		started_at = started_at,
+		updated_at = updated_at,
+		closed_at = closed_at,
+		aggregate_event_id = aggregate_event_id,
+		normalizer_version = normalizer_version
+		WHERE session_id = 'session-room-a' AND combo_key = 'closed-combo'`); err != nil {
+		t.Fatalf("closed combo exact no-op update failed: %v", err)
+	}
+
+	insertGap := `INSERT INTO capture_gaps(
+		id, session_id, kind, started_at, start_offset_ms, severity,
+		reason_code, details_json, dedupe_key
+	) VALUES (?, 'session-room-a', ?, 1, 0, 'warning', 'PERSISTENCE_BUSY', '{}', ?)`
+	if _, err := db.Exec(insertGap, "gap-a", "event_persistence", "gap-key"); err != nil {
+		t.Fatalf("insert event_persistence gap: %v", err)
+	}
+	if _, err := db.Exec(insertGap, "gap-b", "event_persistence", "gap-key"); err == nil {
+		t.Fatal("duplicate capture gap dedupe key succeeded")
+	}
+	if _, err := db.Exec(insertGap, "gap-c", "not-a-gap", "other-key"); err == nil {
+		t.Fatal("invalid capture gap kind succeeded")
+	}
+}
+
+func assertSQLiteObject(t *testing.T, db *sql.DB, objectType, name string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?`, objectType, name).Scan(&count); err != nil {
+		t.Fatalf("query sqlite object %s %q: %v", objectType, name, err)
+	}
+	if count != 1 {
+		t.Fatalf("sqlite object %s %q count = %d, want 1", objectType, name, count)
+	}
+}
 func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 	t.Helper()
 	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)

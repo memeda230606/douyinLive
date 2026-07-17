@@ -12,6 +12,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
+	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
@@ -91,6 +92,12 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = logFile.Close()
 		return fmt.Errorf("initialize settings service: %w", err)
 	}
+	appSettings, err := settingsService.GetSettings(ctx)
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("load application settings: %w", err)
+	}
 	roomService, err := room.NewService(store.Writer(), store.Reader(), credentialStore)
 	if err != nil {
 		_ = store.Close()
@@ -113,8 +120,42 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 			"correlation_id", "startup", "scanned", repairReport.Scanned,
 			"repaired", repairReport.Repaired, "failed", repairReport.Failed)
 	}
-	captureCoordinator, err := capture.NewCoordinator(captureRepository, capture.CoordinatorOptions{})
+	eventWriter, err := eventstore.NewWriter(store.Writer())
 	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize event writer: %w", err)
+	}
+	eventManager, err := eventstore.NewManager(ctx, eventstore.ManagerOptions{
+		DataRoot: layout.Root, Writer: eventWriter, Credentials: credentialStore, Logger: logger,
+		PrivacyOptions: eventstore.PrivacyOptions{StoreDisplayName: appSettings.SaveDisplayNames},
+	})
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize event manager: %w", err)
+	}
+	recoverable, recoveryListErr := captureRepository.ListRecoverable(ctx)
+	if recoveryListErr != nil {
+		logger.WarnContext(ctx, "event spool startup recovery deferred",
+			"component", "eventstore", "error_code", "EVENT_RECOVERY_DEFERRED",
+			"correlation_id", "startup")
+	} else {
+		for _, session := range recoverable {
+			if err := eventManager.RecoverSession(ctx, eventSessionDescriptor(session)); err != nil {
+				logger.WarnContext(ctx, "event spool startup recovery incomplete",
+					"component", "eventstore", "error_code", "EVENT_RECOVERY_INCOMPLETE",
+					"correlation_id", session.ID, "session_id", session.ID)
+			}
+		}
+	}
+	captureCoordinator, err := capture.NewCoordinator(captureRepository, capture.CoordinatorOptions{
+		EventSinkFactory: func(factoryCtx context.Context, session capture.LiveSession, request capture.OpenRequest) (capture.EventSink, error) {
+			return eventManager.OpenSession(factoryCtx, eventSessionDescriptorForOpen(session, request))
+		},
+	})
+	if err != nil {
+		_ = eventManager.Shutdown(context.Background())
 		_ = store.Close()
 		_ = logFile.Close()
 		return fmt.Errorf("initialize capture coordinator: %w", err)
@@ -128,6 +169,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		Publisher:   statusPublisher,
 	})
 	if err != nil {
+		_ = eventManager.Shutdown(context.Background())
 		_ = store.Close()
 		_ = logFile.Close()
 		return fmt.Errorf("initialize room monitor manager: %w", err)
@@ -135,7 +177,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	if err := monitorManager.StartEnabled(ctx); err != nil {
 		return errors.Join(
 			fmt.Errorf("resume enabled room monitors: %w", err),
-			cleanupUncommittedInfrastructure(monitorManager, store, logFile),
+			cleanupUncommittedInfrastructure(monitorManager, eventManager, store, logFile),
 		)
 	}
 	if commitHook != nil {
@@ -151,7 +193,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		if superseded {
 			commitErr = errors.Join(ErrInfrastructureSuperseded, contextErr)
 		}
-		return errors.Join(commitErr, cleanupUncommittedInfrastructure(monitorManager, store, logFile))
+		return errors.Join(commitErr, cleanupUncommittedInfrastructure(monitorManager, eventManager, store, logFile))
 	}
 	a.initialized = true
 	a.store = store
@@ -160,6 +202,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	a.rooms = roomService
 	a.monitor = monitorManager
 	a.coordinator = captureCoordinator
+	a.events = eventManager
 	a.logFile = logFile
 	a.logger = logger
 	a.dataStatus = DataStatusDTO{
@@ -274,10 +317,33 @@ func (r *manifestHealthLogReporter) syncHealthLogLocked(event capture.ManifestHe
 	}
 	return nil
 }
-func cleanupUncommittedInfrastructure(monitor *room.MonitorManager, store *storage.Store, logFile *diagnostics.FileLogger) error {
-	var monitorErr, storeErr, logErr error
+
+func eventSessionDescriptor(session capture.LiveSession) eventstore.SessionDescriptor {
+	return eventstore.SessionDescriptor{
+		SessionID: session.ID, DataPath: session.DataPath,
+		PlatformRoomID: session.PlatformRoomID,
+		StartedAt:      time.UnixMilli(session.StartedAt).UTC(),
+	}
+}
+
+func eventSessionDescriptorForOpen(
+	session capture.LiveSession,
+	request capture.OpenRequest,
+) eventstore.SessionDescriptor {
+	descriptor := eventSessionDescriptor(session)
+	if !request.StartedAt.IsZero() {
+		descriptor.StartedAt = request.StartedAt
+	}
+	return descriptor
+}
+
+func cleanupUncommittedInfrastructure(monitor *room.MonitorManager, events *eventstore.Manager, store *storage.Store, logFile *diagnostics.FileLogger) error {
+	var monitorErr, eventErr, storeErr, logErr error
 	if monitor != nil {
 		monitorErr = monitor.Shutdown(context.Background())
+	}
+	if events != nil {
+		eventErr = events.Shutdown(context.Background())
 	}
 	if store != nil {
 		storeErr = store.Close()
@@ -285,5 +351,5 @@ func cleanupUncommittedInfrastructure(monitor *room.MonitorManager, store *stora
 	if logFile != nil {
 		logErr = logFile.Close()
 	}
-	return errors.Join(monitorErr, storeErr, logErr)
+	return errors.Join(monitorErr, eventErr, storeErr, logErr)
 }

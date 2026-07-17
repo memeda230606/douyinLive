@@ -186,7 +186,14 @@ func (a *DesktopApp) UpdateSettings(input settings.UpdateSettingsInput) (setting
 	if err != nil {
 		return settings.AppSettings{}, err
 	}
-	return service.UpdateSettings(a.application.Context(), input)
+	updated, err := service.UpdateSettings(a.application.Context(), input)
+	if err != nil {
+		return settings.AppSettings{}, err
+	}
+	if manager := a.application.EventStoreManager(); manager != nil {
+		manager.SetStoreDisplayName(updated.SaveDisplayNames)
+	}
+	return updated, nil
 }
 
 func (a *DesktopApp) roomService() (*room.Service, error) {

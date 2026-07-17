@@ -109,6 +109,19 @@ func TestP3CaptureIsolationAcceptance(t *testing.T) {
 		queryCancel()
 		t.Fatalf("P3ACC_ACTIVE_QUERY_FAILED")
 	}
+	var eventSequence int64
+	var eventState, privacyKeyID string
+	if err := store.Reader().QueryRowContext(queryCtx,
+		`SELECT committed_sequence, state, privacy_key_id
+		FROM event_ingest_checkpoints WHERE session_id = ?`, sessionID,
+	).Scan(&eventSequence, &eventState, &privacyKeyID); err != nil {
+		queryCancel()
+		t.Fatalf("P3ACC_EVENT_CHECKPOINT_READ_FAILED")
+	}
+	if eventSequence < 0 || eventState != "closed" || strings.TrimSpace(privacyKeyID) == "" {
+		queryCancel()
+		t.Fatalf("P3ACC_EVENT_CHECKPOINT_MISMATCH state=%s", p3AcceptanceSafeCheckpointState(eventState))
+	}
 	queryCancel()
 
 	if session.ID != sessionID || session.RoomConfigID != config.ID || strings.TrimSpace(session.OperationID) == "" {
@@ -259,7 +272,8 @@ func p3AcceptanceShutdownAndVerify(t *testing.T, application *Application, store
 		t.Fatalf("P3ACC_LIFECYCLE_NOT_STOPPED")
 	}
 	if application.Store() != nil || application.RoomService() != nil || application.SettingsService() != nil ||
-		application.CredentialStore() != nil || application.MonitorManager() != nil || application.CaptureCoordinator() != nil {
+		application.CredentialStore() != nil || application.MonitorManager() != nil ||
+		application.CaptureCoordinator() != nil || application.EventStoreManager() != nil {
 		t.Fatalf("P3ACC_INFRASTRUCTURE_LEAK")
 	}
 	if err := store.Writer().PingContext(context.Background()); err == nil {
@@ -316,6 +330,15 @@ func p3AcceptanceSafeRecordingStatus(status capture.RecordingStatus) string {
 		capture.RecordingFinalizing, capture.RecordingCompleted, capture.RecordingIncomplete,
 		capture.RecordingFailed:
 		return string(status)
+	default:
+		return "unknown"
+	}
+}
+
+func p3AcceptanceSafeCheckpointState(state string) string {
+	switch state {
+	case "open", "closing", "closed", "degraded":
+		return state
 	default:
 		return "unknown"
 	}

@@ -58,10 +58,18 @@ internal/capture/
   segment_probe.go           # ffprobe 校验
   recovery.go                # 启动恢复
 internal/eventstore/
-  normalizer.go              # protobuf -> 标准事件
-  spool.go                   # JSONL/WAL
-  writer.go                  # SQLite 批写
-  deduplicator.go            # 去重与礼物合并
+  contracts.go               # 事件、checkpoint、缺口和礼物折叠契约
+  queue.go                   # 单一有序、条数与字节双有界队列
+  binpack.go                 # 原始载荷帧、压缩和 CRC32C
+  spool.go                   # raw binpack + 元数据 WAL 耐久屏障
+  normalizer.go              # protobuf -> 白名单标准事件
+  privacy.go                 # HMAC 身份与内容隐私边界
+  dedupe.go                  # 容量和 TTL 有界的短窗去重
+  gift_combo.go              # 礼物连击折叠
+  writer.go                  # SQLite 原子批写与 checkpoint CAS
+  manager.go                 # 场次事件写入器生命周期
+  recovery.go                # checkpoint 尾部重放与降级恢复
+  sink.go                    # EventSink 接纳、排空和关闭
 ```
 
 每个房间由一个 `RoomSupervisor` 串行处理状态变化。直播连接、录制进程和事件写入可以并发，但只能通过监督器发出状态转换，避免两个 goroutine 同时创建场次或启动 FFmpeg。
@@ -110,6 +118,15 @@ stateDiagram-v2
 - 同一场次的读取修复、创建后提升和状态转换共用串行锁，并在写文件前重读数据库版本；`updated_at` 严格单调，避免旧 repair 或同毫秒转换覆盖新 manifest。批量启动修复每页只做一次健康日志 Sync，未清数量必须准确递减到 0。
 - `RoomSupervisor` 仍是唯一房间状态机；`CaptureCoordinator` 只返回由 worker 持有的场次句柄并组合 Recorder/EventSink。外层连接中断进入 `RECONNECTING` 时保留句柄；下一次可靠在线执行 Rebind 并复用同一 `session_id`，只有确认下播、用户停止或应用退出才 Finalize。
 - MonitorManager 与 Application 关闭均采用调用方无关的共享清理：调用方 context 只限制等待，不拥有清理；Application 进入 `STOPPING` 后立即摘除公共服务但保留原生命周期，等 Monitor/场次真正排空后再取消 context、关闭 SQLite 与日志。初始化在开始和提交两个位置拒绝 `STOPPING/STOPPED`，禁止超时关闭后的资源复活。
+
+### 4.4 事件持久化契约（Schema v3）
+
+- `live_events` 新增 `ingest_sequence`、`event_role`、`normalizer_version` 和 `parse_error_code`。新采集的 source 事件按场次从 1 严格递增且唯一；aggregate 是从 source 派生的耐久事件，可以引用相同序列但不能冒充 source。
+- `event_ingest_checkpoints` 保存最后完整提交的序列、raw/WAL 字节位置、`open/closing/closed/degraded` 状态和不可变 `privacy_key_id`。正序状态转换和 closed 后不可变由数据库触发器兜底。
+- 每个批次把 source/aggregate 事件、`gift_combo_states`、`capture_gaps` 与 checkpoint 放在同一 SQLite 事务中，并以旧 checkpoint 序列作为 CAS 前置条件；事务失败不得单独推进序列或派生状态。
+- `gift_combo_states` 按场次与 combo key 唯一保存 open/closed 折叠。closed 行及其 aggregate 引用不可重开或改写，重启和重复 source 不能生成第二条聚合。
+- `capture_gaps` 增加 `event_persistence` 类型和场次内唯一 `dedupe_key`，用于幂等记录本地拒绝、spool 或数据库持久化缺口。
+- 事件先完成 raw binpack Sync，再完成引用该 raw 帧的 WAL Sync，最后才允许 SQLite checkpoint 前进。恢复只从 checkpoint 之后按批读取，禁止全场载入内存或 source-only 提前确认。
 
 ## 5. 流地址解析
 
@@ -184,7 +201,7 @@ stateDiagram-v2
 2. 请求 FFmpeg 优雅结束并等待当前容器写尾。
 3. 5 秒无响应时发送终止；再等 3 秒后强制结束并把分片标记为待恢复。
 4. 探测全部分片、补全媒体清单、计算 SHA-256（可后台低优先级完成）。
-5. 刷新事件写入器并关闭场次 spool。
+5. 解除事件订阅并等待在途 `Accept` 返回，关闭有界队列；排空 source、关闭所有 open 礼物折叠，依次提交 `closing` checkpoint、关闭并同步 spool、提交 `closed` checkpoint。
 6. 更新场次完整性、触发基础聚合和 UI 完成事件。
 
 ## 7. 录制恢复策略
@@ -217,8 +234,9 @@ data/
 └── rooms/<room-config-id>/sessions/<yyyy>/<mm>/<session-id>/
     ├── session.json
     ├── events/
-    │   ├── events-000001.jsonl
-    │   └── raw-000001.binpack
+    │   └── spool/
+    │       ├── raw-<utc-hour>-<index>.binpack
+    │       └── wal-<utc-hour>-<index>.wal
     ├── media/
     │   ├── segment-000001-<utc>.mkv
     │   └── playback-000001.mp4
@@ -238,15 +256,18 @@ data/
 
 `SubscribeMessage` 回调只执行：
 
-1. 捕获 `ReceivedAt`、方法、房间元数据和原始 payload 副本。
-2. 生成内部 `IngestEnvelope`。
-3. 尝试写入有界高优先级通道。
+1. 使用上游分发前已经捕获的 `ReceivedAt`，复制方法、房间元数据和原始 payload；每个订阅者取得独立副本，不能被旧回调修改。
+2. 分配场次内严格递增序列和事件 ID，生成内部 `IngestEnvelope`。
+3. 先尝试普通接纳额度，额度耗尽时使用紧急预留；两者共享同一个 FIFO，紧急预留不能让后来的事件超车。
+4. 两类额度都耗尽或载荷超过上限时累计 `EVENT_DROPPED_LOCAL`，以稳定 dedupe key 物化为 `event_persistence` 缺口并发出严重告警。
 
-回调中禁止数据库查询、FFmpeg 调用、网络请求和分析。通道满时优先写紧急 spool；紧急 spool 失败必须累计 `EVENT_DROPPED_LOCAL` 并发出严重告警。
+回调中禁止数据库查询、文件 Sync、FFmpeg 调用、网络请求和分析。Finalize 先注销订阅，再等待所有已进入的回调完成接纳，之后才允许关闭队列和 spool，避免关闭竞态丢失已分发消息。
 
 ### 9.2 标准化与原始数据
 
 - `LiveEvent` 保存常用字段；原始 protobuf 保存到按块压缩的 binpack，并通过 offset/length 引用。
+- raw 帧包含版本、长度和 CRC32C；载荷超过压缩阈值且压缩后更小时使用单并发 zstd。WAL 只保存 envelope 元数据和 raw 引用，不复制原始 payload。
+- 每批必须按 raw flush/Sync → WAL flush/Sync 的顺序建立耐久屏障。WAL 不能引用尚未 Sync 的 raw 字节；SQLite 不能引用尚未 Sync 的 WAL 位置。
 - protobuf 解析失败或未知 method 仍保存原始数据和失败原因。
 - 用户标识进入标准表前使用安装级盐进行 HMAC-SHA256；昵称作为可配置隐私字段。
 - 内容字段做长度上限和 UTF-8 修复，原始载荷不修改。
@@ -256,7 +277,17 @@ data/
 - 优先使用平台 message ID 去重。
 - 无 ID 时使用 `room_id + method + platform_time + payload_hash`，只在短时间窗口去重。
 - 去重缓存有容量和 TTL 上限，数据库对 `(session_id, dedupe_key)` 建唯一约束作为最后防线。
-- 礼物连击按平台 `group_id`/重复 ID/结束标志维护聚合；原始消息全部保留，标准事件另写合并结果。
+- 礼物连击按平台 `group_id`/重复 ID/结束标志维护聚合；source 原始消息全部保留，closed 时另写一条 aggregate 标准事件。
+- 折叠只加载当前批触及的 open 状态；空闲和收尾关闭按固定页大小扫描，不能把全场 open/closed combo 常驻内存。closed 状态由数据库记录并保持不可变，重启后的迟到消息只能被幂等忽略。
+
+### 9.4 批写、降级与恢复
+
+- 默认每 250 条或 500 ms 形成一批；队列、spool、标准化和 SQLite 各自保持相同 source 顺序。
+- SQLite 事务同时提交 source/aggregate 事件、礼物折叠、持久化缺口和 checkpoint。checkpoint 的 `PreviousSequence` 不匹配时整批失败，不做部分成功。
+- `SQLITE_BUSY` 在 5 秒窗口内指数退避。超过窗口或遇到可恢复数据库错误后进入 `degraded`，继续把事件追加到有界 spool，但 checkpoint 停留在最后完整事务。
+- 降级恢复和进程重启都只从 checkpoint 后的 WAL 位置按批重放；每批重新标准化、查询触及的去重键和礼物状态并原子提交，内存占用不随场次总事件数增长。
+- WAL/raw 的截断尾帧按 CRC 和长度修复到最后有效边界；中段损坏、路径越界、privacy key 不一致或 spool 超限属于 fail-closed 错误，不静默跨过。
+- checkpoint 关闭顺序为 `open/degraded → closing → closed`。关闭调用超时只停止调用方等待，后台继续同一排空；Application 必须在所有 EventSink 完成后才关闭 SQLite。
 
 ## 10. 时间轴与缺口
 
@@ -275,6 +306,9 @@ data/
 - 事件通道、FFmpeg 日志、UI 批次和分析队列全部有界。
 - 每房间一个根 context；场次、录制器和写入器为子 context。
 - 停止顺序由监督器统一管理，任何子组件不得关闭不属于自己的通道。
+- 默认普通接纳为 4,096 条/32 MiB，紧急预留为 512 条/8 MiB；共享总上限为 4,608 条/128 MiB，单 payload 上限 4 MiB。预留只影响接纳，不改变 FIFO 顺序。
+- 每场次 raw+WAL spool 默认总上限 4 GiB，启动时发现的既有分片也计入同一预算；零值配置选择该默认值而不是无限制。
+- 礼物折叠、恢复重放和数据库查询均按批次/页大小限制；不得以 deferred map、全量 replay 或保留全部 closed combo 的方式换取恢复便利。
 
 ## 12. 测试计划
 
@@ -291,14 +325,23 @@ data/
 - 停止监控、退出程序、收尾超时和启动恢复。
 - 用模型/表驱动测试验证不存在非法转换和双场次。
 
-### 12.3 FFmpeg 与恢复
+### 12.3 事件持久化
+
+- Schema v2→v3 备份、旧事件/缺口保留、约束触发器和迁移失败全回滚。
+- 队列条数/字节/单载荷边界、普通与紧急接纳共享 FIFO、深拷贝所有权、关闭和在途接纳竞态。
+- raw/WAL CRC、压缩、截断修复、轮转、Sync 顺序、总容量边界以及重启后既有分片计费。
+- SQLite 批次原子性、checkpoint CAS、重复 source、closed checkpoint/combo 不可变、数据库忙/满/损坏和降级尾部重放。
+- allowlist 标准化、未知/失败事件、HMAC 身份、昵称策略、短窗去重、礼物结束/空闲关闭和重启迟到消息。
+- 高基数礼物、长时间数据库降级和连续本地拒绝测试必须证明内存及耐久辅助状态保持有界。
+
+### 12.4 FFmpeg 与恢复
 
 - 使用本地生成的短测试流验证分片、优雅停止、探测和封装。
 - 注入 403、EOF、进程崩溃、磁盘写失败和 ffprobe 失败。
 - 校验进程参数脱敏、Job Object 清理和 `.partial` 恢复。
 - 10 分钟稳定性测试统计 goroutine、句柄、内存、分片连续性和事件延迟。
 
-### 12.4 验收
+### 12.5 验收
 
 - 开播后在目标时间内建立消息连接并开始录制。
 - 网络恢复后自动创建新分片并记录准确缺口。

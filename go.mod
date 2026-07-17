@@ -12,6 +12,7 @@ require (
 	github.com/jwwsjlm/Tikhub v0.2.3
 	github.com/jwwsjlm/douyinlive-proto v0.1.2
 	github.com/jwwsjlm/req/v3 v3.58.4
+	github.com/klauspost/compress v1.19.0
 	github.com/lxzan/gws v1.9.1
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
@@ -46,7 +47,6 @@ require (
 	github.com/google/pprof v0.0.0-20260604005048-7023385849c0 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect

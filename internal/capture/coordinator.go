@@ -65,7 +65,7 @@ type RecorderFactory func(context.Context, LiveSession, OpenRequest, CaptureSour
 // EventSink.Accept must be bounded and non-blocking. Implementations may spool
 // internally, but callbacks from DouyinLive must never perform database work.
 type EventSink interface {
-	Accept(*douyinLive.LiveMessage) bool
+	Accept(*douyinLive.LiveMessage)
 	FlushAndClose(context.Context) error
 }
 
@@ -114,9 +114,7 @@ func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*
 		}
 	}
 	if options.EventSinkFactory == nil {
-		options.EventSinkFactory = func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
-			return discardEventSink{}, nil
-		}
+		return nil, errors.New("capture coordinator event sink factory is nil")
 	}
 	return &Coordinator{
 		repository: repository, recorderFactory: options.RecorderFactory,
@@ -285,7 +283,7 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 		Status: SessionRecording, RecordingStatus: targetRecording,
 	})
 	if err != nil {
-		source.Unsubscribe(subscriptionID)
+		runtime.stopAcceptingMessages(source, subscriptionID)
 		if runtime.recorder != nil {
 			_ = boundedCall(ctx, runtime.recorder.Stop)
 		}
@@ -327,6 +325,7 @@ type sessionRuntime struct {
 	coordinator               *Coordinator
 	operationMu               sync.Mutex
 	mu                        sync.Mutex
+	acceptWG                  sync.WaitGroup
 	current                   LiveSession
 	operationID               string
 	source                    CaptureSource
@@ -508,6 +507,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		if source != nil && subscriptionID != "" {
 			source.Unsubscribe(subscriptionID)
 		}
+		s.acceptWG.Wait()
 		if sink != nil {
 			sinkErr = boundedCall(ctx, sink.FlushAndClose)
 		}
@@ -583,12 +583,27 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 func (s *sessionRuntime) subscribe(source CaptureSource, operationID string) string {
 	return source.SubscribeMessage(func(message *douyinLive.LiveMessage) {
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		if s.finalizing || s.finalized || s.operationID != operationID || s.sink == nil {
+			s.mu.Unlock()
 			return
 		}
-		s.sink.Accept(message)
+		sink := s.sink
+		s.acceptWG.Add(1)
+		s.mu.Unlock()
+
+		defer s.acceptWG.Done()
+		sink.Accept(message)
 	})
+}
+
+func (s *sessionRuntime) stopAcceptingMessages(source CaptureSource, subscriptionID string) {
+	s.mu.Lock()
+	s.finalizing = true
+	s.mu.Unlock()
+	if source != nil && subscriptionID != "" {
+		source.Unsubscribe(subscriptionID)
+	}
+	s.acceptWG.Wait()
 }
 
 func failureRecordingStatus(original RecordingStatus) RecordingStatus {
@@ -652,8 +667,3 @@ func coordinatorContext(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
-
-type discardEventSink struct{}
-
-func (discardEventSink) Accept(*douyinLive.LiveMessage) bool { return true }
-func (discardEventSink) FlushAndClose(context.Context) error { return nil }

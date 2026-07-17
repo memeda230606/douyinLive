@@ -194,6 +194,165 @@ var schemaMigrations = []migration{
 				ON live_sessions(manifest_dirty, id)`,
 		},
 	},
+	{
+		Version: 3,
+		Name:    "durable_event_ingest",
+		Statements: []string{
+			`ALTER TABLE live_events ADD COLUMN ingest_sequence INTEGER NOT NULL DEFAULT 0
+				CHECK (ingest_sequence >= 0)`,
+			`ALTER TABLE live_events ADD COLUMN event_role TEXT NOT NULL DEFAULT 'source'
+				CHECK (event_role IN ('source', 'aggregate'))`,
+			`ALTER TABLE live_events ADD COLUMN normalizer_version TEXT NOT NULL DEFAULT 'legacy-v1'
+				CHECK (length(trim(normalizer_version)) > 0)`,
+			`ALTER TABLE live_events ADD COLUMN parse_error_code TEXT
+				CHECK (parse_error_code IS NULL OR length(trim(parse_error_code)) > 0)`,
+			`CREATE INDEX idx_live_events_session_ingest
+				ON live_events(session_id, ingest_sequence, event_role)`,
+			`CREATE UNIQUE INDEX idx_live_events_source_sequence
+				ON live_events(session_id, ingest_sequence)
+				WHERE event_role = 'source' AND ingest_sequence > 0`,
+			`CREATE INDEX idx_live_events_role_offset
+				ON live_events(session_id, event_role, session_offset_ms)`,
+			`CREATE UNIQUE INDEX idx_live_events_session_id
+				ON live_events(session_id, id)`,
+			`CREATE TABLE event_ingest_checkpoints (
+				session_id TEXT PRIMARY KEY REFERENCES live_sessions(id) ON DELETE CASCADE,
+				committed_sequence INTEGER NOT NULL DEFAULT 0 CHECK (committed_sequence >= 0),
+				state TEXT NOT NULL CHECK (state IN ('open', 'closing', 'closed', 'degraded')),
+				privacy_key_id TEXT NOT NULL CHECK (length(trim(privacy_key_id)) > 0),
+				spool_file TEXT NOT NULL DEFAULT '',
+				spool_offset INTEGER NOT NULL DEFAULT 0 CHECK (spool_offset >= 0),
+				raw_file TEXT NOT NULL DEFAULT '',
+				raw_offset INTEGER NOT NULL DEFAULT 0 CHECK (raw_offset >= 0),
+				updated_at INTEGER NOT NULL,
+				CHECK (
+					(committed_sequence = 0 AND spool_file = '' AND spool_offset = 0 AND raw_file = '' AND raw_offset = 0)
+					OR
+					(committed_sequence > 0 AND length(trim(spool_file)) > 0 AND spool_offset > 0
+						AND length(trim(raw_file)) > 0 AND raw_offset > 0)
+				)
+			)`,
+			`CREATE INDEX idx_event_ingest_checkpoints_sequence
+				ON event_ingest_checkpoints(committed_sequence, session_id)`,
+			`CREATE TRIGGER trg_event_checkpoint_privacy_key_immutable
+				BEFORE UPDATE ON event_ingest_checkpoints
+				WHEN NEW.privacy_key_id IS NOT OLD.privacy_key_id
+				BEGIN
+					SELECT RAISE(ABORT, 'event checkpoint privacy key is immutable');
+				END`,
+			`CREATE TRIGGER trg_event_checkpoint_state_transition
+				BEFORE UPDATE ON event_ingest_checkpoints
+				WHEN NOT (
+					(OLD.state = 'open' AND NEW.state IN ('open', 'closing', 'degraded')) OR
+					(OLD.state = 'closing' AND NEW.state IN ('closing', 'closed', 'degraded')) OR
+					(OLD.state = 'degraded' AND NEW.state IN ('degraded', 'open', 'closing', 'closed')) OR
+					(OLD.state = 'closed' AND NEW.state = 'closed')
+				)
+				BEGIN
+					SELECT RAISE(ABORT, 'event checkpoint state transition is invalid');
+				END`,
+			`CREATE TRIGGER trg_event_checkpoint_closed_immutable
+				BEFORE UPDATE ON event_ingest_checkpoints
+				WHEN OLD.state = 'closed' AND (
+					NEW.committed_sequence IS NOT OLD.committed_sequence OR
+					NEW.spool_file IS NOT OLD.spool_file OR
+					NEW.spool_offset IS NOT OLD.spool_offset OR
+					NEW.raw_file IS NOT OLD.raw_file OR
+					NEW.raw_offset IS NOT OLD.raw_offset OR
+					NEW.updated_at IS NOT OLD.updated_at
+				)
+				BEGIN
+					SELECT RAISE(ABORT, 'event checkpoint is already closed');
+				END`,
+			`CREATE TABLE gift_combo_states (
+				session_id TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+				combo_key TEXT NOT NULL CHECK (length(trim(combo_key)) > 0),
+				status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+				user_hash TEXT,
+				gift_id TEXT NOT NULL CHECK (length(trim(gift_id)) > 0),
+				gift_name TEXT,
+				total_count INTEGER NOT NULL CHECK (total_count > 0),
+				total_value REAL CHECK (total_value IS NULL OR total_value >= 0),
+				first_ingest_sequence INTEGER NOT NULL CHECK (first_ingest_sequence > 0),
+				last_ingest_sequence INTEGER NOT NULL CHECK (last_ingest_sequence >= first_ingest_sequence),
+				started_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL CHECK (updated_at >= started_at),
+				closed_at INTEGER,
+				aggregate_event_id TEXT,
+				normalizer_version TEXT NOT NULL CHECK (length(trim(normalizer_version)) > 0),
+				PRIMARY KEY(session_id, combo_key),
+				FOREIGN KEY(session_id, aggregate_event_id)
+					REFERENCES live_events(session_id, id) ON DELETE RESTRICT,
+				CHECK (
+					(status = 'open' AND closed_at IS NULL AND aggregate_event_id IS NULL)
+					OR
+					(status = 'closed' AND closed_at IS NOT NULL AND closed_at >= updated_at AND aggregate_event_id IS NOT NULL)
+				)
+			)`,
+			`CREATE INDEX idx_gift_combo_states_status_updated
+				ON gift_combo_states(session_id, status, updated_at)`,
+			`CREATE INDEX idx_gift_combo_states_last_sequence
+				ON gift_combo_states(session_id, last_ingest_sequence)`,
+			`CREATE UNIQUE INDEX idx_gift_combo_states_aggregate
+				ON gift_combo_states(aggregate_event_id) WHERE aggregate_event_id IS NOT NULL`,
+			`CREATE TRIGGER trg_gift_combo_closed_immutable
+				BEFORE UPDATE ON gift_combo_states
+				WHEN OLD.status = 'closed' AND (
+					NEW.session_id IS NOT OLD.session_id OR
+					NEW.combo_key IS NOT OLD.combo_key OR
+					NEW.status IS NOT OLD.status OR
+					NEW.user_hash IS NOT OLD.user_hash OR
+					NEW.gift_id IS NOT OLD.gift_id OR
+					NEW.gift_name IS NOT OLD.gift_name OR
+					NEW.total_count IS NOT OLD.total_count OR
+					NEW.total_value IS NOT OLD.total_value OR
+					NEW.first_ingest_sequence IS NOT OLD.first_ingest_sequence OR
+					NEW.last_ingest_sequence IS NOT OLD.last_ingest_sequence OR
+					NEW.started_at IS NOT OLD.started_at OR
+					NEW.updated_at IS NOT OLD.updated_at OR
+					NEW.closed_at IS NOT OLD.closed_at OR
+					NEW.aggregate_event_id IS NOT OLD.aggregate_event_id OR
+					NEW.normalizer_version IS NOT OLD.normalizer_version
+				)
+				BEGIN
+					SELECT RAISE(ABORT, 'gift combo is already closed');
+				END`,
+			`ALTER TABLE capture_gaps RENAME TO capture_gaps_v2`,
+			`DROP INDEX idx_capture_gaps_session_start`,
+			`CREATE TABLE capture_gaps (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+				media_segment_id TEXT REFERENCES media_segments(id) ON DELETE SET NULL,
+				kind TEXT NOT NULL CHECK (kind IN ('message_disconnect', 'recording_restart', 'stream_unavailable', 'disk_full', 'process_crash', 'clock_uncertain', 'event_persistence')),
+				started_at INTEGER NOT NULL,
+				ended_at INTEGER,
+				start_offset_ms INTEGER NOT NULL,
+				end_offset_ms INTEGER,
+				severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error')),
+				recovered INTEGER NOT NULL DEFAULT 0 CHECK (recovered IN (0, 1)),
+				reason_code TEXT NOT NULL,
+				details_json TEXT NOT NULL DEFAULT '{}',
+				dedupe_key TEXT NOT NULL CHECK (length(trim(dedupe_key)) > 0),
+				UNIQUE(session_id, dedupe_key)
+			)`,
+			`INSERT INTO capture_gaps(
+				id, session_id, media_segment_id, kind, started_at, ended_at,
+				start_offset_ms, end_offset_ms, severity, recovered, reason_code,
+				details_json, dedupe_key
+			)
+			SELECT id, session_id, media_segment_id, kind, started_at, ended_at,
+				start_offset_ms, end_offset_ms, severity, recovered, reason_code,
+				details_json, CASE WHEN id IS NULL
+					THEN 'legacy-rowid:' || rowid
+					ELSE 'legacy:' || id END
+			FROM capture_gaps_v2`,
+			`DROP TABLE capture_gaps_v2`,
+			`CREATE INDEX idx_capture_gaps_session_start
+				ON capture_gaps(session_id, start_offset_ms)`,
+			`CREATE INDEX idx_capture_gaps_kind_recovered
+				ON capture_gaps(session_id, kind, recovered, start_offset_ms)`,
+		},
+	},
 }
 
 const createMigrationTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (
