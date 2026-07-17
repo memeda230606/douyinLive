@@ -39,6 +39,8 @@ func (a *DesktopApp) startup(ctx context.Context) {
 			"error_code", "DATABASE_INIT_FAILED",
 			"correlation_id", "startup",
 		)
+	} else {
+		a.startAcceptanceHook(ctx)
 	}
 }
 

@@ -21,25 +21,27 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T15:02:34+08:00"
+updated_at: "2026-07-17T15:57:37+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "124e1a9a2e5d9c3e338ed0f19e40ae59150ee4bb"
-project_status: "READY"
-overall_completion_percent: 39
-current_phase: "PHASE-2-WAILS-ROOMS"
-current_task: "P2-ACC-001"
-next_task: "P3-CAP-001"
+last_verified_head: "161545b964c60fb7ad0f7dbfebbdfafc76f5d98c"
+project_status: "IN_PROGRESS"
+overall_completion_percent: 40
+current_phase: "PHASE-3-CAPTURE-MVP"
+current_task: "P3-CAP-001"
+next_task: "P3-EVT-001"
 expected_dirty_paths:
+  - "cmd/desktop/app.go"
+  - "cmd/desktop/acceptance_hook_disabled.go"
+  - "cmd/desktop/acceptance_hook_p2.go"
+  - "cmd/desktop/acceptance_hook_p2_test.go"
+  - "cmd/desktop/p2_acceptance.js"
   - "docs/00-master-development-plan.md"
-  - "docs/01-desktop-ui-development-plan.md"
-  - "docs/02-capture-and-recording-development-plan.md"
-  - "docs/04-engineering-testing-and-release-plan.md"
-  - "docs/validation/2026-07-17-phase-1-stream-validation.md"
+  - "docs/validation/2026-07-17-phase-2-acceptance.md"
 blockers: []
-last_completed_task: "P2-UI-001"
-last_completion_evidence: "完成总览、直播间、设置与诊断四个基础页面，包含导航、空状态、搜索筛选、房间新增/编辑/删除、Cookie 密码输入与清除、监控启停、设置表单、状态徽章及 room:status 单例事件桥；Wails 启动与所有返回载荷均经严格 Zod 运行时 schema 校验，额外凭据或流地址字段会被拒绝。前端 typecheck、4 项 Vitest、生产构建、全量 Go test/vet/build、cmd/main 和 Wails Windows 生产构建通过；真实 GUI 无遮挡截图确认总览正常，验证进程、数据与构建产物已清理。"
-resume_instruction: "执行 P2-ACC-001：按 docs/01 验证真实 GUI 的房间 CRUD、监控启停、设置与重启持久化，并使用可靠的窗口内退出或显式 Win32 消息验证监听任务能在 10 秒内优雅关闭；不得用跨计划任务 CloseMainWindow 返回值代替验收。"
+last_completed_task: "P2-ACC-001"
+last_completion_evidence: "使用用户授权测试直播间在隔离数据根完成三轮真实 Wails GUI 验收：房间新增/编辑、监控启停、设置保存、两次重启持久化、单次删除确认与删除持久化全部通过；监控活动状态下及其余两轮显式 WM_CLOSE 后分别在 61/56/56 ms 自然退出，退出码均为 0、无残留进程。验收构建在注入前 fail-closed 校验隔离根，生产构建仅包含空实现；全量 Go test/vet/build、前端 typecheck/4 项 Vitest/build、验收与普通 Wails 生产构建、普通生产 GUI 53 ms 退出冒烟全部通过，直播间标识和完整 URL 未写入源码、文档或证据。"
+resume_instruction: "执行 P3-CAP-001：按 docs/02 建立场次契约、仓储与监督器编排；先治理 Schema v1 缺少独立 recording_status 的契约缺口，以 Schema v2 迁移表达 unavailable，并复用现有 RoomSupervisor，禁止创建第二套房间状态机。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -71,17 +73,17 @@ resume_instruction: "执行 P2-ACC-001：按 docs/01 验证真实 GUI 的房间 
 | --- | ---: | --- | ---: | --- | --- |
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
-| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 95% | 桌面壳、数据基础、房间设置、监控状态机和基础页面完成 | 重启持久化、CRUD 与 10 秒关闭验收 |
-| PHASE-3 采集与录制 MVP | 30% | `NOT_STARTED` | 0% | — | 10 分钟录制、恢复、收尾和缺口审计通过 |
+| PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
+| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 0% | 已完成子计划复核并开始场次契约治理 | 完成场次、事件、录制、恢复、实时 UI 与 10 分钟验收 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`READY`** | **39%** | 文档、直播流解析及桌面房间管理基础链路完成 | 执行 P2-ACC-001 阶段验收 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **40%** | 文档、直播流解析及桌面房间管理闭环完成 | 执行 P3-CAP-001 场次契约、仓储与编排 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
 ### 0.4 当前任务队列
 
-任务按表格顺序执行；如需拆分新任务，使用同一阶段前缀并更新任务点。当前阶段 PHASE-2 总任务点为 20。
+任务按表格顺序执行；如需拆分新任务，使用同一阶段前缀并更新任务点。当前阶段 PHASE-3 总任务点为 30。
 
 | ID | 任务 | 点数 | 依赖 | 状态 | 完成证据或阻塞 | 下一动作 |
 | --- | --- | ---: | --- | --- | --- | --- |
@@ -98,9 +100,16 @@ resume_instruction: "执行 P2-ACC-001：按 docs/01 验证真实 GUI 的房间 
 | P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `DONE` | 房间 CRUD、Live ID 与录制策略校验、UUIDv7、DPAPI Cookie 引用、原子设置文件和保存目录持久化完成；重启/重复/删除/Cookie 不回显测试、全量 Go/前端/Wails 门禁及真实 GUI 数据初始化通过 | 由监控服务消费已脱敏房间配置，Cookie 仅在 Go 内部按引用读取 |
 | P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `DONE` | 每房间串行监督器、持久化启停、离线轮询、上线监听、连接重检、启动恢复、8 房间上限、状态查询和 `room:status` 事件完成；重复状态机、全量 Go/前端/Wails 与真实 GUI 启动门禁通过 | 由基础页面消费状态 DTO 和事件，不向前端发送 Cookie、凭据引用或流 URL |
 | P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `DONE` | 四个基础页面、房间 CRUD/监控动作、设置表单、严格运行时 schema 与单例状态事件桥完成；4 项 Vitest、全量前端/Go/Wails 门禁及真实 GUI 截图通过 | 执行 P2-ACC-001 重启、CRUD 与关闭验收 |
-| P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `READY` | P2-UI-001 已完成，真实 GUI 可启动且基础页面正常 | 验证重启保留、CRUD、监控启停及 10 秒内优雅关闭 |
+| P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `DONE` | [验收记录](validation/2026-07-17-phase-2-acceptance.md)：真实 GUI 三轮 CRUD、监控、设置及重启持久化通过；活动监控下 WM_CLOSE 61 ms 自然退出，三轮均小于 10 秒、退出码 0、无残留 | PHASE-2 完成；进入 P3-CAP-001 |
+| P3-CAP-001 | 建立场次契约、仓储与监督器编排 | 6 | P2-ACC-001 | `IN_PROGRESS` | 已完整复核 docs/02 与现有 RoomSupervisor/Schema v1；确认需以 Schema v2 增加独立 recording_status | 先完成契约决策、迁移、仓储与 fake recorder/event sink 状态机测试 |
+| P3-EVT-001 | 实现有界事件采集、spool、标准化、去重与批写 | 6 | P3-CAP-001 | `NOT_STARTED` | — | 等待场次契约与编排骨架完成 |
+| P3-REC-001 | 实现 FFmpeg、流候选、Job Object 与进程控制 | 6 | P3-EVT-001 | `NOT_STARTED` | — | 等待事件链路完成 |
+| P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `NOT_STARTED` | — | 等待录制器核心完成 |
+| P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `NOT_STARTED` | — | 等待媒体收尾完成 |
+| P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `NOT_STARTED` | — | 等待恢复链路完成 |
+| P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `NOT_STARTED` | — | 等待 Phase 3 功能链路完成 |
 
-阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
+阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
 
 ### 0.5 完成度回写规则
 
@@ -138,15 +147,19 @@ resume_instruction: "执行 P2-ACC-001：按 docs/01 验证真实 GUI 的房间 
 | 2026-07-16 | P1-ENV-001 | `BLOCKED` | SSH 会话可找到 Node/pnpm/Rust，找不到 Go/FFmpeg；未安装、未修改 PATH | 新会话先复查工具链，仍缺失则请求用户处理或授权 |
 | 2026-07-16 19:00 | P1-ENV-001 | `BLOCKED` | 再次验证 Go、FFmpeg、Wails CLI、WebView2、卸载注册表及现有 Docker 镜像；仅确认 `winget` 可用，未修改系统 | 等待用户授权安装开发前置，再执行 P1-STR-001 |
 | 2026-07-16 19:18 | P1-ENV-001 | `DONE` | 用户授权后完成工具链安装；哈希校验通过；`wails doctor` 就绪；`go test ./...`、`go build ./...` 与 FFmpeg H.264/AAC 冒烟通过 | 执行 P1-STR-001 脱敏流 fixture |
-| 2026-07-16 20:02 | P1-STR-004 | `DONE` | 实现自动排序、FLV→HLS 降级序列与脱敏错误分类；H.264/H.265、协议、码率、缺失字段、403/404/410 测试及完整 test、vet、build 门禁通过 | P1-VAL-001 等待用户授权直播间短时验证 |
 | 2026-07-16 19:44 | P1-STR-001 | `DONE` | 创建直连 FLV/HLS、SDK 嵌套 JSON、空流三份脱敏 fixture；结构与敏感信息守卫测试通过 | 执行 P1-STR-002 纯函数解析器 |
 | 2026-07-16 19:44 | P1-STR-002 | `DONE` | 实现候选解析、标准化、去重、稳定脱敏 ID 与字段路径/长度错误；`go test ./...`、`go vet ./...`、`go build ./...` 和敏感扫描通过；`-race` 因当前无 CGO/GCC 未启动 | 执行 P1-STR-003 公共解析接口 |
 | 2026-07-16 19:56 | P1-STR-003 | `DONE` | 新增公共 DTO 与解析入口，复用实例缓存和房间状态更新；URL/SourcePath 的 JSON 与字符串脱敏测试、完整测试、vet、build、`cmd/main` 兼容和敏感域扫描通过 | 执行 P1-STR-004 自动选择、降级与错误分类 |
-
+| 2026-07-16 20:02 | P1-STR-004 | `DONE` | 实现自动排序、FLV→HLS 降级序列与脱敏错误分类；H.264/H.265、协议、码率、缺失字段、403/404/410 测试及完整 test、vet、build 门禁通过 | P1-VAL-001 等待用户授权直播间短时验证 |
 | 2026-07-17 12:37 | P1-VAL-001 | `DONE` | 用户授权在线房间验证通过：26 个 FLV/HLS H.264 候选；ffprobe 为 FLV/H.264/AAC；FFmpeg 8 秒流拷贝通过；约 23 秒后地址刷新且旧/新地址均可读；记录不含房间标识或完整 URL | PHASE-1 完成，执行 P2-WAILS-001 |
 | 2026-07-17 12:59 | P2-WAILS-001 | `DONE` | 建立 Wails v2.13.0 桌面入口、应用生命周期边界、React/TypeScript/Tailwind 界面壳和生成绑定；前端 typecheck、1 项组件测试、生产构建，Go test/vet/build、原入口构建、Wails Windows 构建及实际 GUI 启动均通过 | 执行 P2-DATA-001 数据目录、SQLite 迁移和结构化日志 |
 | 2026-07-17 13:25 | P2-DATA-001 | `DONE` | 建立固定用户数据布局、纯 Go SQLite Schema v1 事务迁移、WAL/外键/连接约束、quick_check/一致备份及 JSONL 脱敏日志；目标与全量 Go/前端/Wails 门禁通过，真实启动生成数据库/WAL/日志，生产构建无用户目录副作用 | 执行 P2-ROOM-001 房间配置与设置 CRUD |
 | 2026-07-17 13:53 | P2-ROOM-001 | `DONE` | 实现房间 CRUD、录制策略与保存目录持久化、UUIDv7、DPAPI Cookie 引用和原子设置文件；重启、重复、历史删除、Cookie 不回显测试及全量 Go/前端/Wails 门禁通过；真实 GUI 启动验证数据库、设置和日志，测试进程/数据/构建产物已清理 | 执行 P2-MON-001 等待开播、启停与 `room:status` 事件 |
+| 2026-07-17 14:20 | P2-MON-001 | `DONE` | 实现串行房间监督器、等待开播、监控启停、连接重检、启动恢复、状态查询与 `room:status` Wails 事件；状态机 10 次重复测试和全量 Go/前端/Wails 门禁通过，真实 GUI 启动通过；跨计划任务 `CloseMainWindow` 无法发现 Wails 窗口，已记录为 P2-ACC 使用可靠退出入口复验，验证残留已清理 | 执行 P2-UI-001 总览、直播间、设置与诊断基础页面 |
+| 2026-07-17 14:45 | P2-UI-001 | `DONE` | 实现总览、直播间、设置和诊断基础页面，完成房间新增/编辑/删除、Cookie 不回显、监控启停与实时 `room:status`；严格 Zod schema、4 项 Vitest、前端生产构建、全量 Go test/vet/build、`cmd/main`、Wails Windows 构建和无阻挡真实 GUI 截图通过，验证进程/数据/构建产物已清理 | 执行 P2-ACC-001 重启持久化、CRUD 与 10 秒优雅关闭验收 |
+| 2026-07-17 15:02 | PLAN-TEST-DURATION | `DONE` | 按用户决策将录制变更门禁从 2 小时缩短为 10 分钟、候选发布稳定性改为 30 分钟、正式发布稳定性改为 60 分钟、实时 UI 连续测试改为 10 分钟，并同步提高采样频率、缩短资源重复次数 | 继续执行 P2-ACC-001 |
+| 2026-07-17 15:57 | P2-ACC-001 | `DONE` | 隔离根内三轮真实 GUI 完成 CRUD、监控、设置和重启持久化；活动监控下及其余两轮 WM_CLOSE 均在 61 ms 内自然退出，退出码 0、无残留；全量 Go/前端/Wails 与普通生产 GUI 冒烟通过，验收数据和一次性任务已精确清理 | PHASE-2 完成，执行 P3-CAP-001 场次契约与仓储编排 |
+
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
 ## 1. 文档目的
