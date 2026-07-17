@@ -148,7 +148,7 @@ export function RoomsPage({ dashboard, openEditor, onEditorHandled }: { dashboar
                 <label className="field field--wide"><span>Live ID 或直播间 URL</span><input autoFocus {...form.register('liveId')} placeholder="live.douyin.com/…" /><small>{form.formState.errors.liveId?.message || '仅保留直播间标识，不显示平台内部 Room ID。'}</small></label>
                 <label className="field field--wide"><span>别名</span><input {...form.register('alias')} placeholder="例如：主直播间" /><small>{form.formState.errors.alias?.message || '留空时使用 Live ID。'}</small></label>
                 <label className="field"><span>录制质量</span><select {...form.register('quality')}><option value="auto">自动选择</option><option value="original">原画</option><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标清</option></select></label>
-                <label className="field"><span>分片时长（分钟）</span><input type="number" min="1" max="60" {...form.register('segmentMinutes', { valueAsNumber: true })} /></label>
+                <label className="field"><span>分片时长（分钟）</span><input type="number" min="5" max="30" {...form.register('segmentMinutes', { valueAsNumber: true })} /></label>
                 <label className="field field--wide"><span>Cookie（可选）</span><input type="password" autoComplete="off" {...form.register('cookie')} placeholder={editor !== 'new' && editor.cookie.configured ? '已配置；留空保持不变' : '仅在必要时配置'} /><small>{form.formState.errors.cookie?.message || '保存后立即清空输入；应用不会回显 Cookie。'}</small></label>
               </div>
               <div className="check-row"><label><input type="checkbox" {...form.register('monitorEnabled')} />保存后自动等待开播</label><label><input type="checkbox" {...form.register('recordEnabled')} />开播后自动录制</label></div>

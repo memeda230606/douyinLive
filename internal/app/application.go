@@ -86,6 +86,10 @@ type Application struct {
 	// beforeInfrastructureCommit is a package-private test barrier. Production
 	// leaves it nil; it must never perform application work.
 	beforeInfrastructureCommit func()
+	// newRecorderFactory is a package-private dependency seam. Production leaves
+	// it nil and uses capture.NewFFmpegRecorderFactory.
+	newRecorderFactory func(context.Context, capture.FFmpegRecorderFactoryOptions) (
+		capture.RecorderFactory, capture.FFmpegDependencyInfo, error)
 	// beforeShutdownCleanup is a package-private test barrier. Production leaves it nil.
 	beforeShutdownCleanup func()
 }

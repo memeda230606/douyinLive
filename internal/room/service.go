@@ -485,8 +485,8 @@ func normalizeProfile(profile RecordingProfile) (RecordingProfile, error) {
 	if profile.SegmentMinutes == 0 {
 		profile.SegmentMinutes = 10
 	}
-	if profile.SegmentMinutes < 1 || profile.SegmentMinutes > 60 {
-		return RecordingProfile{}, &BusinessError{Code: "ROOM_INPUT_INVALID", Field: "recordingProfile.segmentMinutes", Message: "分片时长必须为 1 到 60 分钟"}
+	if profile.SegmentMinutes < 5 || profile.SegmentMinutes > 30 {
+		return RecordingProfile{}, &BusinessError{Code: "ROOM_INPUT_INVALID", Field: "recordingProfile.segmentMinutes", Message: "分片时长必须为 5 到 30 分钟"}
 	}
 	profile.SaveDirectory = strings.TrimSpace(profile.SaveDirectory)
 	if profile.SaveDirectory != "" {

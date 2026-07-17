@@ -27,6 +27,8 @@ const cookieStatusSchema = z.object({
   updatedAt: z.number().int().nonnegative().optional(),
 }).strict()
 
+// Read contracts retain the v1 range so existing room rows remain editable;
+// all new writes use roomFormSchema's stricter 5..30 minute range.
 export const recordingProfileSchema = z.object({
   quality: qualitySchema,
   segmentMinutes: z.number().int().min(1).max(60),
@@ -75,7 +77,7 @@ export const settingsSchema = z.object({
   storageRoot: z.string().min(1),
   recordingDirectory: z.string().min(1),
   defaultQuality: qualitySchema,
-  defaultSegmentMinutes: z.number().int().min(1).max(60),
+  defaultSegmentMinutes: z.number().int().min(5).max(30),
   maxConcurrentRecordings: z.number().int().min(1).max(4),
   minimumFreeSpaceGiB: z.number().int().min(1).max(1024),
   saveDisplayNames: z.boolean(),
@@ -87,14 +89,14 @@ export const roomFormSchema = z.object({
   monitorEnabled: z.boolean(),
   recordEnabled: z.boolean(),
   quality: qualitySchema,
-  segmentMinutes: z.number().int().min(1, '最少 1 分钟').max(60, '最多 60 分钟'),
+  segmentMinutes: z.number().int().min(5, '最少 5 分钟').max(30, '最多 30 分钟'),
   cookie: z.string().max(16_384, 'Cookie 内容过长'),
 })
 
 export const settingsFormSchema = z.object({
   recordingDirectory: z.string().trim().min(1, '请输入录制目录'),
   defaultQuality: qualitySchema,
-  defaultSegmentMinutes: z.number().int().min(1).max(60),
+  defaultSegmentMinutes: z.number().int().min(5).max(30),
   maxConcurrentRecordings: z.number().int().min(1).max(4),
   minimumFreeSpaceGiB: z.number().int().min(1).max(1024),
   saveDisplayNames: z.boolean(),

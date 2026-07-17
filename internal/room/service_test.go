@@ -201,6 +201,14 @@ func TestRoomInputValidation(t *testing.T) {
 			t.Errorf("NormalizeLiveID(%q) error = %v", value, err)
 		}
 	}
+	for _, minutes := range []int{4, 31} {
+		_, err := normalizeProfile(RecordingProfile{
+			Quality: QualityAuto, SegmentMinutes: minutes,
+		})
+		if ErrorCode(err) != "ROOM_INPUT_INVALID" {
+			t.Errorf("normalizeProfile(segment=%d) error = %v", minutes, err)
+		}
+	}
 }
 
 func openTestStore(t *testing.T) *storage.Store {

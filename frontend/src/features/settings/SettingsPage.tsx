@@ -49,9 +49,10 @@ export function SettingsPage() {
           <section className="settings-section">
             <div className="settings-section__heading"><HardDrive aria-hidden="true" /><div><h2>存储与录制</h2><p>目录必须是 Windows 绝对路径，并在保存时验证可写性。</p></div></div>
             <div className="form-grid">
+              <p className="field field--wide">当前录制仅支持应用数据目录内的场次媒体目录；外部录制根将在媒体清单阶段启用。</p>
               <label className="field field--wide"><span>录制目录</span><input {...form.register('recordingDirectory')} /><small>{form.formState.errors.recordingDirectory?.message || `应用数据目录：${settings.data.storageRoot}`}</small></label>
               <label className="field"><span>默认录制质量</span><select {...form.register('defaultQuality')}><option value="auto">自动选择</option><option value="original">原画</option><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标清</option></select></label>
-              <label className="field"><span>默认分片时长</span><div className="input-suffix"><input type="number" min="1" max="60" {...form.register('defaultSegmentMinutes', { valueAsNumber: true })} /><span>分钟</span></div></label>
+              <label className="field"><span>默认分片时长</span><div className="input-suffix"><input type="number" min="5" max="30" {...form.register('defaultSegmentMinutes', { valueAsNumber: true })} /><span>分钟</span></div></label>
               <label className="field"><span>并发录制上限</span><input type="number" min="1" max="4" {...form.register('maxConcurrentRecordings', { valueAsNumber: true })} /></label>
               <label className="field"><span>最小剩余空间</span><div className="input-suffix"><input type="number" min="1" max="1024" {...form.register('minimumFreeSpaceGiB', { valueAsNumber: true })} /><span>GiB</span></div></label>
             </div>

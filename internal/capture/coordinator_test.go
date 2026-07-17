@@ -260,6 +260,96 @@ func (r *fakeRecorder) Stop(ctx context.Context) error {
 	return nil
 }
 
+type fakeEventRecorder struct {
+	*fakeRecorder
+	eventMu          sync.Mutex
+	events           chan RecorderEvent
+	currentAttemptID string
+	checked          chan struct{}
+	closeOnce        sync.Once
+}
+
+func newFakeEventRecorder(attemptID string) *fakeEventRecorder {
+	return &fakeEventRecorder{
+		fakeRecorder:     &fakeRecorder{},
+		events:           make(chan RecorderEvent, 4),
+		currentAttemptID: attemptID,
+		checked:          make(chan struct{}, 4),
+	}
+}
+
+func (r *fakeEventRecorder) Events() <-chan RecorderEvent {
+	return r.events
+}
+
+func (r *fakeEventRecorder) IsCurrentEvent(event RecorderEvent) bool {
+	r.eventMu.Lock()
+	current := event.AttemptID == r.currentAttemptID
+	r.eventMu.Unlock()
+	select {
+	case r.checked <- struct{}{}:
+	default:
+	}
+	return current
+}
+
+func (r *fakeEventRecorder) setCurrentAttempt(attemptID string) {
+	r.eventMu.Lock()
+	r.currentAttemptID = attemptID
+	r.eventMu.Unlock()
+}
+
+func (r *fakeEventRecorder) Stop(ctx context.Context) error {
+	err := r.fakeRecorder.Stop(ctx)
+	r.closeOnce.Do(func() { close(r.events) })
+	return err
+}
+
+type recorderExitRetryRepository struct {
+	SessionRepository
+	mu       sync.Mutex
+	failures int
+	attempts int
+	failed   chan struct{}
+	once     sync.Once
+}
+
+func (r *recorderExitRetryRepository) Transition(ctx context.Context, input TransitionSessionInput) (LiveSession, error) {
+	if input.Status == SessionRecording && input.RecordingStatus == RecordingUnavailable {
+		r.mu.Lock()
+		r.attempts++
+		if r.failures > 0 {
+			r.failures--
+			r.mu.Unlock()
+			r.once.Do(func() { close(r.failed) })
+			return LiveSession{}, errors.New("injected recorder exit transition failure")
+		}
+		r.mu.Unlock()
+	}
+	return r.SessionRepository.Transition(ctx, input)
+}
+
+func (r *recorderExitRetryRepository) transitionAttempts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.attempts
+}
+
+func waitForRecordingStatus(t *testing.T, session Session, expected RecordingStatus) LiveSession {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current := session.Snapshot()
+		if current.RecordingStatus == expected {
+			return current
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recording status = %s, want %s", current.RecordingStatus, expected)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestCoordinatorOpenRebindFinalizeKeepsOneSessionAndOrdersCleanup(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
@@ -339,6 +429,123 @@ func TestCoordinatorOpenRebindFinalizeKeepsOneSessionAndOrdersCleanup(t *testing
 	wantTail := []string{"repo.finalizing", "recorder.stop", "source.unsubscribe", "sink.flush", "repo.terminal"}
 	if !containsOrderedSubsequence(orderedRepository.snapshot(), wantTail) {
 		t.Fatalf("cleanup order = %v, want subsequence %v", orderedRepository.snapshot(), wantTail)
+	}
+}
+
+func TestCoordinatorRecorderExitDegradesActiveSessionAndReleasesRecorder(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	retryingRepository := &recorderExitRetryRepository{
+		SessionRepository: repository, failures: 1, failed: make(chan struct{}),
+	}
+	attemptID := newV7(t)
+	recorder := newFakeEventRecorder(attemptID)
+	coordinator, err := newTestCoordinator(retryingRepository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, newFakeCaptureSource(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder.events <- RecorderEvent{
+		Kind: RecorderEventProcessExited, AttemptID: attemptID,
+		ErrorCode: RecorderProcessExitedErrorCode, OccurredAt: now.UnixMilli(),
+	}
+	select {
+	case <-retryingRepository.failed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recorder exit transition failure was not injected")
+	}
+	if current := session.Snapshot(); current.RecordingStatus != RecordingActive {
+		t.Fatalf("failed transition changed snapshot: %+v", current)
+	}
+	recorder.mu.Lock()
+	stopsBeforeCommit := recorder.stops
+	recorder.mu.Unlock()
+	if stopsBeforeCommit != 0 {
+		t.Fatalf("failed transition detached recorder with %d stops", stopsBeforeCommit)
+	}
+	degraded := waitForRecordingStatus(t, session, RecordingUnavailable)
+	if degraded.Status != SessionRecording {
+		t.Fatalf("process exit ended live session: %+v", degraded)
+	}
+	stopDeadline := time.Now().Add(2 * time.Second)
+	for {
+		recorder.mu.Lock()
+		stops := recorder.stops
+		recorder.mu.Unlock()
+		if stops == 1 {
+			break
+		}
+		if time.Now().After(stopDeadline) {
+			t.Fatalf("recorder stops = %d, want 1", stops)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if attempts := retryingRepository.transitionAttempts(); attempts < 2 {
+		t.Fatalf("recorder exit transition attempts = %d, want at least 2", attempts)
+	}
+	finalized, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalized.Status != SessionCompleted || finalized.RecordingStatus != RecordingUnavailable {
+		t.Fatalf("finalized degraded session = %+v", finalized)
+	}
+}
+
+func TestCoordinatorDiscardsQueuedRecorderExitFromOlderAttempt(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	oldAttemptID := newV7(t)
+	recorder := newFakeEventRecorder(oldAttemptID)
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, newFakeCaptureSource(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Model a buffered exit from the previous bind becoming visible only after
+	// the recorder has established a newer attempt.
+	recorder.setCurrentAttempt(newV7(t))
+	recorder.events <- RecorderEvent{
+		Kind: RecorderEventProcessExited, AttemptID: oldAttemptID,
+		ErrorCode: RecorderProcessExitedErrorCode, OccurredAt: now.UnixMilli(),
+	}
+	select {
+	case <-recorder.checked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued recorder event was not inspected")
+	}
+	if current := session.Snapshot(); current.RecordingStatus != RecordingActive {
+		t.Fatalf("stale event degraded current attempt: %+v", current)
+	}
+	recorder.mu.Lock()
+	stops := recorder.stops
+	recorder.mu.Unlock()
+	if stops != 0 {
+		t.Fatalf("stale event stopped current recorder %d times", stops)
+	}
+	if _, err := session.Finalize(context.Background(), newV7(t), FinalizeShutdown); err != nil {
+		t.Fatal(err)
 	}
 }
 

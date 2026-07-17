@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +21,11 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
 )
 
-const DataModeReadWrite = "READ_WRITE"
+const (
+	DataModeReadWrite                       = "READ_WRITE"
+	recordingDependencyUnavailableErrorCode = "RECORDING_DEPENDENCY_UNAVAILABLE"
+	recordingRootDeferredErrorCode          = "RECORDING_ROOT_DEFERRED"
+)
 
 const captureManifestHealthLogSyncFailedErrorCode = "CAPTURE_MANIFEST_HEALTH_LOG_SYNC_FAILED"
 
@@ -45,6 +52,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	monitorRoot := a.lifecycle
 	statusPublisher := a.roomStatusPublisher
 	commitHook := a.beforeInfrastructureCommit
+	recorderFactoryBuilder := a.newRecorderFactory
 	a.mu.RUnlock()
 	if alreadyInitialized {
 		return errors.New("application infrastructure is already initialized")
@@ -149,7 +157,47 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 			}
 		}
 	}
+	var recorderFactory capture.RecorderFactory
+	if sameInfrastructureDirectory(appSettings.RecordingDirectory, layout.RoomsDir) {
+		if recorderFactoryBuilder == nil {
+			recorderFactoryBuilder = capture.NewFFmpegRecorderFactory
+		}
+		factory, dependencyInfo, discoveryErr := recorderFactoryBuilder(ctx, capture.FFmpegRecorderFactoryOptions{
+			DataRoot: layout.Root, BundledDir: recorderBundledDirectory(),
+			MaxConcurrentRecordings: appSettings.MaxConcurrentRecordings,
+		})
+		if ctx.Err() != nil {
+			return errors.Join(
+				ctx.Err(),
+				cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+			)
+		}
+		if discoveryErr != nil || factory == nil {
+			logger.WarnContext(ctx, "recording dependency unavailable",
+				"component", "capture", "error_code", recordingDependencyUnavailableErrorCode,
+				"correlation_id", "startup")
+		} else {
+			recorderFactory = factory
+			logger.InfoContext(ctx, "recording dependency ready",
+				"component", "capture", "error_code", "", "correlation_id", "startup",
+				"ffmpeg_version", dependencyInfo.FFmpeg.Version,
+				"ffmpeg_build_summary", dependencyInfo.FFmpeg.BuildSummary,
+				"ffmpeg_sha256", dependencyInfo.FFmpeg.SHA256,
+				"ffprobe_version", dependencyInfo.FFprobe.Version,
+				"ffprobe_build_summary", dependencyInfo.FFprobe.BuildSummary,
+				"ffprobe_sha256", dependencyInfo.FFprobe.SHA256)
+		}
+	} else {
+		// Session manifests and database paths are data-root-relative. External
+		// recording roots require the registry introduced by P3-MEDIA; fail closed
+		// until that durable mapping exists instead of silently ignoring the user's
+		// configured destination.
+		logger.WarnContext(ctx, "custom recording root deferred",
+			"component", "capture", "error_code", recordingRootDeferredErrorCode,
+			"correlation_id", "startup")
+	}
 	captureCoordinator, err := capture.NewCoordinator(captureRepository, capture.CoordinatorOptions{
+		RecorderFactory: recorderFactory,
 		EventSinkFactory: func(factoryCtx context.Context, session capture.LiveSession, request capture.OpenRequest) (capture.EventSink, error) {
 			return eventManager.OpenSession(factoryCtx, eventSessionDescriptorForOpen(session, request))
 		},
@@ -335,6 +383,36 @@ func eventSessionDescriptorForOpen(
 		descriptor.StartedAt = request.StartedAt
 	}
 	return descriptor
+}
+
+func recorderBundledDirectory() string {
+	executable, err := os.Executable()
+	if err != nil || executable == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(executable), "ffmpeg")
+}
+
+func sameInfrastructureDirectory(left, right string) bool {
+	if left == "" || right == "" || !filepath.IsAbs(left) || !filepath.IsAbs(right) {
+		return false
+	}
+	left = filepath.Clean(left)
+	right = filepath.Clean(right)
+	if infrastructurePathsEqual(left, right) {
+		return true
+	}
+	leftResolved, leftErr := filepath.EvalSymlinks(left)
+	rightResolved, rightErr := filepath.EvalSymlinks(right)
+	return leftErr == nil && rightErr == nil &&
+		infrastructurePathsEqual(filepath.Clean(leftResolved), filepath.Clean(rightResolved))
+}
+
+func infrastructurePathsEqual(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func cleanupUncommittedInfrastructure(monitor *room.MonitorManager, events *eventstore.Manager, store *storage.Store, logFile *diagnostics.FileLogger) error {

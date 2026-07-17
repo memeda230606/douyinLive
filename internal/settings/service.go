@@ -14,7 +14,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 )
 
-const SettingsVersion = 1
+const SettingsVersion = 2
 
 type AppSettings struct {
 	Version                 int          `json:"version"`
@@ -107,6 +107,7 @@ func Open(configDirectory, storageRoot, defaultRecordingDirectory string) (*Serv
 	if err := json.Unmarshal(data, &service.settings); err != nil {
 		return nil, fmt.Errorf("decode settings: %w", err)
 	}
+	migrated := migrateSettings(&service.settings)
 	if service.settings.Version != SettingsVersion {
 		return nil, fmt.Errorf("unsupported settings version %d", service.settings.Version)
 	}
@@ -120,7 +121,26 @@ func Open(configDirectory, storageRoot, defaultRecordingDirectory string) (*Serv
 	}); err != nil {
 		return nil, fmt.Errorf("validate persisted settings: %w", err)
 	}
+	if migrated {
+		if err := service.persistLocked(); err != nil {
+			return nil, fmt.Errorf("persist migrated settings: %w", err)
+		}
+	}
 	return service, nil
+}
+
+func migrateSettings(settings *persistedSettings) bool {
+	if settings == nil || settings.Version != 1 {
+		return false
+	}
+	settings.Version = SettingsVersion
+	if settings.DefaultSegmentMinutes < 5 {
+		settings.DefaultSegmentMinutes = 5
+	}
+	if settings.DefaultSegmentMinutes > 30 {
+		settings.DefaultSegmentMinutes = 30
+	}
+	return true
 }
 
 func (s *Service) GetSettings(ctx context.Context) (AppSettings, error) {
@@ -212,8 +232,8 @@ func validate(input UpdateSettingsInput) (persistedSettings, error) {
 	default:
 		return persistedSettings{}, &Error{Code: "SETTINGS_INVALID", Field: "defaultQuality", Message: "默认录制质量无效"}
 	}
-	if input.DefaultSegmentMinutes < 1 || input.DefaultSegmentMinutes > 60 {
-		return persistedSettings{}, &Error{Code: "SETTINGS_INVALID", Field: "defaultSegmentMinutes", Message: "默认分片时长必须为 1 到 60 分钟"}
+	if input.DefaultSegmentMinutes < 5 || input.DefaultSegmentMinutes > 30 {
+		return persistedSettings{}, &Error{Code: "SETTINGS_INVALID", Field: "defaultSegmentMinutes", Message: "默认分片时长必须为 5 到 30 分钟"}
 	}
 	if input.MaxConcurrentRecordings < 1 || input.MaxConcurrentRecordings > 4 {
 		return persistedSettings{}, &Error{Code: "SETTINGS_INVALID", Field: "maxConcurrentRecordings", Message: "并发录制上限必须为 1 到 4"}

@@ -2,8 +2,10 @@ package settings
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
@@ -74,8 +76,61 @@ func TestSettingsValidationKeepsPreviousValues(t *testing.T) {
 	if ErrorCode(err) != "SETTINGS_INVALID" {
 		t.Fatalf("UpdateSettings(relative) error = %v", err)
 	}
+	for _, minutes := range []int{4, 31} {
+		_, err = service.UpdateSettings(context.Background(), UpdateSettingsInput{
+			RecordingDirectory: before.RecordingDirectory,
+			DefaultQuality:     room.QualityAuto, DefaultSegmentMinutes: minutes,
+			MaxConcurrentRecordings: 1, MinimumFreeSpaceGiB: 10, SaveDisplayNames: true,
+		})
+		if ErrorCode(err) != "SETTINGS_INVALID" {
+			t.Fatalf("UpdateSettings(segment=%d) error = %v", minutes, err)
+		}
+	}
 	after, err := service.GetSettings(context.Background())
 	if err != nil || after != before {
 		t.Fatalf("settings changed after invalid update: before=%#v after=%#v err=%v", before, after, err)
+	}
+}
+
+func TestSettingsMigratesVersionOneSegmentBounds(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		old  int
+		want int
+	}{
+		{name: "lower bound", old: 1, want: 5},
+		{name: "upper bound", old: 60, want: 30},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			config := filepath.Join(root, "config")
+			if err := os.MkdirAll(config, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			legacy := persistedSettings{
+				Version: 1, RecordingDirectory: filepath.Join(root, "rooms"),
+				DefaultQuality: room.QualityAuto, DefaultSegmentMinutes: test.old,
+				MaxConcurrentRecordings: 1, MinimumFreeSpaceGiB: 10, SaveDisplayNames: true,
+			}
+			data, err := json.Marshal(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(config, "settings.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			service, err := Open(config, root, filepath.Join(root, "rooms"))
+			if err != nil {
+				t.Fatalf("open legacy settings: %v", err)
+			}
+			got, err := service.GetSettings(context.Background())
+			if err != nil || got.Version != SettingsVersion || got.DefaultSegmentMinutes != test.want {
+				t.Fatalf("migrated settings = (%#v, %v)", got, err)
+			}
+			persisted, err := os.ReadFile(filepath.Join(config, "settings.json"))
+			if err != nil || !json.Valid(persisted) || !strings.Contains(string(persisted), `"version": 2`) {
+				t.Fatalf("migrated settings file invalid: %v", err)
+			}
+		})
 	}
 }

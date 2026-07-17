@@ -12,10 +12,42 @@ import (
 
 var errNoSelectableStreamCandidates = errors.New("no selectable stream candidates")
 
+// StreamSelectionPreference controls the public stream-candidate attempt order.
+// Its zero value is the safe default: automatic quality, FLV before HLS, and
+// compatibility mode (H.264 before H.265). Set DisableCompatibilityMode only
+// when the caller has explicitly opted into codec-neutral selection.
+type StreamSelectionPreference struct {
+	QualityKey               string
+	Protocol                 string
+	DisableCompatibilityMode bool
+}
+
 type streamSelectionPreference struct {
 	QualityKey        string
 	Protocol          string
 	CompatibilityMode bool
+}
+
+// RankResolvedStreams returns a detached, deterministic attempt list. Stream
+// URLs remain available to the recorder but are excluded from String and JSON
+// representations by ResolvedStream; SourcePath is removed from the public
+// result because it is diagnostic provenance rather than recording input.
+func RankResolvedStreams(
+	candidates []ResolvedStream,
+	preference StreamSelectionPreference,
+) ([]ResolvedStream, error) {
+	ranked, err := rankResolvedStreams(candidates, streamSelectionPreference{
+		QualityKey:        NormalizeStreamQualityPreference(preference.QualityKey),
+		Protocol:          preference.Protocol,
+		CompatibilityMode: !preference.DisableCompatibilityMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for index := range ranked {
+		ranked[index].SourcePath = ""
+	}
+	return ranked, nil
 }
 
 type streamFailureClass string
@@ -98,6 +130,25 @@ func rankResolvedStreams(
 		return left.SourcePath < right.SourcePath
 	})
 	return ranked, nil
+}
+
+// NormalizeStreamQualityPreference converts the public setting vocabulary to
+// the resolver's canonical quality key. An empty result means automatic mode.
+func NormalizeStreamQualityPreference(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return ""
+	case "original":
+		return "origin"
+	case "ultra":
+		return "uhd"
+	case "high":
+		return "hd"
+	case "standard":
+		return "sd"
+	default:
+		return normalizeSelectionQuality(value)
+	}
 }
 
 func normalizeSelectionQuality(value string) string {

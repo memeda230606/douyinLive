@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -58,6 +59,15 @@ type CaptureSource interface {
 type Recorder interface {
 	Rebind(context.Context, CaptureSource) error
 	Stop(context.Context) error
+}
+
+// RecorderEventSource is an optional extension implemented by recorders that
+// can report an asynchronous process exit. Stop must eventually close Events.
+// IsCurrentEvent prevents a queued exit from an older bind from degrading a
+// newly established recording attempt.
+type RecorderEventSource interface {
+	Events() <-chan RecorderEvent
+	IsCurrentEvent(RecorderEvent) bool
 }
 
 type RecorderFactory func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error)
@@ -298,6 +308,9 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 	runtime.mu.Lock()
 	runtime.current = active
 	runtime.mu.Unlock()
+	if runtime.recorder != nil {
+		runtime.startRecorderEvents(runtime.recorder)
+	}
 	return runtime, nil
 }
 
@@ -331,6 +344,7 @@ type sessionRuntime struct {
 	source                    CaptureSource
 	subscriptionID            string
 	recorder                  Recorder
+	recorderEventsCancel      context.CancelFunc
 	sink                      EventSink
 	finalizing                bool
 	finalized                 bool
@@ -351,6 +365,125 @@ func (s *sessionRuntime) Snapshot() LiveSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.current
+}
+
+func (s *sessionRuntime) startRecorderEvents(recorder Recorder) {
+	eventSource, ok := recorder.(RecorderEventSource)
+	if !ok {
+		return
+	}
+	events := eventSource.Events()
+	if events == nil {
+		return
+	}
+	watchCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if s.finalizing || s.finalized || !sameRecorderInstance(s.recorder, recorder) {
+		s.mu.Unlock()
+		cancel()
+		return
+	}
+	if s.recorderEventsCancel != nil {
+		s.recorderEventsCancel()
+	}
+	s.recorderEventsCancel = cancel
+	s.mu.Unlock()
+
+	go func() {
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case event, open := <-events:
+				if !open {
+					return
+				}
+				retryDelay := 25 * time.Millisecond
+				for !s.handleRecorderEvent(recorder, eventSource, event) {
+					timer := time.NewTimer(retryDelay)
+					select {
+					case <-watchCtx.Done():
+						if !timer.Stop() {
+							<-timer.C
+						}
+						return
+					case <-timer.C:
+					}
+					if retryDelay < time.Second {
+						retryDelay *= 2
+						if retryDelay > time.Second {
+							retryDelay = time.Second
+						}
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (s *sessionRuntime) handleRecorderEvent(
+	recorder Recorder,
+	eventSource RecorderEventSource,
+	event RecorderEvent,
+) bool {
+	if event.Kind != RecorderEventProcessExited {
+		return true
+	}
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	if !eventSource.IsCurrentEvent(event) {
+		return true
+	}
+	s.mu.Lock()
+	current := s.current
+	active := !s.finalizing && !s.finalized &&
+		sameRecorderInstance(s.recorder, recorder) &&
+		current.Status == SessionRecording &&
+		(current.RecordingStatus == RecordingActive || current.RecordingStatus == RecordingReconnecting)
+	s.mu.Unlock()
+	if !active {
+		return true
+	}
+
+	commitCtx, cancel := s.coordinator.commitContext(context.Background())
+	next, transitionErr := s.coordinator.repository.Transition(commitCtx, TransitionSessionInput{
+		ID: current.ID, ExpectedStatus: current.Status,
+		ExpectedRecordingStatus: current.RecordingStatus, ExpectedOperationID: current.OperationID,
+		Status: current.Status, RecordingStatus: RecordingUnavailable,
+	})
+	cancel()
+
+	// A process exit must never disappear behind a transient SQLite/CAS or
+	// manifest error. Keep the recorder and event correlation alive until the
+	// repository confirms the unavailable state; the watcher retries while
+	// Rebind/Finalize remain able to supersede it through operationMu.
+	transitionConfirmed := next.ID != "" && next.RecordingStatus == RecordingUnavailable
+	if transitionErr != nil && !transitionConfirmed {
+		return false
+	}
+	if !transitionConfirmed {
+		return false
+	}
+	s.mu.Lock()
+	s.current = next
+	if sameRecorderInstance(s.recorder, recorder) {
+		s.recorder = nil
+		s.cancelRecorderEventsLocked()
+	}
+	s.mu.Unlock()
+
+	stopCtx, stopCancel := s.coordinator.commitContext(context.Background())
+	_ = boundedCall(stopCtx, recorder.Stop)
+	stopCancel()
+	return true
+}
+
+func (s *sessionRuntime) cancelRecorderEventsLocked() {
+	if s.recorderEventsCancel != nil {
+		s.recorderEventsCancel()
+		s.recorderEventsCancel = nil
+	}
 }
 
 func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source CaptureSource) (LiveSession, error) {
@@ -431,6 +564,9 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	s.source = source
 	s.subscriptionID = newSubscriptionID
 	s.recorder = recorder
+	if recorder == nil {
+		s.cancelRecorderEventsLocked()
+	}
 	s.mu.Unlock()
 	if oldSource != nil && oldSubscriptionID != "" {
 		oldSource.Unsubscribe(oldSubscriptionID)
@@ -532,6 +668,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 
 		s.mu.Lock()
 		s.recorder = nil
+		s.cancelRecorderEventsLocked()
 		s.source = nil
 		s.subscriptionID = ""
 		s.sink = nil
@@ -604,6 +741,17 @@ func (s *sessionRuntime) stopAcceptingMessages(source CaptureSource, subscriptio
 		source.Unsubscribe(subscriptionID)
 	}
 	s.acceptWG.Wait()
+}
+
+func sameRecorderInstance(left, right Recorder) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	leftType := reflect.TypeOf(left)
+	if leftType != reflect.TypeOf(right) || !leftType.Comparable() {
+		return false
+	}
+	return reflect.ValueOf(left).Interface() == reflect.ValueOf(right).Interface()
 }
 
 func failureRecordingStatus(original RecordingStatus) RecordingStatus {

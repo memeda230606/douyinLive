@@ -56,8 +56,9 @@ func TestResolveStreamsUsesInstanceRoomEnterData(t *testing.T) {
 	}
 
 	rendered := fmt.Sprint(streams)
-	if strings.Contains(rendered, "token=secret") || strings.Contains(rendered, "public-api.example.invalid") {
-		t.Fatalf("rendered public stream exposes URL: %s", rendered)
+	if strings.Contains(rendered, "token=secret") || strings.Contains(rendered, "public-api.example.invalid") ||
+		strings.Contains(rendered, stream.SourcePath) {
+		t.Fatalf("rendered public stream exposes URL or source path: %s", rendered)
 	}
 	encoded, err := json.Marshal(streams)
 	if err != nil {
@@ -65,6 +66,18 @@ func TestResolveStreamsUsesInstanceRoomEnterData(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "token=secret") || strings.Contains(string(encoded), "SourcePath") || strings.Contains(string(encoded), "URL") {
 		t.Fatalf("JSON public stream exposes internal fields: %s", encoded)
+	}
+}
+
+func TestResolvedStreamCandidateStringRedactsSourcePath(t *testing.T) {
+	const secretPath = "data.data.0.private_source_path"
+	candidate := resolvedStreamCandidate{
+		ID: "safe-id", Protocol: "flv", QualityKey: "hd", Codec: "h264",
+		URL: "https://string.example.invalid/live.flv?token=secret", SourcePath: secretPath,
+	}
+	rendered := fmt.Sprint(candidate)
+	if strings.Contains(rendered, secretPath) || strings.Contains(rendered, "string.example.invalid") || strings.Contains(rendered, "token=secret") {
+		t.Fatalf("candidate String exposes internal provenance: %s", rendered)
 	}
 }
 

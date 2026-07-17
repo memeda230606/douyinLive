@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { bootstrapSchema, recordingStatuses, roomSchema, roomStatusSchema } from './contracts'
+import { bootstrapSchema, recordingProfileSchema, recordingStatuses, roomFormSchema, roomSchema, roomStatusSchema, settingsFormSchema } from './contracts'
 
 const room = {
   id: '019bce70-0c00-7000-8000-000000000001',
@@ -63,5 +63,33 @@ describe('desktop runtime contracts', () => {
     expect(roomStatusSchema.safeParse({ ...status, sessionId: 'not-a-uuid' }).success).toBe(false)
     expect(roomStatusSchema.safeParse({ ...status, unexpected: true }).success).toBe(false)
     expect(roomStatusSchema.safeParse({ ...status, streamUrl: 'https://example.invalid/live.flv' }).success).toBe(false)
+  })
+
+  it('enforces the 5 to 30 minute recording segment contract', () => {
+    for (const segmentMinutes of [5, 30]) {
+      expect(recordingProfileSchema.safeParse({ quality: 'auto', segmentMinutes }).success).toBe(true)
+      expect(roomFormSchema.safeParse({
+        liveId: 'room', alias: '', monitorEnabled: true, recordEnabled: true,
+        quality: 'auto', segmentMinutes, cookie: '',
+      }).success).toBe(true)
+      expect(settingsFormSchema.safeParse({
+        recordingDirectory: 'D:\\recordings', defaultQuality: 'auto', defaultSegmentMinutes: segmentMinutes,
+        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+      }).success).toBe(true)
+    }
+    for (const segmentMinutes of [4, 31]) {
+      expect(recordingProfileSchema.safeParse({ quality: 'auto', segmentMinutes }).success).toBe(true)
+      expect(roomFormSchema.safeParse({
+        liveId: 'room', alias: '', monitorEnabled: true, recordEnabled: true,
+        quality: 'auto', segmentMinutes, cookie: '',
+      }).success).toBe(false)
+      expect(settingsFormSchema.safeParse({
+        recordingDirectory: 'D:\\recordings', defaultQuality: 'auto', defaultSegmentMinutes: segmentMinutes,
+        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+      }).success).toBe(false)
+    }
+    for (const segmentMinutes of [0, 61]) {
+      expect(recordingProfileSchema.safeParse({ quality: 'auto', segmentMinutes }).success).toBe(false)
+    }
   })
 })

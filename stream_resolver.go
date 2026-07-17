@@ -33,15 +33,18 @@ type ResolvedStream struct {
 // String returns a diagnostic-safe representation without the stream URL.
 func (stream ResolvedStream) String() string {
 	return fmt.Sprintf(
-		"{ID:%s Protocol:%s QualityKey:%s Quality:%s Codec:%s Bitrate:%d URL:<redacted> SourcePath:%s}",
+		"{ID:%s Protocol:%s QualityKey:%s Quality:%s Codec:%s Bitrate:%d URL:<redacted> SourcePath:<redacted>}",
 		stream.ID,
 		stream.Protocol,
 		stream.QualityKey,
 		stream.Quality,
 		stream.Codec,
 		stream.Bitrate,
-		stream.SourcePath,
 	)
+}
+
+func (stream ResolvedStream) GoString() string {
+	return stream.String()
 }
 
 type resolvedStreamCandidate struct {
@@ -57,15 +60,18 @@ type resolvedStreamCandidate struct {
 
 func (candidate resolvedStreamCandidate) String() string {
 	return fmt.Sprintf(
-		"{ID:%s Protocol:%s QualityKey:%s Quality:%s Codec:%s Bitrate:%d URL:<redacted> SourcePath:%s}",
+		"{ID:%s Protocol:%s QualityKey:%s Quality:%s Codec:%s Bitrate:%d URL:<redacted> SourcePath:<redacted>}",
 		candidate.ID,
 		candidate.Protocol,
 		candidate.QualityKey,
 		candidate.Quality,
 		candidate.Codec,
 		candidate.Bitrate,
-		candidate.SourcePath,
 	)
+}
+
+func (candidate resolvedStreamCandidate) GoString() string {
+	return candidate.String()
 }
 
 type streamCandidateMetadata struct {

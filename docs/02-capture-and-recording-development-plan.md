@@ -2,6 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
+> 实施状态（2026-07-17）：P3-CAP-001、P3-EVT-001、P3-REC-001 已完成；PHASE-3 已完成 18/30 点（60%），当前进入 P3-MEDIA-001。
+> 最近验收：[P3-REC FFmpeg 与进程控制](validation/2026-07-17-p3-rec-ffmpeg-process-control.md)
 
 ## 1. 目标
 
@@ -45,6 +47,8 @@ func (dl *DouyinLive) ResolveStreams() ([]ResolvedStream, error)
 - `ResolvedStream` 不作为 Wails 绑定类型；前端使用去掉 `URL`、`SourcePath` 的 `StreamVariant`。
 - 解析函数拆为纯函数 `parseResolvedStreams(body string)`，使用脱敏 fixture 测试。
 - 不改变现有构造器、订阅接口和 `cmd/main` 输出格式。
+
+P3-REC 已增加 `StreamSelectionPreference`、`RankResolvedStreams` 和 `NormalizeStreamQualityPreference`。排序返回独立副本；`URL` 仅供录制器进程参数使用，`URL` 与 `SourcePath` 均从 JSON、fmt/GoString 和结构化日志表面隐藏。
 
 ## 3. 模块设计
 
@@ -166,6 +170,8 @@ stateDiagram-v2
 
 选择结果写入媒体清单，但只保存协议、质量、编码、码率和脱敏源标识，不保存完整 URL。
 
+P3-REC 已实现确定性稳定排序、质量词汇归一化、默认 H.264/FLV 优先、指定协议优先、已知正码率优先和无效 URL 过滤。每个快照内相同完整 URL 只尝试一次；重新解析得到的新签名 URL 可再次尝试。
+
 ## 6. FFmpeg 进程管理
 
 ### 6.1 依赖发现
@@ -176,21 +182,23 @@ stateDiagram-v2
 2. 安装包随附的受信任 `ffmpeg.exe` 和 `ffprobe.exe`。
 3. 系统 `PATH`。
 
-发现后执行 `-version`，记录版本、构建配置摘要和可执行文件 SHA-256。找不到 FFmpeg 时消息监听仍可用，录制返回 `FFMPEG_NOT_FOUND`。
+发现后对成对工具执行有界 `-version` 校验，只记录脱敏版本/构建摘要和可执行文件 SHA-256。找不到或无法校验 FFmpeg 时消息监听仍可用，录制能力以稳定错误码标记不可用。
 
 ### 6.2 启动安全
 
-- 使用 `exec.CommandContext` 和独立参数数组，绝不调用 `cmd /c` 或拼接 Shell 字符串。
+- 使用私有生命周期 context 的 `exec.CommandContext` 和独立参数数组，绝不调用 `cmd /c` 或拼接 Shell 字符串；调用方 context 只限制启动/等待，不拥有已启动进程。
 - 流 URL 只作为进程参数存在；日志显示 `<redacted-stream-url>`。
-- Windows 下为进程配置 Job Object，确保应用异常退出后子进程不会永久遗留。
-- 标准输出和标准错误进入有界环形缓冲；只把经过脱敏的末尾摘要写诊断日志。
-- 每个启动分配 `recorder_attempt_id`，退出回调必须匹配当前 attempt 才能改变状态。
+- Windows 下严格按 `CREATE_SUSPENDED`→Assign Job Object→`NtResumeProcess` 启动；任一步失败都先终止进程再返回，避免子进程逃逸。
+- `-progress pipe:1` 使用 16 KiB 有界解析器，只有 `progress=continue` 表示启动成功；标准错误只保留 64 KiB 脱敏尾部摘要。
+- 每个启动分配 UUIDv7 `recorder_attempt_id` 和独占 `.attempt-*` 目录；退出回调必须匹配当前 attempt 才能改变状态。
+- 每个进程只有一个 `Wait` owner，stdout/stderr 排空完成后才释放并发容量；调用方取消不会提前释放仍在运行的 FFmpeg。
 
 ### 6.3 工作格式与分片
 
 - 默认 `-c copy`，不在录制阶段重新编码。
 - 工作容器为 MKV，默认每 600 秒一个分片；设置允许 300–1800 秒。
-- 文件名：`segment-000001-<utc>.mkv`，先写 `.partial`，FFmpeg 正常关闭并通过探测后原子重命名。
+- 文件名包含序号、UTC 纳秒和 attempt 标识，先写入独占 attempt 目录中的 `.mkv.partial`；不得复用目录或覆盖已有分片。
+- P3-REC 只保证安全地产生工作分片；逐片探测、原子改名及 `media.json` 登记由 P3-MEDIA 完成。
 - 场次结束后为 H.264/AAC 等兼容组合无损封装 MP4；不兼容组合保留 MKV 并生成代理 MP4 的待处理任务。
 - 额外生成单声道 16 kHz PCM/WAV 或等价无损音频代理供 ASR；生成失败不判定原始录制失败。
 - 每个分片完成后使用 ffprobe 记录容器、流、时长、首末时间戳和可读性。
@@ -199,10 +207,12 @@ stateDiagram-v2
 
 1. 监督器标记 `FINALIZING`，停止接受新的录制启动。
 2. 请求 FFmpeg 优雅结束并等待当前容器写尾。
-3. 5 秒无响应时发送终止；再等 3 秒后强制结束并把分片标记为待恢复。
+3. 5 秒无响应时终止 Job Object 进程树；再等 3 秒，仍未退出时终止根进程并关闭句柄，把分片留给恢复流程。
 4. 探测全部分片、补全媒体清单、计算 SHA-256（可后台低优先级完成）。
 5. 解除事件订阅并等待在途 `Accept` 返回，关闭有界队列；排空 source、关闭所有 open 礼物折叠，依次提交 `closing` checkpoint、关闭并同步 spool、提交 `closed` checkpoint。
 6. 更新场次完整性、触发基础聚合和 UI 完成事件。
+
+P3-REC 已实现步骤 2–3 的进程边界；步骤 4 和媒体相关收尾属于 P3-MEDIA，异常重启与缺口编排属于 P3-RCV。
 
 ## 7. 录制恢复策略
 
@@ -218,6 +228,8 @@ stateDiagram-v2
 | 已下播 | 状态连续确认 | 进入 `FINALIZING` |
 
 同一场次自动重启最多 10 次；连续失败窗口超过 5 分钟或重启达到上限后停止录制但继续消息监听。每次失败和恢复之间建立 `capture_gaps`。
+
+P3-REC 已实现启动早退分类、同一快照候选逐一回退，以及本地资源/依赖错误 fail-fast。1/2/5/10 秒退避、最多 10 次重启、缺口开闭和跨启动恢复由 P3-RCV 实现。
 
 ### 7.2 应用启动恢复
 
@@ -238,6 +250,8 @@ data/
     │       ├── raw-<utc-hour>-<index>.binpack
     │       └── wal-<utc-hour>-<index>.wal
     ├── media/
+    │   ├── .attempt-<uuidv7>/
+    │   │   └── segment-<index>-<utc>-<attempt>.mkv.partial
     │   ├── segment-000001-<utc>.mkv
     │   └── playback-000001.mp4
     ├── audio/
@@ -249,6 +263,8 @@ data/
 ```
 
 `session.json` 只保存非敏感元数据和 schema 版本，可在数据库损坏时重建索引。所有路径在数据库中保存为相对数据根目录的 `/` 分隔路径；操作系统访问时统一由路径服务转换和校验。
+
+当前录制只允许写入数据根下的规范场次媒体目录。外部 `RecordingDirectory` 在 P3-MEDIA 建立耐久路径注册表前以 `RECORDING_ROOT_DEFERRED` 明确停用，不得静默回落到其他目录。
 
 ## 9. 事件采集
 
@@ -302,8 +318,9 @@ data/
 ## 11. 资源与并发控制
 
 - 默认最多 8 个等待/消息监听房间、1 个录制房间、1 个 ASR/分析任务。
-- 设置可调上限，但录制并发超过 1 时显示磁盘带宽和空间风险。
+- 录制器工厂默认并发 1、允许 1–4；超过 1 时显示磁盘带宽和空间风险。
 - 事件通道、FFmpeg 日志、UI 批次和分析队列全部有界。
+- 录制额度只在进程 Wait、stdout/stderr 排空和 watcher 完成后释放；构造或 Stop 的调用方超时也不得提前复用。
 - 每房间一个根 context；场次、录制器和写入器为子 context。
 - 停止顺序由监督器统一管理，任何子组件不得关闭不属于自己的通道。
 - 默认普通接纳为 4,096 条/32 MiB，紧急预留为 512 条/8 MiB；共享总上限为 4,608 条/128 MiB，单 payload 上限 4 MiB。预留只影响接纳，不改变 FIFO 顺序。
@@ -340,6 +357,8 @@ data/
 - 注入 403、EOF、进程崩溃、磁盘写失败和 ffprobe 失败。
 - 校验进程参数脱敏、Job Object 清理和 `.partial` 恢复。
 - 10 分钟稳定性测试统计 goroutine、句柄、内存、分片连续性和事件延迟。
+
+P3-REC 已通过本地 HTTP MPEG-TS→FFmpeg segment copy→`.mkv.partial`→ffprobe Matroska 的真实工具验收，并覆盖优雅 `q` 停止、启动早退、Job 树清理、进度解析、候选刷新和隐私表面。分片转正、ffprobe 失败恢复、异常退避及 10 分钟稳定性测试保留给后续任务。
 
 ### 12.5 验收
 
