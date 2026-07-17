@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "DouyinLiveDesktop",
+  "outputfilename": "douyin-live-desktop",
+  "frontend:dir": "../../frontend",
+  "frontend:install": "pnpm install --frozen-lockfile",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "../../frontend/src/generated",
+  "build:dir": "build",
+  "author": {"name": "memeda230606", "email": "memeda230606@gmail.com"},
+  "info": {
+    "companyName": "DouyinLive",
+    "productName": "抖音直播分析",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026",
+    "comments": "基于 Wails 的本地直播分析桌面程序"
+  }
+}

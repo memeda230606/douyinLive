@@ -21,27 +21,29 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T12:37:00+08:00"
+updated_at: "2026-07-17T13:25:38+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "b0aba16"
+last_verified_head: "218387dbc2d4c494195bf0550a1538db59e93e72"
 project_status: "READY"
-overall_completion_percent: 20
+overall_completion_percent: 28
 current_phase: "PHASE-2-WAILS-ROOMS"
-current_task: "P2-WAILS-001"
-next_task: "P2-DATA-001"
+current_task: "P2-ROOM-001"
+next_task: "P2-MON-001"
 expected_dirty_paths:
-  - "docs/"
-  - "stream_fixture_test.go"
-  - "stream_resolver.go"
-  - "stream_resolver_test.go"
-  - "stream_selector.go"
-  - "stream_selector_test.go"
-  - "testdata/"
+  - ".gitignore"
+  - "cmd/desktop/"
+  - "docs/00-master-development-plan.md"
+  - "frontend/"
+  - "go.mod"
+  - "go.sum"
+  - "internal/app/"
+  - "internal/diagnostics/"
+  - "internal/storage/"
 blockers: []
-last_completed_task: "P1-VAL-001"
-last_completion_evidence: "用户授权的在线房间短时验证通过：解析 26 个候选（14 FLV、12 HLS，均为 H.264）；ffprobe 确认 FLV/H.264/AAC；FFmpeg 8 秒 stream copy 到 NUL 通过；约 23 秒后候选 ID 稳定、完整地址已刷新，旧/新地址均仍可读。技术记录已脱敏且临时验证器已删除。"
-resume_instruction: "执行 P2-WAILS-001：读取 docs/01 与 docs/04，建立 Wails v2 + React/TypeScript 桌面壳和应用入口，同时保留现有根库 API 与 cmd/main。"
+last_completed_task: "P2-DATA-001"
+last_completion_evidence: "新增固定用户数据布局、modernc.org/sqlite v1.53.0、Schema v1 显式事务迁移（8 张业务表）、WAL/外键/5 秒忙等待、单写有限读连接、quick_check 与 VACUUM INTO 备份；新增按日 JSONL slog、14 天保留和键值/URL/error 脱敏。目标包与全量 go test、go vet、go build、cmd/main、前端 typecheck/Vitest/build、Wails Windows 生产构建全部通过；构建不会创建默认 LocalAppData，真实启动验证 app.db/WAL/日志与 schema_version=1。"
+resume_instruction: "执行 P2-ROOM-001：读取 docs/01 与 docs/03，在现有 SQLite Schema v1 和应用门面上实现房间配置与设置 CRUD、Cookie 引用和录制策略持久化，并保持所有现有门禁通过。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -73,11 +75,11 @@ resume_instruction: "执行 P2-WAILS-001：读取 docs/01 与 docs/04，建立 W
 | --- | ---: | --- | ---: | --- | --- |
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
-| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 0% | P1 技术退出门禁已满足 | 桌面壳、SQLite、房间 CRUD 和状态页面验收 |
+| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 40% | Wails 桌面壳与 SQLite/日志基础完成 | 房间 CRUD、状态页面与关闭验收 |
 | PHASE-3 采集与录制 MVP | 30% | `NOT_STARTED` | 0% | — | 两小时录制、恢复、收尾和缺口审计通过 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 24 小时稳定性通过 |
-| **总体** | **100%** | **`READY`** | **20%** | 文档基线与直播流解析验证阶段完成 | 执行 P2-WAILS-001 桌面壳 |
+| **总体** | **100%** | **`READY`** | **28%** | 文档、直播流解析、桌面壳与数据基础完成 | 执行 P2-ROOM-001 房间配置 CRUD |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -95,9 +97,9 @@ resume_instruction: "执行 P2-WAILS-001：读取 docs/01 与 docs/04，建立 W
 | P1-STR-003 | 新增 `ResolveStreams` 最小公共接口 | 2 | P1-STR-002 | `DONE` | 新增 `ResolvedStream` 与 `ResolveStreams`；复用同一实例 `fetchRoomEnterData` 并加上下文串行保护；URL/SourcePath 不进入 JSON，字符串输出脱敏；完整测试、vet、build 与 `cmd/main` 兼容门禁通过 | 由选择器消费公共 DTO，URL 只在 Go 内部传递 |
 | P1-STR-004 | 完成自动选择、降级与错误分类测试 | 2 | P1-STR-003 | `DONE` | 候选按质量、兼容编码、协议和码率排序；覆盖 H.264/H.265-only、FLV/HLS 降级、缺失字段、已知码率优先及 403/404/410 分类；完整 test、vet、build 和 `cmd/main` 兼容门禁通过 | 由后续录制器按序尝试，每个候选最多一次 |
 | P1-VAL-001 | 用户授权直播间短时技术验证 | 1 | P1-STR-004、FFmpeg 可用 | `DONE` | [脱敏验证记录](validation/2026-07-17-phase-1-stream-validation.md)：在线状态、26 个候选、FLV/H.264/AAC 探测、8 秒流拷贝和地址刷新行为均验证通过 | 平台字段变化时用同一隐私边界复验 |
-| P2-WAILS-001 | 建立 Wails v2 桌面壳与前端工程 | 4 | P1-VAL-001 | `READY` | P1 阶段退出门禁已满足 | 创建桌面入口、React/TypeScript 前端和基础应用服务边界，保留 `cmd/main` |
-| P2-DATA-001 | 建立数据目录、SQLite 迁移与结构化日志 | 4 | P2-WAILS-001 | `NOT_STARTED` | — | 实现无 CGO SQLite 初始化、显式迁移和诊断日志 |
-| P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `NOT_STARTED` | — | 房间、Cookie 引用、录制策略和保存目录持久化 |
+| P2-WAILS-001 | 建立 Wails v2 桌面壳与前端工程 | 4 | P1-VAL-001 | `DONE` | `cmd/desktop`、`internal/app`、`frontend` 与生成绑定已建立；前端 typecheck/Vitest/build、Go test/vet/build、原入口构建、Wails production build 和 GUI 启动检查通过 | 后续服务只经应用层门面绑定，保持启动 DTO 脱敏 |
+| P2-DATA-001 | 建立数据目录、SQLite 迁移与结构化日志 | 4 | P2-WAILS-001 | `DONE` | 固定用户数据目录、SQLite Schema v1（8 张业务表）、事务迁移、WAL/外键/忙等待、完整性检查与一致备份、按日 JSONL/14 天保留/全面脱敏完成；全量 Go/前端/Wails 门禁及真实启动通过 | 由房间与设置服务复用存储层，不把密钥或完整流地址写入数据库/日志/UI |
+| P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `READY` | P2-DATA-001 已完成，Schema v1 与应用生命周期可直接复用 | 房间、Cookie 引用、录制策略和保存目录持久化 |
 | P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `NOT_STARTED` | — | 复用现有核心并输出 `room:status` |
 | P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `NOT_STARTED` | — | 完成导航、空状态、表单和运行状态展示 |
 | P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `NOT_STARTED` | — | 验证重启保留、启停可用及 10 秒内关闭 |
@@ -146,6 +148,8 @@ resume_instruction: "执行 P2-WAILS-001：读取 docs/01 与 docs/04，建立 W
 | 2026-07-16 19:56 | P1-STR-003 | `DONE` | 新增公共 DTO 与解析入口，复用实例缓存和房间状态更新；URL/SourcePath 的 JSON 与字符串脱敏测试、完整测试、vet、build、`cmd/main` 兼容和敏感域扫描通过 | 执行 P1-STR-004 自动选择、降级与错误分类 |
 
 | 2026-07-17 12:37 | P1-VAL-001 | `DONE` | 用户授权在线房间验证通过：26 个 FLV/HLS H.264 候选；ffprobe 为 FLV/H.264/AAC；FFmpeg 8 秒流拷贝通过；约 23 秒后地址刷新且旧/新地址均可读；记录不含房间标识或完整 URL | PHASE-1 完成，执行 P2-WAILS-001 |
+| 2026-07-17 12:59 | P2-WAILS-001 | `DONE` | 建立 Wails v2.13.0 桌面入口、应用生命周期边界、React/TypeScript/Tailwind 界面壳和生成绑定；前端 typecheck、1 项组件测试、生产构建，Go test/vet/build、原入口构建、Wails Windows 构建及实际 GUI 启动均通过 | 执行 P2-DATA-001 数据目录、SQLite 迁移和结构化日志 |
+| 2026-07-17 13:25 | P2-DATA-001 | `DONE` | 建立固定用户数据布局、纯 Go SQLite Schema v1 事务迁移、WAL/外键/连接约束、quick_check/一致备份及 JSONL 脱敏日志；目标与全量 Go/前端/Wails 门禁通过，真实启动生成数据库/WAL/日志，生产构建无用户目录副作用 | 执行 P2-ROOM-001 房间配置与设置 CRUD |
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
 ## 1. 文档目的
