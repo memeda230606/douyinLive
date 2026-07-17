@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	application "github.com/jwwsjlm/douyinLive/v2/internal/app"
+	"github.com/jwwsjlm/douyinLive/v2/internal/room"
+	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -52,4 +55,92 @@ func (a *DesktopApp) GetBootstrap() application.BootstrapDTO {
 // GetState 为诊断和窗口生命周期测试提供稳定状态，不暴露内部对象。
 func (a *DesktopApp) GetState() application.State {
 	return a.application.State()
+}
+
+func (a *DesktopApp) ListRooms() ([]room.RoomConfig, error) {
+	service, err := a.roomService()
+	if err != nil {
+		return nil, err
+	}
+	return service.ListRooms(a.application.Context())
+}
+
+func (a *DesktopApp) GetRoom(id string) (room.RoomConfig, error) {
+	service, err := a.roomService()
+	if err != nil {
+		return room.RoomConfig{}, err
+	}
+	return service.GetRoom(a.application.Context(), id)
+}
+
+func (a *DesktopApp) CreateRoom(input room.CreateRoomInput) (room.RoomConfig, error) {
+	service, err := a.roomService()
+	if err != nil {
+		return room.RoomConfig{}, err
+	}
+	return service.CreateRoom(a.application.Context(), input)
+}
+
+func (a *DesktopApp) UpdateRoom(id string, input room.UpdateRoomInput) (room.RoomConfig, error) {
+	service, err := a.roomService()
+	if err != nil {
+		return room.RoomConfig{}, err
+	}
+	return service.UpdateRoom(a.application.Context(), id, input)
+}
+
+func (a *DesktopApp) DeleteRoom(id string, deleteData bool) error {
+	service, err := a.roomService()
+	if err != nil {
+		return err
+	}
+	return service.DeleteRoom(a.application.Context(), id, deleteData)
+}
+
+func (a *DesktopApp) SetRoomCookie(input room.SetRoomCookieInput) (room.CookieStatus, error) {
+	service, err := a.roomService()
+	if err != nil {
+		return room.CookieStatus{}, err
+	}
+	return service.SetRoomCookie(a.application.Context(), input)
+}
+
+func (a *DesktopApp) ClearRoomCookie(id string) error {
+	service, err := a.roomService()
+	if err != nil {
+		return err
+	}
+	return service.ClearRoomCookie(a.application.Context(), id)
+}
+
+func (a *DesktopApp) GetSettings() (settings.AppSettings, error) {
+	service, err := a.settingsService()
+	if err != nil {
+		return settings.AppSettings{}, err
+	}
+	return service.GetSettings(a.application.Context())
+}
+
+func (a *DesktopApp) UpdateSettings(input settings.UpdateSettingsInput) (settings.AppSettings, error) {
+	service, err := a.settingsService()
+	if err != nil {
+		return settings.AppSettings{}, err
+	}
+	return service.UpdateSettings(a.application.Context(), input)
+}
+
+func (a *DesktopApp) roomService() (*room.Service, error) {
+	service := a.application.RoomService()
+	if service == nil {
+		return nil, errors.New("ROOM_SERVICE_UNAVAILABLE: 房间服务尚未就绪")
+	}
+	return service, nil
+}
+
+func (a *DesktopApp) settingsService() (*settings.Service, error) {
+	service := a.application.SettingsService()
+	if service == nil {
+		return nil, errors.New("SETTINGS_SERVICE_UNAVAILABLE: 设置服务尚未就绪")
+	}
+	return service, nil
 }

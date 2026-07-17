@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"time"
 
+	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
+	"github.com/jwwsjlm/douyinLive/v2/internal/room"
+	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
 )
 
@@ -60,9 +64,31 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		return fmt.Errorf("initialize sqlite store: %w", err)
 	}
 
+	credentialStore, err := credentials.OpenFileStore(filepath.Join(layout.ConfigDir, "credentials.dat"))
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize credential store: %w", err)
+	}
+	settingsService, err := settings.Open(layout.ConfigDir, layout.Root, layout.RoomsDir)
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize settings service: %w", err)
+	}
+	roomService, err := room.NewService(store.Writer(), store.Reader(), credentialStore)
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize room service: %w", err)
+	}
+
 	a.mu.Lock()
 	a.initialized = true
 	a.store = store
+	a.credentials = credentialStore
+	a.settings = settingsService
+	a.rooms = roomService
 	a.logFile = logFile
 	a.logger = logger
 	a.dataStatus = DataStatusDTO{

@@ -30,10 +30,14 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(root, "app.db"),
 		filepath.Join(root, "logs", "app-2026-07-17.jsonl"),
+		filepath.Join(root, "config", "settings.json"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected artifact %q: %v", path, err)
 		}
+	}
+	if application.RoomService() == nil || application.SettingsService() == nil || application.CredentialStore() == nil {
+		t.Fatal("application services were not initialized")
 	}
 
 	application.Startup(context.Background())

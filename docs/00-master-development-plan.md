@@ -21,29 +21,28 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T13:25:38+08:00"
+updated_at: "2026-07-17T13:53:39+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "218387dbc2d4c494195bf0550a1538db59e93e72"
+last_verified_head: "2124eae5ea7c14bb6fac00bdf0e23a58b3209031"
 project_status: "READY"
-overall_completion_percent: 28
+overall_completion_percent: 32
 current_phase: "PHASE-2-WAILS-ROOMS"
-current_task: "P2-ROOM-001"
-next_task: "P2-MON-001"
+current_task: "P2-MON-001"
+next_task: "P2-UI-001"
 expected_dirty_paths:
-  - ".gitignore"
   - "cmd/desktop/"
   - "docs/00-master-development-plan.md"
-  - "frontend/"
+  - "frontend/src/generated/wailsjs/go/"
   - "go.mod"
-  - "go.sum"
   - "internal/app/"
-  - "internal/diagnostics/"
-  - "internal/storage/"
+  - "internal/credentials/"
+  - "internal/room/"
+  - "internal/settings/"
 blockers: []
-last_completed_task: "P2-DATA-001"
-last_completion_evidence: "新增固定用户数据布局、modernc.org/sqlite v1.53.0、Schema v1 显式事务迁移（8 张业务表）、WAL/外键/5 秒忙等待、单写有限读连接、quick_check 与 VACUUM INTO 备份；新增按日 JSONL slog、14 天保留和键值/URL/error 脱敏。目标包与全量 go test、go vet、go build、cmd/main、前端 typecheck/Vitest/build、Wails Windows 生产构建全部通过；构建不会创建默认 LocalAppData，真实启动验证 app.db/WAL/日志与 schema_version=1。"
-resume_instruction: "执行 P2-ROOM-001：读取 docs/01 与 docs/03，在现有 SQLite Schema v1 和应用门面上实现房间配置与设置 CRUD、Cookie 引用和录制策略持久化，并保持所有现有门禁通过。"
+last_completed_task: "P2-ROOM-001"
+last_completion_evidence: "新增 SQLite 房间配置 CRUD、Live ID/别名/录制策略校验、UUIDv7、重复与历史删除错误分类；新增 Windows DPAPI Cookie 密文文件与仅返回 configured/updatedAt 的凭据引用；新增原子 settings.json、默认/自定义录制目录与录制默认值持久化，并装配 Wails 绑定。重启持久化、Cookie 不回显、目标与全量 Go test/vet/build、cmd/main、前端 typecheck/Vitest/build、Wails Windows 生产构建均通过；真实 GUI 启动生成 app.db/WAL/settings.json/日志且未生成空凭据文件。"
+resume_instruction: "执行 P2-MON-001：读取 docs/01 与 docs/02，在现有 RoomService、SQLite 和应用生命周期上接入等待开播、监控启停、运行状态查询与 room:status 事件；保持录制实现仍留在 PHASE-3，并维持现有门禁。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -75,11 +74,11 @@ resume_instruction: "执行 P2-ROOM-001：读取 docs/01 与 docs/03，在现有
 | --- | ---: | --- | ---: | --- | --- |
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
-| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 40% | Wails 桌面壳与 SQLite/日志基础完成 | 房间 CRUD、状态页面与关闭验收 |
+| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 60% | 桌面壳、数据基础、房间与设置持久化完成 | 监控状态、基础页面与关闭验收 |
 | PHASE-3 采集与录制 MVP | 30% | `NOT_STARTED` | 0% | — | 两小时录制、恢复、收尾和缺口审计通过 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 24 小时稳定性通过 |
-| **总体** | **100%** | **`READY`** | **28%** | 文档、直播流解析、桌面壳与数据基础完成 | 执行 P2-ROOM-001 房间配置 CRUD |
+| **总体** | **100%** | **`READY`** | **32%** | 文档、直播流解析、桌面壳、数据基础与房间设置服务完成 | 执行 P2-MON-001 等待开播与状态事件 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -99,8 +98,8 @@ resume_instruction: "执行 P2-ROOM-001：读取 docs/01 与 docs/03，在现有
 | P1-VAL-001 | 用户授权直播间短时技术验证 | 1 | P1-STR-004、FFmpeg 可用 | `DONE` | [脱敏验证记录](validation/2026-07-17-phase-1-stream-validation.md)：在线状态、26 个候选、FLV/H.264/AAC 探测、8 秒流拷贝和地址刷新行为均验证通过 | 平台字段变化时用同一隐私边界复验 |
 | P2-WAILS-001 | 建立 Wails v2 桌面壳与前端工程 | 4 | P1-VAL-001 | `DONE` | `cmd/desktop`、`internal/app`、`frontend` 与生成绑定已建立；前端 typecheck/Vitest/build、Go test/vet/build、原入口构建、Wails production build 和 GUI 启动检查通过 | 后续服务只经应用层门面绑定，保持启动 DTO 脱敏 |
 | P2-DATA-001 | 建立数据目录、SQLite 迁移与结构化日志 | 4 | P2-WAILS-001 | `DONE` | 固定用户数据目录、SQLite Schema v1（8 张业务表）、事务迁移、WAL/外键/忙等待、完整性检查与一致备份、按日 JSONL/14 天保留/全面脱敏完成；全量 Go/前端/Wails 门禁及真实启动通过 | 由房间与设置服务复用存储层，不把密钥或完整流地址写入数据库/日志/UI |
-| P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `READY` | P2-DATA-001 已完成，Schema v1 与应用生命周期可直接复用 | 房间、Cookie 引用、录制策略和保存目录持久化 |
-| P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `NOT_STARTED` | — | 复用现有核心并输出 `room:status` |
+| P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `DONE` | 房间 CRUD、Live ID 与录制策略校验、UUIDv7、DPAPI Cookie 引用、原子设置文件和保存目录持久化完成；重启/重复/删除/Cookie 不回显测试、全量 Go/前端/Wails 门禁及真实 GUI 数据初始化通过 | 由监控服务消费已脱敏房间配置，Cookie 仅在 Go 内部按引用读取 |
+| P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `READY` | P2-ROOM-001 已完成，房间服务、应用生命周期与 SQLite 可直接复用 | 复用现有核心并输出 `room:status` |
 | P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `NOT_STARTED` | — | 完成导航、空状态、表单和运行状态展示 |
 | P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `NOT_STARTED` | — | 验证重启保留、启停可用及 10 秒内关闭 |
 
@@ -150,6 +149,7 @@ resume_instruction: "执行 P2-ROOM-001：读取 docs/01 与 docs/03，在现有
 | 2026-07-17 12:37 | P1-VAL-001 | `DONE` | 用户授权在线房间验证通过：26 个 FLV/HLS H.264 候选；ffprobe 为 FLV/H.264/AAC；FFmpeg 8 秒流拷贝通过；约 23 秒后地址刷新且旧/新地址均可读；记录不含房间标识或完整 URL | PHASE-1 完成，执行 P2-WAILS-001 |
 | 2026-07-17 12:59 | P2-WAILS-001 | `DONE` | 建立 Wails v2.13.0 桌面入口、应用生命周期边界、React/TypeScript/Tailwind 界面壳和生成绑定；前端 typecheck、1 项组件测试、生产构建，Go test/vet/build、原入口构建、Wails Windows 构建及实际 GUI 启动均通过 | 执行 P2-DATA-001 数据目录、SQLite 迁移和结构化日志 |
 | 2026-07-17 13:25 | P2-DATA-001 | `DONE` | 建立固定用户数据布局、纯 Go SQLite Schema v1 事务迁移、WAL/外键/连接约束、quick_check/一致备份及 JSONL 脱敏日志；目标与全量 Go/前端/Wails 门禁通过，真实启动生成数据库/WAL/日志，生产构建无用户目录副作用 | 执行 P2-ROOM-001 房间配置与设置 CRUD |
+| 2026-07-17 13:53 | P2-ROOM-001 | `DONE` | 实现房间 CRUD、录制策略与保存目录持久化、UUIDv7、DPAPI Cookie 引用和原子设置文件；重启、重复、历史删除、Cookie 不回显测试及全量 Go/前端/Wails 门禁通过；真实 GUI 启动验证数据库、设置和日志，测试进程/数据/构建产物已清理 | 执行 P2-MON-001 等待开播、启停与 `room:status` 事件 |
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
 ## 1. 文档目的

@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
+	"github.com/jwwsjlm/douyinLive/v2/internal/room"
+	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
 )
 
@@ -57,9 +60,13 @@ type Application struct {
 	version     string
 	state       State
 	cancel      context.CancelFunc
+	lifecycle   context.Context
 	initialized bool
 	dataStatus  DataStatusDTO
 	store       *storage.Store
+	rooms       *room.Service
+	settings    *settings.Service
+	credentials *credentials.FileStore
 	logFile     *diagnostics.FileLogger
 	logger      *slog.Logger
 }
@@ -89,7 +96,7 @@ func (a *Application) Startup(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, a.cancel = context.WithCancel(ctx)
+	a.lifecycle, a.cancel = context.WithCancel(ctx)
 	a.state = StateRunning
 }
 
@@ -107,8 +114,12 @@ func (a *Application) Shutdown(ctx context.Context) error {
 	store := a.store
 	logFile := a.logFile
 	logger := a.logger
+	a.lifecycle = nil
 	a.cancel = nil
 	a.store = nil
+	a.rooms = nil
+	a.settings = nil
+	a.credentials = nil
 	a.logFile = nil
 	a.initialized = false
 	a.state = StateStopped
@@ -149,11 +160,11 @@ func (a *Application) Bootstrap() BootstrapDTO {
 		Data:       a.dataStatus,
 		Capabilities: []CapabilityDTO{
 			{ID: "overview", Label: "总览", Available: true},
-			{ID: "rooms", Label: "直播间", Available: false},
+			{ID: "rooms", Label: "直播间", Available: a.rooms != nil},
 			{ID: "sessions", Label: "历史场次", Available: false},
 			{ID: "analysis", Label: "分析", Available: false},
 			{ID: "diagnostics", Label: "诊断", Available: false},
-			{ID: "settings", Label: "设置", Available: false},
+			{ID: "settings", Label: "设置", Available: a.settings != nil},
 		},
 	}
 }
@@ -168,4 +179,31 @@ func (a *Application) Logger() *slog.Logger {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.logger
+}
+
+func (a *Application) Context() context.Context {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.lifecycle == nil {
+		return context.Background()
+	}
+	return a.lifecycle
+}
+
+func (a *Application) RoomService() *room.Service {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.rooms
+}
+
+func (a *Application) SettingsService() *settings.Service {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.settings
+}
+
+func (a *Application) CredentialStore() *credentials.FileStore {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.credentials
 }
