@@ -171,7 +171,7 @@ func (a *Application) Bootstrap() BootstrapDTO {
 			{ID: "rooms", Label: "直播间", Available: a.rooms != nil},
 			{ID: "sessions", Label: "历史场次", Available: false},
 			{ID: "analysis", Label: "分析", Available: false},
-			{ID: "diagnostics", Label: "诊断", Available: false},
+			{ID: "diagnostics", Label: "诊断", Available: a.dataStatus.LoggingReady},
 			{ID: "settings", Label: "设置", Available: a.settings != nil},
 		},
 	}

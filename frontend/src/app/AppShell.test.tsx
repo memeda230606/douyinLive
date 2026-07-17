@@ -1,8 +1,26 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 
 import { AppShell } from './AppShell'
 import type { BootstrapDTO } from './bootstrap'
+
+vi.mock('../lib/desktop', () => ({
+  listRooms: vi.fn(async () => []),
+  getRoomStatus: vi.fn(),
+  getSettings: vi.fn(async () => ({
+    version: 1, storageRoot: 'C:\\Data', recordingDirectory: 'C:\\Recordings',
+    defaultQuality: 'auto', defaultSegmentMinutes: 10, maxConcurrentRecordings: 1,
+    minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+  })),
+  userFacingError: vi.fn(() => '操作失败'),
+}))
+
+vi.mock('../generated/wailsjs/runtime/runtime', () => ({
+  EventsOn: vi.fn(() => vi.fn()),
+  LogError: vi.fn(),
+}))
 
 const bootstrap: BootstrapDTO = {
   apiVersion: 'v1',
@@ -12,18 +30,32 @@ const bootstrap: BootstrapDTO = {
   data: { ready: true, schemaVersion: 1, mode: 'READ_WRITE', loggingReady: true },
   capabilities: [
     { id: 'overview', label: '总览', available: true },
-    { id: 'rooms', label: '直播间', available: false },
+    { id: 'rooms', label: '直播间', available: true },
+    { id: 'sessions', label: '历史场次', available: false },
+    { id: 'analysis', label: '分析', available: false },
+    { id: 'diagnostics', label: '诊断', available: true },
+    { id: 'settings', label: '设置', available: true },
   ],
 }
 
 describe('AppShell', () => {
-  it('renders product identity and capability states', () => {
-    render(<AppShell bootstrap={bootstrap} />)
+  it('renders navigation, empty state and the room form without exposing a cookie value', async () => {
+    const user = userEvent.setup()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={queryClient}><AppShell bootstrap={bootstrap} /></QueryClientProvider>)
     expect(screen.getByText('抖音直播分析')).toBeInTheDocument()
     expect(screen.getByText('版本 test')).toBeInTheDocument()
     const navigation = screen.getByRole('navigation')
-    expect(within(navigation).getByRole('button', { name: /直播间/ })).toBeDisabled()
-    expect(screen.getByText('数据基础已就绪')).toBeInTheDocument()
-    expect(screen.getByText('SQLite Schema v1 · JSONL 日志已启用')).toBeInTheDocument()
+    expect(within(navigation).getByRole('button', { name: /历史场次/ })).toBeDisabled()
+    expect(screen.getByRole('heading', { name: '直播间运行总览' })).toBeInTheDocument()
+    expect(await screen.findByText('添加第一个直播间')).toBeInTheDocument()
+
+    await user.click(within(navigation).getByRole('button', { name: '直播间' }))
+    expect(screen.getByRole('heading', { name: '直播间', level: 1 })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '添加直播间' }))
+    expect(screen.getByRole('dialog', { name: '添加直播间' })).toBeInTheDocument()
+    const cookie = screen.getByLabelText(/Cookie（可选）/)
+    expect(cookie).toHaveAttribute('type', 'password')
+    expect(cookie).toHaveValue('')
   })
 })

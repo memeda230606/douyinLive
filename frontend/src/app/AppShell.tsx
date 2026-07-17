@@ -1,6 +1,13 @@
-import { Activity, BarChart3, Bug, History, Home, Moon, Radio, Settings, Sun } from 'lucide-react'
+import { Activity, AlertTriangle, BarChart3, Bug, History, Home, Moon, Radio, Settings, Sun } from 'lucide-react'
+import { useState } from 'react'
 
+import { UnavailablePage } from '../features/common/UnavailablePage'
+import { DiagnosticsPage } from '../features/diagnostics/DiagnosticsPage'
 import { OverviewPage } from '../features/overview/OverviewPage'
+import { RoomsPage } from '../features/rooms/RoomsPage'
+import { useRoomsDashboard } from '../features/rooms/useRoomsDashboard'
+import { SettingsPage } from '../features/settings/SettingsPage'
+import { AppEventBridge } from './AppEventBridge'
 import type { BootstrapDTO } from './bootstrap'
 import { useThemeStore } from './theme'
 
@@ -13,11 +20,27 @@ const iconByCapability = {
   settings: Settings,
 } as const
 
+type PageID = keyof typeof iconByCapability
+
 export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   const { resolvedTheme, toggleTheme } = useThemeStore()
+  const [activePage, setActivePage] = useState<PageID>('overview')
+  const [openRoomEditor, setOpenRoomEditor] = useState(false)
+  const dashboard = useRoomsDashboard()
+  const rooms = dashboard.roomsQuery.data ?? []
+  const statusValues = Object.values(dashboard.statuses)
+  const listening = rooms.filter((room) => room.monitorEnabled).length
+  const live = statusValues.filter((status) => status.state === 'LIVE').length
+  const errors = statusValues.filter((status) => status.state === 'ERROR').length
+
+  function addRoom() {
+    setActivePage('rooms')
+    setOpenRoomEditor(true)
+  }
 
   return (
     <div className="app-shell">
+      <AppEventBridge />
       <aside className="sidebar" aria-label="主导航">
         <div className="brand">
           <div className="brand__mark" aria-hidden="true"><Activity /></div>
@@ -27,12 +50,15 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
         <nav className="navigation">
           {bootstrap.capabilities.map((item) => {
             const Icon = iconByCapability[item.id as keyof typeof iconByCapability] ?? Activity
+            const selected = item.id === activePage
             return (
               <button
-                className={item.id === 'overview' ? 'navigation__item navigation__item--active' : 'navigation__item'}
+                aria-current={selected ? 'page' : undefined}
+                className={selected ? 'navigation__item navigation__item--active' : 'navigation__item'}
                 disabled={!item.available}
                 key={item.id}
                 type="button"
+                onClick={() => setActivePage(item.id as PageID)}
               >
                 <Icon aria-hidden="true" />
                 <span>{item.label}</span>
@@ -53,11 +79,18 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
       <section className="workspace">
         <header className="topbar">
           <div className="topbar__status"><span className="status-dot" aria-hidden="true" />桌面服务已连接</div>
-          <div className="topbar__metrics" aria-label="运行概览">
-            <span>监听 0</span><span>录制 0</span><span>无后台任务</span>
+          <div className="topbar__metrics" aria-label="全局运行概览">
+            <span><Radio aria-hidden="true" />监听 {listening}</span>
+            <span><Activity aria-hidden="true" />直播 {live}</span>
+            <span className={errors ? 'topbar__alert' : ''}>{errors ? <AlertTriangle aria-hidden="true" /> : null}{errors ? `异常 ${errors}` : '运行正常'}</span>
           </div>
         </header>
-        <OverviewPage data={bootstrap.data} />
+        {activePage === 'overview' && <OverviewPage data={bootstrap.data} dashboard={dashboard} onAddRoom={addRoom} />}
+        {activePage === 'rooms' && <RoomsPage dashboard={dashboard} openEditor={openRoomEditor} onEditorHandled={() => setOpenRoomEditor(false)} />}
+        {activePage === 'settings' && <SettingsPage />}
+        {activePage === 'diagnostics' && <DiagnosticsPage bootstrap={bootstrap} />}
+        {activePage === 'sessions' && <UnavailablePage title="历史场次" />}
+        {activePage === 'analysis' && <UnavailablePage title="分析" />}
       </section>
     </div>
   )

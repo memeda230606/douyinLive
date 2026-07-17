@@ -1,27 +1,11 @@
 import { GetBootstrap } from '../generated/wailsjs/go/main/DesktopApp'
+import { bootstrapSchema, contractError } from '../lib/contracts'
 
-export type CapabilityDTO = { id: string; label: string; available: boolean }
+export type { BootstrapDTO, DataStatusDTO } from '../lib/contracts'
 
-export type DataStatusDTO = {
-  ready: boolean
-  schemaVersion: number
-  mode: string
-  loggingReady: boolean
-}
-
-export type BootstrapDTO = {
-  apiVersion: string
-  name: string
-  version: string
-  state: 'CREATED' | 'RUNNING' | 'STOPPED'
-  data: DataStatusDTO
-  capabilities: CapabilityDTO[]
-}
-
-export async function loadBootstrap(): Promise<BootstrapDTO> {
+export async function loadBootstrap() {
   const value = await GetBootstrap()
-  if (!value || value.apiVersion !== 'v1' || !value.data || !Array.isArray(value.capabilities)) {
-    throw new Error('UI_CONTRACT_INVALID: bootstrap payload')
-  }
-  return value as BootstrapDTO
+  const parsed = bootstrapSchema.safeParse(value)
+  if (!parsed.success) throw contractError('bootstrap', value)
+  return parsed.data
 }

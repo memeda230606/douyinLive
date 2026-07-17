@@ -24,6 +24,16 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if bootstrap.Data.SchemaVersion != 1 || bootstrap.Data.Mode != DataModeReadWrite {
 		t.Fatalf("unexpected data status: %#v", bootstrap.Data)
 	}
+	diagnosticsAvailable := false
+	for _, capability := range bootstrap.Capabilities {
+		if capability.ID == "diagnostics" {
+			diagnosticsAvailable = capability.Available
+			break
+		}
+	}
+	if !diagnosticsAvailable {
+		t.Fatal("diagnostics capability is unavailable after logging initialization")
+	}
 	if application.Store() == nil || application.Logger() == nil {
 		t.Fatal("infrastructure accessors returned nil")
 	}

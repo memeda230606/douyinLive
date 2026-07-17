@@ -1,17 +1,22 @@
-import { Activity, Database, Radio, ShieldCheck } from 'lucide-react'
+import { Activity, AlertTriangle, Database, Plus, Radio, ShieldCheck } from 'lucide-react'
 
 import type { DataStatusDTO } from '../../app/bootstrap'
+import type { RoomsDashboard } from '../rooms/useRoomsDashboard'
 
-export function OverviewPage({ data }: { data: DataStatusDTO }) {
+export function OverviewPage({ data, dashboard, onAddRoom }: { data: DataStatusDTO; dashboard: RoomsDashboard; onAddRoom: () => void }) {
+  const rooms = dashboard.roomsQuery.data ?? []
+  const statuses = Object.values(dashboard.statuses)
+  const live = statuses.filter((status) => status.state === 'LIVE').length
+  const waiting = statuses.filter((status) => ['WAITING', 'STARTING', 'RECONNECTING'].includes(status.state)).length
+  const errors = statuses.filter((status) => status.state === 'ERROR').length
   const summary = [
-    { label: '正在直播', value: '0', detail: '尚未添加直播间', icon: Radio },
-    { label: '等待开播', value: '0', detail: '监控服务将在后续阶段接入', icon: Activity },
+    { label: '正在直播', value: String(live), detail: live ? '监听连接保持正常' : '当前没有直播中的房间', icon: Radio },
+    { label: '等待开播', value: String(waiting), detail: `${rooms.filter((room) => room.monitorEnabled).length} 个房间启用自动监听`, icon: Activity },
+    { label: '需要处理', value: String(errors), detail: errors ? '请前往直播间查看错误状态' : '没有待处理的房间异常', icon: AlertTriangle },
     {
       label: '本地数据',
       value: data.ready ? '就绪' : '不可用',
-      detail: data.ready
-        ? `SQLite Schema v${data.schemaVersion} · ${data.loggingReady ? 'JSONL 日志已启用' : '日志未就绪'}`
-        : '请查看启动日志',
+      detail: data.ready ? `SQLite Schema v${data.schemaVersion} · ${data.loggingReady ? '日志已启用' : '日志未就绪'}` : '请查看诊断页',
       icon: Database,
     },
   ]
@@ -21,10 +26,10 @@ export function OverviewPage({ data }: { data: DataStatusDTO }) {
       <div className="page__heading">
         <div>
           <p className="eyebrow">运行总览</p>
-          <h1>数据基础已就绪</h1>
-          <p>前端通过受控应用服务访问 Go 核心，后续功能将在此骨架上逐步启用。</p>
+          <h1>直播间运行总览</h1>
+          <p>集中查看监听、开播与异常状态；所有数据保留在本机。</p>
         </div>
-        <div className="ready-badge"><ShieldCheck aria-hidden="true" />本地存储正常</div>
+        <div className="ready-badge"><ShieldCheck aria-hidden="true" />{data.ready ? '本地存储正常' : '本地存储异常'}</div>
       </div>
 
       <section className="summary-grid" aria-label="关键状态">
@@ -36,10 +41,20 @@ export function OverviewPage({ data }: { data: DataStatusDTO }) {
         ))}
       </section>
 
-      <section className="empty-panel">
-        <div><h2>还没有直播间配置</h2><p>SQLite 与日志基础已就绪，下一步将开放房间配置管理。</p></div>
-        <button type="button" disabled>添加第一个直播间</button>
-      </section>
+      {rooms.length === 0 ? (
+        <section className="empty-panel">
+          <div><h2>添加第一个直播间</h2><p>保存直播间标识后，可以在后台等待开播并实时查看连接状态。</p></div>
+          <button type="button" onClick={onAddRoom}><Plus aria-hidden="true" />添加直播间</button>
+        </section>
+      ) : (
+        <section className="section-panel">
+          <div className="section-panel__heading"><div><h2>最近活动</h2><p>按最近更新展示房间运行状态。</p></div></div>
+          <div className="activity-list">{rooms.slice(0, 4).map((room) => {
+            const status = dashboard.statuses[room.id]
+            return <div className="activity-row" key={room.id}><div><strong>{room.alias}</strong><span>{status?.title || `直播间 ${room.liveId}`}</span></div><span>{status?.message || (room.monitorEnabled ? '正在读取状态' : '已停止监控')}</span></div>
+          })}</div>
+        </section>
+      )}
     </main>
   )
 }
