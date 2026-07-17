@@ -167,6 +167,33 @@ var schemaMigrations = []migration{
 			`CREATE INDEX idx_capture_gaps_session_start ON capture_gaps(session_id, start_offset_ms)`,
 		},
 	},
+	{
+		Version: 2,
+		Name:    "separate_recording_status_and_session_operations",
+		Statements: []string{
+			`ALTER TABLE live_sessions ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE live_sessions ADD COLUMN manifest_dirty INTEGER NOT NULL DEFAULT 1
+				CHECK (manifest_dirty IN (0, 1))`,
+			`ALTER TABLE live_sessions ADD COLUMN recording_status TEXT NOT NULL DEFAULT 'pending'
+				CHECK (recording_status IN ('pending', 'disabled', 'starting', 'recording', 'unavailable', 'reconnecting', 'finalizing', 'completed', 'incomplete', 'failed'))`,
+			`UPDATE live_sessions SET recording_status = CASE status
+				WHEN 'starting' THEN 'starting'
+				WHEN 'recording' THEN 'recording'
+				WHEN 'finalizing' THEN 'finalizing'
+				WHEN 'completed' THEN 'completed'
+				WHEN 'interrupted' THEN 'incomplete'
+				WHEN 'failed' THEN 'failed'
+				ELSE 'pending'
+			END`,
+			`CREATE UNIQUE INDEX idx_live_sessions_active_room
+				ON live_sessions(room_config_id)
+				WHERE status IN ('starting', 'recording', 'finalizing')`,
+			`CREATE UNIQUE INDEX idx_live_sessions_operation_id
+				ON live_sessions(operation_id) WHERE operation_id <> ''`,
+			`CREATE INDEX idx_live_sessions_manifest_dirty
+				ON live_sessions(manifest_dirty, id)`,
+		},
+	},
 }
 
 const createMigrationTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (

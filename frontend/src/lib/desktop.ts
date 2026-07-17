@@ -88,5 +88,6 @@ export function userFacingError(error: unknown): string {
   if (message.includes('STORAGE_NOT_WRITABLE')) return '录制目录不可写，请更换目录。'
   if (message.includes('SETTINGS_INVALID')) return '设置值无效，请检查后重试。'
   if (message.includes('UI_CONTRACT_INVALID')) return '桌面服务返回了无法识别的数据，请重启应用。'
+  if (message.includes('CAPTURE_FINALIZING')) return '直播场次正在收尾，请稍候再试。'
   return '操作失败，请稍后重试。'
 }

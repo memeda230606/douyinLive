@@ -13,7 +13,7 @@ export const bootstrapSchema = z.object({
   apiVersion: z.literal('v1'),
   name: z.string().min(1),
   version: z.string().min(1),
-  state: z.enum(['CREATED', 'RUNNING', 'STOPPED']),
+  state: z.enum(['CREATED', 'RUNNING', 'STOPPING', 'STOPPED']),
   data: dataStatusSchema,
   capabilities: z.array(z.object({
     id: z.string().min(1),
@@ -49,7 +49,9 @@ export const roomSchema = z.object({
 
 export const roomsSchema = z.array(roomSchema)
 
-export const runtimeStates = ['STOPPED', 'WAITING', 'STARTING', 'LIVE', 'RECONNECTING', 'ERROR'] as const
+export const runtimeStates = ['STOPPED', 'WAITING', 'STARTING', 'LIVE', 'RECORDING', 'RECONNECTING', 'FINALIZING', 'ERROR'] as const
+
+export const recordingStatuses = ['pending', 'disabled', 'starting', 'recording', 'unavailable', 'reconnecting', 'finalizing', 'completed', 'incomplete', 'failed'] as const
 
 export const roomStatusSchema = z.object({
   roomId: z.string().uuid(),
@@ -57,6 +59,8 @@ export const roomStatusSchema = z.object({
   alias: z.string().min(1),
   state: z.enum(runtimeStates),
   operationId: z.string().uuid().optional(),
+  sessionId: z.string().uuid().optional(),
+  recordingStatus: z.enum(recordingStatuses).optional(),
   liveName: z.string().optional(),
   title: z.string().optional(),
   lastCheckedAt: z.number().int().nonnegative().optional(),

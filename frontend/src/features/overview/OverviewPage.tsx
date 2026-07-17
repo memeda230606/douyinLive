@@ -6,11 +6,15 @@ import type { RoomsDashboard } from '../rooms/useRoomsDashboard'
 export function OverviewPage({ data, dashboard, onAddRoom }: { data: DataStatusDTO; dashboard: RoomsDashboard; onAddRoom: () => void }) {
   const rooms = dashboard.roomsQuery.data ?? []
   const statuses = Object.values(dashboard.statuses)
-  const live = statuses.filter((status) => status.state === 'LIVE').length
+  const live = statuses.filter((status) => ['LIVE', 'RECORDING'].includes(status.state)).length
+  const finalizing = statuses.filter((status) => status.state === 'FINALIZING').length
   const waiting = statuses.filter((status) => ['WAITING', 'STARTING', 'RECONNECTING'].includes(status.state)).length
   const errors = statuses.filter((status) => status.state === 'ERROR').length
+  const liveDetail = live
+    ? `${live} 个房间直播或录制中${finalizing ? ` · ${finalizing} 个正在收尾` : ''}`
+    : finalizing ? `${finalizing} 个房间正在完成录制收尾` : '当前没有直播中的房间'
   const summary = [
-    { label: '正在直播', value: String(live), detail: live ? '监听连接保持正常' : '当前没有直播中的房间', icon: Radio },
+    { label: '正在直播', value: String(live), detail: liveDetail, icon: Radio },
     { label: '等待开播', value: String(waiting), detail: `${rooms.filter((room) => room.monitorEnabled).length} 个房间启用自动监听`, icon: Activity },
     { label: '需要处理', value: String(errors), detail: errors ? '请前往直播间查看错误状态' : '没有待处理的房间异常', icon: AlertTriangle },
     {

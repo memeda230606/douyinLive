@@ -128,6 +128,8 @@ button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, 
 .room-status svg { width: 14px; }
 .room-status--waiting, .room-status--starting, .room-status--reconnecting { color: var(--accent); background: var(--accent-soft); }
 .room-status--live { color: var(--success); background: color-mix(in srgb, var(--success) 11%, var(--surface)); }
+.room-status--recording { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
+.room-status--finalizing { color: var(--warning); background: color-mix(in srgb, var(--warning) 11%, var(--surface)); }
 .room-status--error { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
 .room-card__message { min-height: 59px; margin-top: 18px; padding: 12px; border-radius: 8px; background: var(--surface-muted); }
 .room-card__message strong, .room-card__message span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

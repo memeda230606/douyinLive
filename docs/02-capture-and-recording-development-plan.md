@@ -99,6 +99,18 @@ stateDiagram-v2
 - `FINALIZING` 期间禁止创建同房间新场次；收尾超时则标记 `incomplete` 后返回 `WAITING`。
 - 用户停止监控时，正在录制的场次仍先进入 `FINALIZING`，不能直接杀进程并丢弃清单。
 
+### 4.3 场次持久化契约（Schema v2）
+
+- `live_sessions.status` 继续使用 `starting/recording/finalizing/completed/interrupted/failed`；为避免重建被事件、媒体、转写、分析和缺口表共同引用的父表，v2 不改变原 CHECK。活动消息场次使用 `status=recording`，不等同于媒体一定正在写入。
+- 新增 `recording_status`：`pending/disabled/starting/recording/unavailable/reconnecting/finalizing/completed/incomplete/failed`。关闭录制策略时为 `disabled`；消息连接有效但无可录制流或依赖不可用时为 `unavailable`，不得因此停止事件场次。
+- 新增非敏感 `operation_id`。Open、Rebind、Finalize 每次生成新 ID；仓储更新同时 CAS 旧场次状态、旧录制状态和旧 operation ID，旧异步结果影响行数为 0 时返回稳定的过期操作错误。
+- 建立 `status IN ('starting','recording','finalizing')` 的按房间部分唯一索引，作为单 worker 串行编排之外的数据库最终防线。`FINALIZING` 完成前不得为同一房间创建新场次。
+- 场次路径固定为 `rooms/<room-config-id>/sessions/<yyyy>/<mm>/<session-id>`，数据库只保存相对数据根的 `/` 分隔路径。每次创建和状态转换都以临时文件、同步和同目录原子重命名更新 `session.json`；数据库是索引事实来源，文件镜像用于数据库损坏时重建。
+- `manifest_dirty` 与场次主事务一同置为 1。文件成功落盘后必须先把脱敏 `CAPTURE_MANIFEST_REPAIR_CLEARED` 健康事件写入 JSONL 并完成 Sync，再以 `id + operation_id + status + recording_status + updated_at` 精确 CAS 清零；任何日志同步、清标或进程崩溃都保留脏标记，启动时按 128 条 keyset 分页只扫描脏记录和活动场次。
+- 同一场次的读取修复、创建后提升和状态转换共用串行锁，并在写文件前重读数据库版本；`updated_at` 严格单调，避免旧 repair 或同毫秒转换覆盖新 manifest。批量启动修复每页只做一次健康日志 Sync，未清数量必须准确递减到 0。
+- `RoomSupervisor` 仍是唯一房间状态机；`CaptureCoordinator` 只返回由 worker 持有的场次句柄并组合 Recorder/EventSink。外层连接中断进入 `RECONNECTING` 时保留句柄；下一次可靠在线执行 Rebind 并复用同一 `session_id`，只有确认下播、用户停止或应用退出才 Finalize。
+- MonitorManager 与 Application 关闭均采用调用方无关的共享清理：调用方 context 只限制等待，不拥有清理；Application 进入 `STOPPING` 后立即摘除公共服务但保留原生命周期，等 Monitor/场次真正排空后再取消 context、关闭 SQLite 与日志。初始化在开始和提交两个位置拒绝 `STOPPING/STOPPED`，禁止超时关闭后的资源复活。
+
 ## 5. 流地址解析
 
 ### 5.1 候选字段顺序

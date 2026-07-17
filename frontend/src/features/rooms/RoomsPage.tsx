@@ -121,6 +121,7 @@ export function RoomsPage({ dashboard, openEditor, onEditorHandled }: { dashboar
         {visibleRooms.map((room) => {
           const status = dashboard.statuses[room.id]
           const busy = actionRoom === room.id
+          const sessionLocked = Boolean(status?.sessionId) || status?.state === 'STARTING' || status?.state === 'FINALIZING'
           return (
             <article className="room-card" key={room.id}>
               <div className="room-card__heading"><div className="room-avatar"><Radio aria-hidden="true" /></div><div><h2>{room.alias}</h2><p>Live ID · {room.liveId}</p></div><RoomStatusBadge status={status} fallback={room.monitorEnabled ? 'WAITING' : 'STOPPED'} /></div>
@@ -129,9 +130,9 @@ export function RoomsPage({ dashboard, openEditor, onEditorHandled }: { dashboar
               {status?.state === 'ERROR' && <div className="inline-alert" role="alert">{status.message}{status.errorCode && <small>{status.errorCode}</small>}</div>}
               <div className="room-card__actions">
                 <button className={room.monitorEnabled ? 'button' : 'button button--primary'} disabled={busy} type="button" onClick={() => void toggleMonitoring(room)}>{room.monitorEnabled ? '停止监控' : '开始监控'}</button>
-                <button className="icon-button" aria-label={`编辑 ${room.alias}`} disabled={busy || status?.state === 'LIVE'} type="button" onClick={() => setEditor(room)}><Edit3 aria-hidden="true" /></button>
+                <button className="icon-button" aria-label={`编辑 ${room.alias}`} disabled={busy || sessionLocked} type="button" onClick={() => setEditor(room)}><Edit3 aria-hidden="true" /></button>
                 {room.cookie.configured && <button className="icon-button" aria-label={`清除 ${room.alias} Cookie`} disabled={busy} type="button" onClick={() => void clearCookie(room)}><Cookie aria-hidden="true" /></button>}
-                <button className="icon-button icon-button--danger" aria-label={`删除 ${room.alias}`} disabled={busy || status?.state === 'LIVE' || status?.state === 'STARTING'} type="button" onClick={() => void deleteRoom(room)}><Trash2 aria-hidden="true" /></button>
+                <button className="icon-button icon-button--danger" aria-label={`删除 ${room.alias}`} disabled={busy || sessionLocked} type="button" onClick={() => void deleteRoom(room)}><Trash2 aria-hidden="true" /></button>
               </div>
             </article>
           )

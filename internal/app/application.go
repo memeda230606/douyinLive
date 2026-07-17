@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
@@ -20,9 +21,10 @@ const BootstrapAPIVersion = "v1"
 type State string
 
 const (
-	StateCreated State = "CREATED"
-	StateRunning State = "RUNNING"
-	StateStopped State = "STOPPED"
+	StateCreated  State = "CREATED"
+	StateRunning  State = "RUNNING"
+	StateStopping State = "STOPPING"
+	StateStopped  State = "STOPPED"
 )
 
 type Options struct {
@@ -52,10 +54,16 @@ type BootstrapDTO struct {
 	Capabilities []CapabilityDTO `json:"capabilities"`
 }
 
+type applicationShutdownState struct {
+	done chan struct{}
+	err  error
+}
+
 // Application 是 Wails 绑定层与后续 Room/Settings/Capture 服务之间的装配边界。
 type Application struct {
 	initMu              sync.Mutex
 	mu                  sync.RWMutex
+	lifecycleGeneration uint64
 	name                string
 	version             string
 	state               State
@@ -67,10 +75,17 @@ type Application struct {
 	rooms               *room.Service
 	settings            *settings.Service
 	monitor             *room.MonitorManager
+	coordinator         capture.CaptureCoordinator
 	roomStatusPublisher room.StatusPublisher
 	credentials         *credentials.FileStore
 	logFile             *diagnostics.FileLogger
 	logger              *slog.Logger
+	shutdown            *applicationShutdownState
+	// beforeInfrastructureCommit is a package-private test barrier. Production
+	// leaves it nil; it must never perform application work.
+	beforeInfrastructureCommit func()
+	// beforeShutdownCleanup is a package-private test barrier. Production leaves it nil.
+	beforeShutdownCleanup func()
 }
 
 func New(options Options) *Application {
@@ -92,63 +107,106 @@ func New(options Options) *Application {
 func (a *Application) Startup(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.state == StateRunning {
+	if a.state == StateRunning || a.state == StateStopping {
 		return
 	}
+	a.lifecycleGeneration++
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	a.lifecycle, a.cancel = context.WithCancel(ctx)
+	a.shutdown = nil
 	a.state = StateRunning
 }
 
-// Shutdown 幂等取消后台生命周期。后续服务必须在返回前完成有界收尾。
+type applicationCleanup struct {
+	cancel  context.CancelFunc
+	monitor *room.MonitorManager
+	store   *storage.Store
+	logFile *diagnostics.FileLogger
+	logger  *slog.Logger
+	hook    func()
+}
+
+// Shutdown starts one shared cleanup for the current lifecycle generation.
+// The caller context only bounds this call's wait; it never owns cleanup.
 func (a *Application) Shutdown(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("shutdown context is nil")
 	}
+
+	a.mu.Lock()
+	if a.state == StateStopped {
+		shutdown := a.shutdown
+		a.mu.Unlock()
+		return shutdown.err
+	}
+	if a.state != StateStopping {
+		a.lifecycleGeneration++
+		cleanup := applicationCleanup{
+			cancel: a.cancel, monitor: a.monitor, store: a.store,
+			logFile: a.logFile, logger: a.logger, hook: a.beforeShutdownCleanup,
+		}
+		a.store = nil
+		a.rooms = nil
+		a.settings = nil
+		a.monitor = nil
+		a.coordinator = nil
+		a.credentials = nil
+		a.logFile = nil
+		a.logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+		a.initialized = false
+		a.state = StateStopping
+		a.dataStatus = DataStatusDTO{}
+		a.shutdown = &applicationShutdownState{done: make(chan struct{})}
+		go a.runShutdown(cleanup, a.shutdown)
+	}
+	shutdown := a.shutdown
+	a.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	select {
+	case <-shutdown.done:
+		return shutdown.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
-	a.mu.Lock()
-	cancel := a.cancel
-	monitor := a.monitor
-	store := a.store
-	logFile := a.logFile
-	logger := a.logger
-	a.lifecycle = nil
-	a.cancel = nil
-	a.store = nil
-	a.rooms = nil
-	a.settings = nil
-	a.monitor = nil
-	a.credentials = nil
-	a.logFile = nil
-	a.initialized = false
-	a.state = StateStopped
-	a.dataStatus = DataStatusDTO{}
-	a.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
+func (a *Application) runShutdown(cleanup applicationCleanup, shutdown *applicationShutdownState) {
+	if cleanup.hook != nil {
+		cleanup.hook()
 	}
 	var monitorErr error
-	if monitor != nil {
-		monitorErr = monitor.Shutdown(ctx)
+	if cleanup.monitor != nil {
+		monitorErr = cleanup.monitor.Shutdown(context.Background())
 	}
-	if logger != nil && logFile != nil {
-		logger.InfoContext(ctx, "application infrastructure stopped",
+	if cleanup.cancel != nil {
+		cleanup.cancel()
+	}
+	if cleanup.logger != nil && cleanup.logFile != nil {
+		cleanup.logger.Info("application infrastructure stopped",
 			"component", "app", "error_code", "", "correlation_id", "shutdown")
 	}
 	var storeErr, logErr error
-	if store != nil {
-		storeErr = store.Close()
+	if cleanup.store != nil {
+		storeErr = cleanup.store.Close()
 	}
-	if logFile != nil {
-		logErr = logFile.Close()
+	if cleanup.logFile != nil {
+		logErr = cleanup.logFile.Close()
 	}
-	return errors.Join(monitorErr, storeErr, logErr)
+	result := errors.Join(monitorErr, storeErr, logErr)
+	stoppedLifecycle, cancelStoppedLifecycle := context.WithCancel(context.Background())
+	cancelStoppedLifecycle()
+	a.mu.Lock()
+	shutdown.err = result
+	a.lifecycle = stoppedLifecycle
+	a.cancel = nil
+	a.state = StateStopped
+	close(shutdown.done)
+	a.mu.Unlock()
 }
 
 func (a *Application) State() State {
@@ -220,6 +278,12 @@ func (a *Application) MonitorManager() *room.MonitorManager {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.monitor
+}
+
+func (a *Application) CaptureCoordinator() capture.CaptureCoordinator {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.coordinator
 }
 
 // SetRoomStatusPublisher must be called before infrastructure initialization.

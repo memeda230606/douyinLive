@@ -205,6 +205,8 @@ export namespace room {
 	    alias: string;
 	    state: string;
 	    operationId?: string;
+	    sessionId?: string;
+	    recordingStatus?: string;
 	    liveName?: string;
 	    title?: string;
 	    lastCheckedAt?: number;
@@ -224,6 +226,8 @@ export namespace room {
 	        this.alias = source["alias"];
 	        this.state = source["state"];
 	        this.operationId = source["operationId"];
+	        this.sessionId = source["sessionId"];
+	        this.recordingStatus = source["recordingStatus"];
 	        this.liveName = source["liveName"];
 	        this.title = source["title"];
 	        this.lastCheckedAt = source["lastCheckedAt"];
