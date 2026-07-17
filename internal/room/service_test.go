@@ -134,12 +134,34 @@ func TestRoomCookieIsReferencedAndNeverReturned(t *testing.T) {
 	if reference == "" || reference == secret {
 		t.Fatalf("invalid stored credential reference %q", reference)
 	}
+	loaded, err := service.LoadRoomCookie(ctx, created.ID)
+	if err != nil || loaded != secret {
+		t.Fatalf("LoadRoomCookie() = (%q, %v)", loaded, err)
+	}
 	if err := service.ClearRoomCookie(ctx, created.ID); err != nil {
 		t.Fatalf("ClearRoomCookie() error = %v", err)
 	}
 	got, err = service.GetRoom(ctx, created.ID)
 	if err != nil || got.Cookie.Configured {
 		t.Fatalf("cookie remained configured: (%#v, %v)", got.Cookie, err)
+	}
+}
+
+func TestSetMonitorEnabledUpdatesOnlyMonitoringPreference(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := service.CreateRoom(ctx, CreateRoomInput{LiveID: "monitor-room", Alias: "监控测试"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.SetMonitorEnabled(ctx, created.ID, true)
+	if err != nil || !updated.MonitorEnabled || updated.Alias != created.Alias || updated.LiveID != created.LiveID {
+		t.Fatalf("SetMonitorEnabled() = (%#v, %v)", updated, err)
 	}
 }
 

@@ -22,6 +22,10 @@ export function GetRoom(arg1) {
   return window['go']['main']['DesktopApp']['GetRoom'](arg1);
 }
 
+export function GetRoomStatus(arg1) {
+  return window['go']['main']['DesktopApp']['GetRoomStatus'](arg1);
+}
+
 export function GetSettings() {
   return window['go']['main']['DesktopApp']['GetSettings']();
 }
@@ -36,6 +40,14 @@ export function ListRooms() {
 
 export function SetRoomCookie(arg1) {
   return window['go']['main']['DesktopApp']['SetRoomCookie'](arg1);
+}
+
+export function StartMonitoring(arg1) {
+  return window['go']['main']['DesktopApp']['StartMonitoring'](arg1);
+}
+
+export function StopMonitoring(arg1) {
+  return window['go']['main']['DesktopApp']['StopMonitoring'](arg1);
 }
 
 export function UpdateRoom(arg1, arg2) {

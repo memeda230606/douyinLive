@@ -21,28 +21,25 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T13:53:39+08:00"
+updated_at: "2026-07-17T14:20:01+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "2124eae5ea7c14bb6fac00bdf0e23a58b3209031"
+last_verified_head: "2b5b8912cb46c8a26493ece350e1961f7fb1b59b"
 project_status: "READY"
-overall_completion_percent: 32
+overall_completion_percent: 36
 current_phase: "PHASE-2-WAILS-ROOMS"
-current_task: "P2-MON-001"
-next_task: "P2-UI-001"
+current_task: "P2-UI-001"
+next_task: "P2-ACC-001"
 expected_dirty_paths:
   - "cmd/desktop/"
   - "docs/00-master-development-plan.md"
   - "frontend/src/generated/wailsjs/go/"
-  - "go.mod"
   - "internal/app/"
-  - "internal/credentials/"
   - "internal/room/"
-  - "internal/settings/"
 blockers: []
-last_completed_task: "P2-ROOM-001"
-last_completion_evidence: "新增 SQLite 房间配置 CRUD、Live ID/别名/录制策略校验、UUIDv7、重复与历史删除错误分类；新增 Windows DPAPI Cookie 密文文件与仅返回 configured/updatedAt 的凭据引用；新增原子 settings.json、默认/自定义录制目录与录制默认值持久化，并装配 Wails 绑定。重启持久化、Cookie 不回显、目标与全量 Go test/vet/build、cmd/main、前端 typecheck/Vitest/build、Wails Windows 生产构建均通过；真实 GUI 启动生成 app.db/WAL/settings.json/日志且未生成空凭据文件。"
-resume_instruction: "执行 P2-MON-001：读取 docs/01 与 docs/02，在现有 RoomService、SQLite 和应用生命周期上接入等待开播、监控启停、运行状态查询与 room:status 事件；保持录制实现仍留在 PHASE-3，并维持现有门禁。"
+last_completed_task: "P2-MON-001"
+last_completion_evidence: "新增每房间串行 MonitorManager，复用现有 DouyinLive Prepare/Start/Close/Dispose，覆盖 STOPPED/WAITING/STARTING/LIVE/RECONNECTING/ERROR、UUIDv7 操作 ID、离线轮询、显式重试、8 房间上限、启动恢复、配置协调和有界关闭；新增 StartMonitoring/StopMonitoring/GetRoomStatus Wails 绑定与 room:status 事件桥。状态机 10 次重复测试、全量 Go test/vet/build、cmd/main、前端 typecheck/Vitest/build和 Wails Windows 生产构建通过；真实 GUI 启动通过且验证进程/数据/构建产物已清理。"
+resume_instruction: "执行 P2-UI-001：读取 docs/01，在现有房间、设置和监控 Wails 绑定上实现总览、直播间、设置与诊断基础页面，包含空状态、表单、监控启停和 room:status 实时展示；保持 Cookie 不回显与运行时 schema 校验。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -74,11 +71,11 @@ resume_instruction: "执行 P2-MON-001：读取 docs/01 与 docs/02，在现有 
 | --- | ---: | --- | ---: | --- | --- |
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
-| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 60% | 桌面壳、数据基础、房间与设置持久化完成 | 监控状态、基础页面与关闭验收 |
+| PHASE-2 Wails 桌面壳与房间管理 | 20% | `READY` | 80% | 桌面壳、数据基础、房间设置与监控状态机完成 | 基础页面与关闭验收 |
 | PHASE-3 采集与录制 MVP | 30% | `NOT_STARTED` | 0% | — | 两小时录制、恢复、收尾和缺口审计通过 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 24 小时稳定性通过 |
-| **总体** | **100%** | **`READY`** | **32%** | 文档、直播流解析、桌面壳、数据基础与房间设置服务完成 | 执行 P2-MON-001 等待开播与状态事件 |
+| **总体** | **100%** | **`READY`** | **36%** | 文档、直播流解析、桌面壳、数据基础、房间设置与监控状态机完成 | 执行 P2-UI-001 基础页面 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -99,8 +96,8 @@ resume_instruction: "执行 P2-MON-001：读取 docs/01 与 docs/02，在现有 
 | P2-WAILS-001 | 建立 Wails v2 桌面壳与前端工程 | 4 | P1-VAL-001 | `DONE` | `cmd/desktop`、`internal/app`、`frontend` 与生成绑定已建立；前端 typecheck/Vitest/build、Go test/vet/build、原入口构建、Wails production build 和 GUI 启动检查通过 | 后续服务只经应用层门面绑定，保持启动 DTO 脱敏 |
 | P2-DATA-001 | 建立数据目录、SQLite 迁移与结构化日志 | 4 | P2-WAILS-001 | `DONE` | 固定用户数据目录、SQLite Schema v1（8 张业务表）、事务迁移、WAL/外键/忙等待、完整性检查与一致备份、按日 JSONL/14 天保留/全面脱敏完成；全量 Go/前端/Wails 门禁及真实启动通过 | 由房间与设置服务复用存储层，不把密钥或完整流地址写入数据库/日志/UI |
 | P2-ROOM-001 | 实现房间配置 CRUD 与设置服务 | 4 | P2-DATA-001 | `DONE` | 房间 CRUD、Live ID 与录制策略校验、UUIDv7、DPAPI Cookie 引用、原子设置文件和保存目录持久化完成；重启/重复/删除/Cookie 不回显测试、全量 Go/前端/Wails 门禁及真实 GUI 数据初始化通过 | 由监控服务消费已脱敏房间配置，Cookie 仅在 Go 内部按引用读取 |
-| P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `READY` | P2-ROOM-001 已完成，房间服务、应用生命周期与 SQLite 可直接复用 | 复用现有核心并输出 `room:status` |
-| P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `NOT_STARTED` | — | 完成导航、空状态、表单和运行状态展示 |
+| P2-MON-001 | 接入等待开播、启停与状态事件 | 4 | P2-ROOM-001 | `DONE` | 每房间串行监督器、持久化启停、离线轮询、上线监听、连接重检、启动恢复、8 房间上限、状态查询和 `room:status` 事件完成；重复状态机、全量 Go/前端/Wails 与真实 GUI 启动门禁通过 | 由基础页面消费状态 DTO 和事件，不向前端发送 Cookie、凭据引用或流 URL |
+| P2-UI-001 | 实现总览、房间、设置与诊断基础页面 | 3 | P2-MON-001 | `READY` | P2-MON-001 已完成，房间、设置、监控绑定与状态事件可直接消费 | 完成导航、空状态、表单和运行状态展示 |
 | P2-ACC-001 | 完成重启持久化、CRUD 与关闭验收 | 1 | P2-UI-001 | `NOT_STARTED` | — | 验证重启保留、启停可用及 10 秒内关闭 |
 
 阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
@@ -153,6 +150,7 @@ resume_instruction: "执行 P2-MON-001：读取 docs/01 与 docs/02，在现有 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
 ## 1. 文档目的
+| 2026-07-17 14:20 | P2-MON-001 | `DONE` | 实现串行房间监督器、等待开播、监控启停、连接重检、启动恢复、状态查询与 `room:status` Wails 事件；状态机 10 次重复测试和全量 Go/前端/Wails 门禁通过，真实 GUI 启动通过；跨计划任务 `CloseMainWindow` 无法发现 Wails 窗口，已记录为 P2-ACC 使用可靠退出入口复验，验证残留已清理 | 执行 P2-UI-001 总览、直播间、设置与诊断基础页面 |
 
 本文是桌面程序建设的唯一主计划，负责锁定产品边界、总体架构、实施顺序、跨模块接口、验收口径和风险处理。四份子计划负责展开具体实现，不得改变本文中的产品边界和公共契约；需要变更时先修改本文并记录决策，再同步子计划。
 

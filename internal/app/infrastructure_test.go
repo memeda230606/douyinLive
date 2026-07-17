@@ -36,7 +36,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 			t.Fatalf("expected artifact %q: %v", path, err)
 		}
 	}
-	if application.RoomService() == nil || application.SettingsService() == nil || application.CredentialStore() == nil {
+	if application.RoomService() == nil || application.SettingsService() == nil || application.CredentialStore() == nil || application.MonitorManager() == nil {
 		t.Fatal("application services were not initialized")
 	}
 

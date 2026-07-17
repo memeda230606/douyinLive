@@ -83,12 +83,35 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		return fmt.Errorf("initialize room service: %w", err)
 	}
 
+	a.mu.RLock()
+	monitorRoot := a.lifecycle
+	statusPublisher := a.roomStatusPublisher
+	a.mu.RUnlock()
+	if monitorRoot == nil {
+		monitorRoot = ctx
+	}
+	monitorManager, err := room.NewMonitorManager(monitorRoot, roomService, logger, room.MonitorOptions{
+		Publisher: statusPublisher,
+	})
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize room monitor manager: %w", err)
+	}
+	if err := monitorManager.StartEnabled(ctx); err != nil {
+		_ = monitorManager.Shutdown(ctx)
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("resume enabled room monitors: %w", err)
+	}
+
 	a.mu.Lock()
 	a.initialized = true
 	a.store = store
 	a.credentials = credentialStore
 	a.settings = settingsService
 	a.rooms = roomService
+	a.monitor = monitorManager
 	a.logFile = logFile
 	a.logger = logger
 	a.dataStatus = DataStatusDTO{

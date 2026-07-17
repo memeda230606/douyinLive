@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -328,6 +329,64 @@ func (s *Service) ClearRoomCookie(ctx context.Context, id string) error {
 		return fmt.Errorf("clear room credential reference: %w", err)
 	}
 	return nil
+}
+
+// SetMonitorEnabled persists the desired monitoring state without replacing
+// unrelated room fields. Runtime state remains owned by MonitorManager.
+func (s *Service) SetMonitorEnabled(ctx context.Context, id string, enabled bool) (RoomConfig, error) {
+	if err := contextError(ctx); err != nil {
+		return RoomConfig{}, err
+	}
+	if err := validateID(id); err != nil {
+		return RoomConfig{}, err
+	}
+	result, err := s.writer.ExecContext(ctx,
+		`UPDATE rooms SET monitor_enabled = ?, updated_at = ? WHERE id = ?`,
+		enabled, s.now().UTC().UnixMilli(), id,
+	)
+	if err != nil {
+		return RoomConfig{}, fmt.Errorf("update room monitoring preference: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return RoomConfig{}, fmt.Errorf("inspect monitoring preference update: %w", err)
+	}
+	if affected == 0 {
+		return RoomConfig{}, roomNotFound()
+	}
+	return s.GetRoom(ctx, id)
+}
+
+// LoadRoomCookie resolves a credential reference strictly inside Go. The
+// returned value must never be placed in a DTO, event, database, or log.
+func (s *Service) LoadRoomCookie(ctx context.Context, id string) (string, error) {
+	if err := contextError(ctx); err != nil {
+		return "", err
+	}
+	if err := validateID(id); err != nil {
+		return "", err
+	}
+	var ref sql.NullString
+	if err := s.reader.QueryRowContext(ctx, `SELECT credential_ref FROM rooms WHERE id = ?`, id).Scan(&ref); errors.Is(err, sql.ErrNoRows) {
+		return "", roomNotFound()
+	} else if err != nil {
+		return "", fmt.Errorf("read room credential reference: %w", err)
+	}
+	if !ref.Valid || strings.TrimSpace(ref.String) == "" {
+		return "", nil
+	}
+	secret, err := s.credentials.Get(ctx, ref.String)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", &BusinessError{Code: "COOKIE_INVALID", Message: "房间 Cookie 引用已失效"}
+		}
+		return "", &BusinessError{Code: "COOKIE_INVALID", Message: "房间 Cookie 无法解密"}
+	}
+	defer clear(secret)
+	if len(secret) == 0 {
+		return "", &BusinessError{Code: "COOKIE_INVALID", Message: "房间 Cookie 为空"}
+	}
+	return string(secret), nil
 }
 
 const roomSelectSQL = `SELECT id, live_id, room_id, alias, anchor_name, monitor_enabled,

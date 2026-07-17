@@ -9,6 +9,7 @@ import (
 	application "github.com/jwwsjlm/douyinLive/v2/internal/app"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -28,6 +29,9 @@ func newDesktopApp(app *application.Application, options application.Infrastruct
 }
 
 func (a *DesktopApp) startup(ctx context.Context) {
+	a.application.SetRoomStatusPublisher(func(status room.RoomRuntimeStatus) {
+		runtime.EventsEmit(ctx, room.StatusEventName, status)
+	})
 	a.application.Startup(ctx)
 	if err := a.application.InitializeInfrastructure(ctx, a.infrastructureOptions); err != nil {
 		slog.Error("桌面数据基础初始化失败",
@@ -78,7 +82,18 @@ func (a *DesktopApp) CreateRoom(input room.CreateRoomInput) (room.RoomConfig, er
 	if err != nil {
 		return room.RoomConfig{}, err
 	}
-	return service.CreateRoom(a.application.Context(), input)
+	created, err := service.CreateRoom(a.application.Context(), input)
+	if err != nil {
+		return room.RoomConfig{}, err
+	}
+	if created.MonitorEnabled {
+		manager, managerErr := a.monitorManager()
+		if managerErr != nil {
+			return created, managerErr
+		}
+		err = manager.ReconcileRoom(a.application.Context(), created.ID)
+	}
+	return created, err
 }
 
 func (a *DesktopApp) UpdateRoom(id string, input room.UpdateRoomInput) (room.RoomConfig, error) {
@@ -86,7 +101,14 @@ func (a *DesktopApp) UpdateRoom(id string, input room.UpdateRoomInput) (room.Roo
 	if err != nil {
 		return room.RoomConfig{}, err
 	}
-	return service.UpdateRoom(a.application.Context(), id, input)
+	updated, err := service.UpdateRoom(a.application.Context(), id, input)
+	if err != nil {
+		return room.RoomConfig{}, err
+	}
+	if manager := a.application.MonitorManager(); manager != nil {
+		err = manager.ReconcileRoom(a.application.Context(), id)
+	}
+	return updated, err
 }
 
 func (a *DesktopApp) DeleteRoom(id string, deleteData bool) error {
@@ -94,7 +116,43 @@ func (a *DesktopApp) DeleteRoom(id string, deleteData bool) error {
 	if err != nil {
 		return err
 	}
-	return service.DeleteRoom(a.application.Context(), id, deleteData)
+	manager := a.application.MonitorManager()
+	if manager != nil {
+		if err := manager.DetachRoom(a.application.Context(), id); err != nil {
+			return err
+		}
+	}
+	if err := service.DeleteRoom(a.application.Context(), id, deleteData); err != nil {
+		if manager != nil {
+			_ = manager.ReconcileRoom(a.application.Context(), id)
+		}
+		return err
+	}
+	return nil
+}
+
+func (a *DesktopApp) StartMonitoring(id string) error {
+	manager, err := a.monitorManager()
+	if err != nil {
+		return err
+	}
+	return manager.StartMonitoring(a.application.Context(), id)
+}
+
+func (a *DesktopApp) StopMonitoring(id string) error {
+	manager, err := a.monitorManager()
+	if err != nil {
+		return err
+	}
+	return manager.StopMonitoring(a.application.Context(), id)
+}
+
+func (a *DesktopApp) GetRoomStatus(id string) (room.RoomRuntimeStatus, error) {
+	manager, err := a.monitorManager()
+	if err != nil {
+		return room.RoomRuntimeStatus{}, err
+	}
+	return manager.GetRoomStatus(a.application.Context(), id)
 }
 
 func (a *DesktopApp) SetRoomCookie(input room.SetRoomCookieInput) (room.CookieStatus, error) {
@@ -143,4 +201,12 @@ func (a *DesktopApp) settingsService() (*settings.Service, error) {
 		return nil, errors.New("SETTINGS_SERVICE_UNAVAILABLE: 设置服务尚未就绪")
 	}
 	return service, nil
+}
+
+func (a *DesktopApp) monitorManager() (*room.MonitorManager, error) {
+	manager := a.application.MonitorManager()
+	if manager == nil {
+		return nil, errors.New("MONITOR_SERVICE_UNAVAILABLE: 监控服务尚未就绪")
+	}
+	return manager, nil
 }

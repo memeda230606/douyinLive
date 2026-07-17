@@ -54,21 +54,23 @@ type BootstrapDTO struct {
 
 // Application 是 Wails 绑定层与后续 Room/Settings/Capture 服务之间的装配边界。
 type Application struct {
-	initMu      sync.Mutex
-	mu          sync.RWMutex
-	name        string
-	version     string
-	state       State
-	cancel      context.CancelFunc
-	lifecycle   context.Context
-	initialized bool
-	dataStatus  DataStatusDTO
-	store       *storage.Store
-	rooms       *room.Service
-	settings    *settings.Service
-	credentials *credentials.FileStore
-	logFile     *diagnostics.FileLogger
-	logger      *slog.Logger
+	initMu              sync.Mutex
+	mu                  sync.RWMutex
+	name                string
+	version             string
+	state               State
+	cancel              context.CancelFunc
+	lifecycle           context.Context
+	initialized         bool
+	dataStatus          DataStatusDTO
+	store               *storage.Store
+	rooms               *room.Service
+	settings            *settings.Service
+	monitor             *room.MonitorManager
+	roomStatusPublisher room.StatusPublisher
+	credentials         *credentials.FileStore
+	logFile             *diagnostics.FileLogger
+	logger              *slog.Logger
 }
 
 func New(options Options) *Application {
@@ -111,6 +113,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 
 	a.mu.Lock()
 	cancel := a.cancel
+	monitor := a.monitor
 	store := a.store
 	logFile := a.logFile
 	logger := a.logger
@@ -119,6 +122,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 	a.store = nil
 	a.rooms = nil
 	a.settings = nil
+	a.monitor = nil
 	a.credentials = nil
 	a.logFile = nil
 	a.initialized = false
@@ -128,6 +132,10 @@ func (a *Application) Shutdown(ctx context.Context) error {
 
 	if cancel != nil {
 		cancel()
+	}
+	var monitorErr error
+	if monitor != nil {
+		monitorErr = monitor.Shutdown(ctx)
 	}
 	if logger != nil && logFile != nil {
 		logger.InfoContext(ctx, "application infrastructure stopped",
@@ -140,7 +148,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 	if logFile != nil {
 		logErr = logFile.Close()
 	}
-	return errors.Join(storeErr, logErr)
+	return errors.Join(monitorErr, storeErr, logErr)
 }
 
 func (a *Application) State() State {
@@ -206,4 +214,21 @@ func (a *Application) CredentialStore() *credentials.FileStore {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.credentials
+}
+
+func (a *Application) MonitorManager() *room.MonitorManager {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.monitor
+}
+
+// SetRoomStatusPublisher must be called before infrastructure initialization.
+// Desktop production uses it to bridge sanitized status DTOs to Wails events.
+func (a *Application) SetRoomStatusPublisher(publisher room.StatusPublisher) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.initialized {
+		return
+	}
+	a.roomStatusPublisher = publisher
 }

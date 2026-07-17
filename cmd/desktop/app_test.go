@@ -29,7 +29,7 @@ func TestDesktopAppLifecycleAndBootstrap(t *testing.T) {
 		t.Fatalf("data infrastructure not ready: %#v", bootstrap.Data)
 	}
 	created, err := desktop.CreateRoom(room.CreateRoomInput{
-		LiveID: "binding-room", Alias: "绑定测试", MonitorEnabled: true,
+		LiveID: "binding-room", Alias: "绑定测试", MonitorEnabled: false,
 		RecordingProfile: room.RecordingProfile{Quality: room.QualityAuto, SegmentMinutes: 10},
 	})
 	if err != nil {
@@ -38,6 +38,10 @@ func TestDesktopAppLifecycleAndBootstrap(t *testing.T) {
 	rooms, err := desktop.ListRooms()
 	if err != nil || len(rooms) != 1 || rooms[0].ID != created.ID {
 		t.Fatalf("ListRooms() = (%#v, %v)", rooms, err)
+	}
+	status, err := desktop.GetRoomStatus(created.ID)
+	if err != nil || status.State != room.RuntimeStopped {
+		t.Fatalf("GetRoomStatus() = (%#v, %v)", status, err)
 	}
 	gotSettings, err := desktop.GetSettings()
 	if err != nil || gotSettings.Version != settings.SettingsVersion {

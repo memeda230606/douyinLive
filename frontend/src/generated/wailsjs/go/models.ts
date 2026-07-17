@@ -199,6 +199,40 @@ export namespace room {
 		    return a;
 		}
 	}
+	export class RoomRuntimeStatus {
+	    roomId: string;
+	    liveId: string;
+	    alias: string;
+	    state: string;
+	    operationId?: string;
+	    liveName?: string;
+	    title?: string;
+	    lastCheckedAt?: number;
+	    changedAt: number;
+	    retryAt?: number;
+	    errorCode?: string;
+	    message: string;
+
+	    static createFrom(source: any = {}) {
+	        return new RoomRuntimeStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.roomId = source["roomId"];
+	        this.liveId = source["liveId"];
+	        this.alias = source["alias"];
+	        this.state = source["state"];
+	        this.operationId = source["operationId"];
+	        this.liveName = source["liveName"];
+	        this.title = source["title"];
+	        this.lastCheckedAt = source["lastCheckedAt"];
+	        this.changedAt = source["changedAt"];
+	        this.retryAt = source["retryAt"];
+	        this.errorCode = source["errorCode"];
+	        this.message = source["message"];
+	    }
+	}
 	export class SetRoomCookieInput {
 	    roomId: string;
 	    cookie: string;

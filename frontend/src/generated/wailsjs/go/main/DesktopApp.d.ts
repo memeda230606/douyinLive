@@ -14,6 +14,8 @@ export function GetBootstrap():Promise<app.BootstrapDTO>;
 
 export function GetRoom(arg1:string):Promise<room.RoomConfig>;
 
+export function GetRoomStatus(arg1:string):Promise<room.RoomRuntimeStatus>;
+
 export function GetSettings():Promise<settings.AppSettings>;
 
 export function GetState():Promise<app.State>;
@@ -21,6 +23,10 @@ export function GetState():Promise<app.State>;
 export function ListRooms():Promise<Array<room.RoomConfig>>;
 
 export function SetRoomCookie(arg1:room.SetRoomCookieInput):Promise<room.CookieStatus>;
+
+export function StartMonitoring(arg1:string):Promise<void>;
+
+export function StopMonitoring(arg1:string):Promise<void>;
 
 export function UpdateRoom(arg1:string,arg2:room.UpdateRoomInput):Promise<room.RoomConfig>;
 
