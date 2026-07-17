@@ -1,0 +1,25 @@
+{
+  "data": {
+    "data": [
+      {
+        "id_str": "room-fixture-empty",
+        "stream_url": {
+          "flv_pull_url": {},
+          "hls_pull_url_map": {},
+          "hls_pull_url": "",
+          "live_core_sdk_data": {
+            "pull_data": {
+              "stream_data": "{\"data\":{}}"
+            }
+          },
+          "pull_datas": {}
+        },
+        "additional_stream_url": {}
+      },
+      {
+        "id_str": "room-fixture-missing-stream-url"
+      }
+    ],
+    "web_stream_url": ""
+  }
+}

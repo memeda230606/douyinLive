@@ -1,0 +1,45 @@
+{
+  "data": {
+    "data": [
+      {
+        "id_str": "room-fixture-sdk",
+        "stream_url": {
+          "live_core_sdk_data": {
+            "pull_data": {
+              "options": {
+                "default_quality": {
+                  "name": "超清",
+                  "sdk_key": "hd",
+                  "v_codec": "265",
+                  "level": 3,
+                  "v_bit_rate": 6000000
+                },
+                "qualities": [
+                  {
+                    "name": "超清",
+                    "sdk_key": "hd",
+                    "v_codec": "265",
+                    "resolution": "1920x1080",
+                    "level": 3,
+                    "v_bit_rate": 6000000,
+                    "fps": 30
+                  },
+                  {
+                    "name": "原画",
+                    "sdk_key": "origin",
+                    "v_codec": "265",
+                    "resolution": "1920x1080",
+                    "level": 5,
+                    "v_bit_rate": 8000000,
+                    "fps": 30
+                  }
+                ]
+              },
+              "stream_data": "{\"data\":{\"hd\":{\"main\":{\"flv\":\"https://sdk-flv.example.invalid/live/fixture-hd.flv\",\"hls\":\"https://sdk-hls.example.invalid/live/fixture-hd.m3u8\",\"sdk_params\":\"{\\\"VCodec\\\":\\\"h265\\\",\\\"vbitrate\\\":6000000,\\\"resolution\\\":\\\"1920x1080\\\",\\\"fps\\\":30}\"}},\"origin\":{\"main\":{\"flv\":\"https://sdk-flv.example.invalid/live/fixture-origin.flv\",\"hls\":\"https://sdk-hls.example.invalid/live/fixture-origin.m3u8\",\"sdk_params\":\"{\\\"VCodec\\\":\\\"h265\\\",\\\"vbitrate\\\":8000000,\\\"resolution\\\":\\\"1920x1080\\\",\\\"fps\\\":30}\"}}}}"
+            }
+          }
+        }
+      }
+    ]
+  }
+}
