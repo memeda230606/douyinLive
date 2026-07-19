@@ -502,6 +502,10 @@ func (r *sessionRuntime) processEnvelopes(envelopes []IngestEnvelope) error {
 		r.dedupe, folded.DedupeKeys,
 		r.sink.manager.options.Now().UTC(),
 	)
+	r.sink.manager.publishLiveEventSources(
+		r.sink.descriptor.SessionID,
+		folded.PublishSources,
+	)
 	r.acknowledgeDrops(pendingDrops)
 	if _, err := r.stageDrops(); err != nil {
 		r.failSpool(nil)
@@ -781,6 +785,9 @@ func (m *Manager) runShutdown(sinks []*SessionSink) {
 		err := sink.runtime.closeErr
 		sink.runtime.mu.Unlock()
 		result = errors.Join(result, err)
+	}
+	if m.liveEvents != nil {
+		m.liveEvents.shutdown()
 	}
 	m.mu.Lock()
 	m.shutdownErr = result

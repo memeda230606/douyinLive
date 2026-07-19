@@ -542,6 +542,7 @@ type FFmpegRecorder struct {
 	current      *recorderAttempt
 	pending      *recorderAttempt
 	events       chan RecorderEvent
+	progress     chan recorderProgressSample
 	attempts     []MediaAttempt
 	nextOrdinal  int
 
@@ -563,6 +564,7 @@ type FFmpegRecorder struct {
 
 type recorderAttempt struct {
 	id      string
+	ordinal int
 	process recorderProcess
 	streams processStreams
 
@@ -613,7 +615,9 @@ func newFFmpegRecorder(
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	recorder := &FFmpegRecorder{
 		options: options, dependencies: normalizedDependencies,
-		source: source, events: make(chan RecorderEvent, normalizedDependencies.eventBuffer),
+		source:       source,
+		events:       make(chan RecorderEvent, normalizedDependencies.eventBuffer),
+		progress:     make(chan recorderProgressSample, 1),
 		stopDone:     make(chan struct{}),
 		lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel,
 		releaseCapacity: releaseCapacity,
@@ -644,6 +648,24 @@ func (r *FFmpegRecorder) Events() <-chan RecorderEvent {
 		return closed
 	}
 	return r.events
+}
+
+func (r *FFmpegRecorder) Progress() <-chan recorderProgressSample {
+	if r == nil {
+		return nil
+	}
+	return r.progress
+}
+
+func (r *FFmpegRecorder) IsCurrentProgress(progress recorderProgressSample) bool {
+	if r == nil || !validRecorderAttemptID(progress.attemptID) || progress.ordinal < 1 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.stopping && !r.stopped && r.current != nil &&
+		r.current.id == progress.attemptID &&
+		r.current.ordinal == progress.ordinal
 }
 
 // IsCurrentEvent lets a coordinator discard a queued exit after a newer bind
@@ -1071,7 +1093,7 @@ func (r *FFmpegRecorder) startCandidate(ctx context.Context, candidate douyinLiv
 		return nil, ErrRecorderStart
 	}
 	attempt := &recorderAttempt{
-		id: attemptID, process: process, streams: streams,
+		id: attemptID, ordinal: ordinal, process: process, streams: streams,
 		starting: true, stderrBuffer: newBoundedTextBuffer(recorderStderrBufferBytes),
 		mediaIndex: mediaIndex,
 		progress:   make(chan struct{}), startupEnd: make(chan struct{}),
@@ -1267,10 +1289,28 @@ func (r *FFmpegRecorder) startAttemptDrains(attempt *recorderAttempt) {
 		go func(reader io.ReadCloser) {
 			defer attempt.drainWG.Done()
 			defer reader.Close()
-			_ = readFFmpegProgress(r.lifecycleCtx, reader, func(progress FFmpegProgress) {
-				switch progress.State {
+			_ = readFFmpegProgress(r.lifecycleCtx, reader, func(ffmpegProgress FFmpegProgress) {
+				switch ffmpegProgress.State {
 				case "continue":
 					attempt.progressOnce.Do(func() { close(attempt.progress) })
+					elapsedMS := ffmpegProgress.OutTime.Milliseconds()
+					segmentCount := int64(0)
+					if ffmpegProgress.Frame > 0 || elapsedMS > 0 || ffmpegProgress.TotalSize > 0 {
+						segmentDurationMS := int64(r.options.segmentSeconds) * 1000
+						segmentCount = 1 + elapsedMS/segmentDurationMS
+					}
+					// SegmentCount means the number of attempts' segments that
+					// have become active according to muxer media time. It is
+					// zero until explicit media activity, and is derived without
+					// scanning or exposing the output directory.
+					r.enqueueLatestProgress(recorderProgressSample{
+						attemptID: attempt.id, ordinal: attempt.ordinal,
+						elapsedMS: elapsedMS, bytesWritten: ffmpegProgress.TotalSize,
+						segmentCount: segmentCount,
+						frame:        ffmpegProgress.Frame, fps: ffmpegProgress.FPS,
+						speed:     ffmpegProgress.Speed,
+						updatedAt: nonNegativeRecorderUnixMilli(r.dependencies.now()),
+					})
 				case "end":
 					attempt.endOnce.Do(func() { close(attempt.startupEnd) })
 				}
@@ -1390,6 +1430,30 @@ func (r *FFmpegRecorder) enqueueLatestEventLocked(event RecorderEvent) {
 	default:
 	}
 	r.events <- event
+}
+
+func (r *FFmpegRecorder) enqueueLatestProgress(progress recorderProgressSample) {
+	select {
+	case r.progress <- progress:
+		return
+	default:
+	}
+	select {
+	case <-r.progress:
+	default:
+	}
+	select {
+	case r.progress <- progress:
+	default:
+	}
+}
+
+func nonNegativeRecorderUnixMilli(value time.Time) int64 {
+	milliseconds := value.UTC().UnixMilli()
+	if milliseconds < 0 {
+		return 0
+	}
+	return milliseconds
 }
 
 func (r *FFmpegRecorder) detachCurrentLocked() *recorderAttempt {

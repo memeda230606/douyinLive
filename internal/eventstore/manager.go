@@ -39,18 +39,19 @@ var (
 )
 
 type ManagerOptions struct {
-	DataRoot         string
-	Writer           *Writer
-	Credentials      credentials.Store
-	Logger           *slog.Logger
-	Now              func() time.Time
-	QueueLimits      QueueLimits
-	BatchSize        int
-	BatchInterval    time.Duration
-	BusyRetryWindow  time.Duration
-	BusyRetryInitial time.Duration
-	SpoolOptions     func(root string) SpoolOptions
-	PrivacyOptions   PrivacyOptions
+	DataRoot           string
+	Writer             *Writer
+	Credentials        credentials.Store
+	Logger             *slog.Logger
+	Now                func() time.Time
+	QueueLimits        QueueLimits
+	BatchSize          int
+	BatchInterval      time.Duration
+	BusyRetryWindow    time.Duration
+	BusyRetryInitial   time.Duration
+	SpoolOptions       func(root string) SpoolOptions
+	PrivacyOptions     PrivacyOptions
+	LiveEventPublisher LiveEventPublisher
 }
 
 type SessionDescriptor struct {
@@ -70,6 +71,7 @@ type Manager struct {
 	shutdownOnce sync.Once
 	shutdownDone chan struct{}
 	shutdownErr  error
+	liveEvents   *liveEventDispatcher
 }
 
 type SessionSink struct {
@@ -130,6 +132,7 @@ func NewManager(ctx context.Context, options ManagerOptions) (*Manager, error) {
 		sessions:     make(map[string]*SessionSink),
 		shutdownDone: make(chan struct{}),
 	}
+	manager.liveEvents = newLiveEventDispatcher(options.LiveEventPublisher, options.Now)
 	return manager, nil
 }
 

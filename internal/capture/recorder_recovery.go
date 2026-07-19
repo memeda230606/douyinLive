@@ -512,6 +512,7 @@ func (s *sessionRuntime) completeRecorderRecoveryLocked(
 		// the confirmed durable state must still be materialized locally.
 		if s.current.ID == current.ID && s.current.OperationID == current.OperationID {
 			s.current = next
+			s.recordProgressRestartCountLocked(attempts)
 			s.invalidateRecorderRecoveryLocked()
 			s.recoveryRecorder = nil
 			s.recoveryGapID = ""
@@ -784,6 +785,7 @@ func (s *sessionRuntime) materializeExternalRecorderRecoveryLocked(
 		return
 	}
 	if target == RecordingActive {
+		s.recordProgressRestartCountLocked(s.recoveryAttempts)
 		s.recoveryGapID = ""
 		s.recoveryRecorder = nil
 		s.recoveryWindowStartedAt = time.Time{}

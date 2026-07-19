@@ -2,6 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
+> 实施状态（2026-07-19）：P3-UI-001 已完成；PHASE-3 已完成 28/30 点（93%），项目总进度 68%，当前进入 P3-ACC-001。
+> 最近验收：[P3-UI 实时监控界面](validation/2026-07-19-p3-ui-realtime-monitoring.md)
 
 ## 1. 目标与边界
 
@@ -135,22 +137,23 @@ type AppError = {
 
 ### 5.1 事件接入
 
-应用启动时只注册一次全局事件桥；页面通过 store 订阅，不直接重复调用 Wails `EventsOn`。卸载应用时注销全部监听。
+应用启动时只注册一次全局事件桥；页面通过 store 订阅，不直接重复调用 Wails `EventsOn`。卸载应用时注销全部监听。P3-UI 已落地并验证的实时契约只有以下 3 个，所有载荷先经过严格运行时 schema 校验：
 
-| 事件 | 前端行为 |
+| 事件 | 载荷与前端行为 |
 | --- | --- |
-| `room:status` | 更新房间卡片、状态条和动作可用性 |
-| `live:event` | 合并批次、去重、追加实时事件缓冲 |
-| `recording:progress` | 更新时长、字节、分片和重试状态 |
-| `recording:error` | 显示房间级告警并写入通知中心 |
-| `analysis:progress` | 更新任务进度，不轮询高频状态 |
-| `analysis:completed` | 刷新报告查询并提示结果 |
-| `system:alert` | 按级别显示 toast、横幅或阻断对话框 |
+| `room:status` | 严格 `RoomRuntimeStatus`：以全局单调 `revision` 排序，以 `roomId/sessionId/operationId` 关联；`recordingStatus/retryAt/errorCode/message` 驱动状态、重试倒计时以及录制中断/恢复告警 |
+| `live:event` | 严格 `LiveEventBatchDTO`：按 `sessionId` 合并最多 100 条白名单 source 事件，按 `event.id` 去重并追加实时缓冲 |
+| `recording:progress` | 严格 `RecordingProgressDTO`：只接受 `recording/reconnecting`，必须与当前 `roomId/sessionId/operationId` 精确匹配，更新时长、字节、分片、帧率、速度和重启数 |
+
+录制错误、重连与恢复不再另发 `recording:error`；它们统一由有序 `room:status` 的稳定 `errorCode` 和 `revision` 派生房间级告警，避免两个事件源产生重复或乱序提示。`analysis:progress`、`analysis:completed` 与 `system:alert` 仍属于后续阶段的计划契约，不计入 P3-UI 已完成范围。
 
 ### 5.2 背压与丢帧策略
 
 - `live:event` 后端以最多 100 条或 100 ms 为一批发送。
-- 前端按 `event_id` 去重；内存仅保留最近 2,000 条，超出后丢弃最旧 UI 副本，不影响磁盘数据。
+- 前端按 `event.id` 去重；内存仅保留最近 2,000 条，超出后丢弃最旧 UI 副本，不影响磁盘数据。
+- 后端 UI 投递与 SQLite 耐久提交隔离：只有真实提交的 source 事件可发布，慢或阻塞的 Wails 回调不能反压持久化链路；关闭后禁止旧回调继续消费排队批次。
+- `recording:progress` 每个当前场次最多 1 Hz；跨 attempt 的时长、字节、分片和重启数保持单调，JavaScript 整数边界限制在 `2^53-1`。
+- 前端以 `revision` 拒绝过期房间状态，以 `sessionId` 拒绝越界场次事件，以 `roomId/sessionId/operationId` 精确拒绝过期录制进度；状态告警最多保留 100 条，录制进度最多保留 16 个场次。
 - 页面不可见时停止动画和高频图表重绘，但继续接收最后状态。
 - 互动折线每秒最多重算一次；大于 30 分钟的历史图表使用已聚合指标桶。
 
@@ -189,6 +192,8 @@ type AppError = {
 - 右侧：当前人数/互动摘要、分钟趋势、录制与磁盘、连接诊断。
 - 事件行显示相对时间、用户脱敏显示名、类型和内容；不在默认视图显示原始 payload。
 - “断线中”保留已收到事件并显示重试倒计时；“下播收尾中”禁止立即启动新场次。
+
+P3-UI 已实现从直播间卡片“查看实时”进入的独立实时视图：可切换直播间，提供聊天、礼物、点赞、进房、关注、系统六类筛选；虚拟化时间线保留最近 2,000 条，右侧展示录制状态、时长、写入量、分片、速度、帧率、重启次数、重试倒计时和中断/恢复告警。未知事件归入系统筛选，所有昵称和内容均作为纯文本渲染；宽屏双栏在窄窗口下顺序折叠，键盘焦点、ARIA 标签和非颜色状态表达已覆盖组件测试与真实 GUI 验收。
 
 ### 6.5 历史场次与回放
 
@@ -298,7 +303,17 @@ type AppError = {
 - 状态不只依赖颜色，正文和控件对比度达到 WCAG AA。
 - 实时页面持续 10 分钟无明显滚动卡顿或图表内存增长。
 
+### 11.4 P3-UI 阶段验收（2026-07-19）
+
+- Go 全量 test/vet/build、P2/P3 标签门禁和重点并发时序回归通过；前端 typecheck、6 个文件 20 项 Vitest 与生产构建通过。
+- `p3uiacceptance` 只在测试标签暴露夹具；同一次无刷新冷启动通过严格结果 11/11：房间可见、状态/场次/操作 fencing、2,000 容量、筛选、进度、倒计时、缺口告警、隐私和布局全部为真。
+- 严格 JSON SHA-256 为 `fa98aae2646d70cff878af9582e8699b7b8b8d4d5969f617651564ff8cdc4d55`；精确 HWND `PrintWindow(PW_RENDERFULLCONTENT)` 截图为 1044×788、50,575 字节，SHA-256 为 `a7d14795901fbdec920e8034582c0f9fd2b1afdd7a8fbeec2ddba9fc829c658d`，与同一冷启动结果一致。
+- `WM_CLOSE` 54 ms 内自然退出，验收进程、计划任务和隔离数据根均为 0 残留；生产 EXE 为 48,097,792 字节，SHA-256 为 `4b0711dbef5778f19ea55975ce99323c4f03830caf19785545d2baaf88fdc4d9`。
+- 独立终审 P0/P1/P2=0。当前 OpenSSH 环境 `CGO_ENABLED=0` 且无 GCC，故 `go test -race` 未运行；P3-ACC 的在线 10 分钟和真实故障验收尚未完成。
+
 ## 12. UI 完成标准
+
+P3-UI-001 实时监控里程碑已满足本节中与实时事件、录制状态、内存上限、隐私、可访问性和真实 GUI 有关的标准；以下清单仍是整个桌面 UI 计划（历史、分析、导出与发布级 E2E）的最终完成标准，不能因 P3-UI 完成而整体标记为 `DONE`。
 
 - 用户无需命令行即可完成首版核心旅程。
 - 所有后台状态有明确、稳定且可恢复的 UI 表达。

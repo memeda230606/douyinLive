@@ -10,7 +10,13 @@ type RoomStatusState = {
 
 export const useRoomStatusStore = create<RoomStatusState>((set) => ({
   byRoom: {},
-  update: (status) => set((state) => ({ byRoom: { ...state.byRoom, [status.roomId]: status } })),
+  update: (status) => set((state) => {
+    const current = state.byRoom[status.roomId]
+    if (current && status.revision <= current.revision) {
+      return state
+    }
+    return { byRoom: { ...state.byRoom, [status.roomId]: status } }
+  }),
   remove: (roomId) => set((state) => {
     const byRoom = { ...state.byRoom }
     delete byRoom[roomId]

@@ -31,6 +31,7 @@ const bootstrap: BootstrapDTO = {
   capabilities: [
     { id: 'overview', label: '总览', available: true },
     { id: 'rooms', label: '直播间', available: true },
+    { id: 'realtime', label: '实时', available: true },
     { id: 'sessions', label: '历史场次', available: false },
     { id: 'analysis', label: '分析', available: false },
     { id: 'diagnostics', label: '诊断', available: true },
@@ -49,6 +50,12 @@ describe('AppShell', () => {
     expect(within(navigation).getByRole('button', { name: /历史场次/ })).toBeDisabled()
     expect(screen.getByRole('heading', { name: '直播间运行总览' })).toBeInTheDocument()
     expect(await screen.findByText('添加第一个直播间')).toBeInTheDocument()
+
+    const realtimeNavigation = within(navigation).getByRole('button', { name: '实时' })
+    expect(realtimeNavigation).toHaveAttribute('aria-label', '实时')
+    await user.click(realtimeNavigation)
+    expect(screen.getByRole('heading', { name: '没有可查看的直播间' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '返回直播间' }))
 
     await user.click(within(navigation).getByRole('button', { name: '直播间' }))
     expect(screen.getByRole('heading', { name: '直播间', level: 1 })).toBeInTheDocument()

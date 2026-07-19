@@ -51,6 +51,8 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	generation := a.lifecycleGeneration
 	monitorRoot := a.lifecycle
 	statusPublisher := a.roomStatusPublisher
+	liveEventPublisher := a.liveEventPublisher
+	recordingProgressPublisher := a.recordingProgressPublisher
 	commitHook := a.beforeInfrastructureCommit
 	recorderFactoryBuilder := a.newRecorderFactory
 	startupRecoveryRunner := a.recoverStartupSessions
@@ -141,7 +143,8 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	}
 	eventManager, err := eventstore.NewManager(ctx, eventstore.ManagerOptions{
 		DataRoot: layout.Root, Writer: eventWriter, Credentials: credentialStore, Logger: logger,
-		PrivacyOptions: eventstore.PrivacyOptions{StoreDisplayName: appSettings.SaveDisplayNames},
+		PrivacyOptions:     eventstore.PrivacyOptions{StoreDisplayName: appSettings.SaveDisplayNames},
+		LiveEventPublisher: liveEventPublisher,
 	})
 	if err != nil {
 		_ = store.Close()
@@ -269,6 +272,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		EventSinkFactory: func(factoryCtx context.Context, session capture.LiveSession, request capture.OpenRequest) (capture.EventSink, error) {
 			return eventManager.OpenSession(factoryCtx, eventSessionDescriptorForOpen(session, request))
 		},
+		ProgressPublisher: recordingProgressPublisher,
 	})
 	if err != nil {
 		return errors.Join(

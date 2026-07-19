@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Cookie, Edit3, Plus, Radio, Search, ShieldCheck, Trash2, X } from 'lucide-react'
+import { Activity, Cookie, Edit3, Plus, Radio, Search, ShieldCheck, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
@@ -30,7 +30,14 @@ function editorValues(editor: Editor): RoomFormValues {
   }
 }
 
-export function RoomsPage({ dashboard, openEditor, onEditorHandled }: { dashboard: RoomsDashboard; openEditor: boolean; onEditorHandled: () => void }) {
+export function RoomsPage({
+  dashboard, onEditorHandled, onOpenRealtime, openEditor,
+}: {
+  dashboard: RoomsDashboard
+  openEditor: boolean
+  onEditorHandled: () => void
+  onOpenRealtime: (roomId: string) => void
+}) {
   const [editor, setEditor] = useState<Editor>(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'active' | 'error'>('all')
@@ -130,6 +137,7 @@ export function RoomsPage({ dashboard, openEditor, onEditorHandled }: { dashboar
               {status?.state === 'ERROR' && <div className="inline-alert" role="alert">{status.message}{status.errorCode && <small>{status.errorCode}</small>}</div>}
               <div className="room-card__actions">
                 <button className={room.monitorEnabled ? 'button' : 'button button--primary'} disabled={busy} type="button" onClick={() => void toggleMonitoring(room)}>{room.monitorEnabled ? '停止监控' : '开始监控'}</button>
+                <button className="button" type="button" onClick={() => onOpenRealtime(room.id)}><Activity aria-hidden="true" />查看实时</button>
                 <button className="icon-button" aria-label={`编辑 ${room.alias}`} disabled={busy || sessionLocked} type="button" onClick={() => setEditor(room)}><Edit3 aria-hidden="true" /></button>
                 {room.cookie.configured && <button className="icon-button" aria-label={`清除 ${room.alias} Cookie`} disabled={busy} type="button" onClick={() => void clearCookie(room)}><Cookie aria-hidden="true" /></button>}
                 <button className="icon-button icon-button--danger" aria-label={`删除 ${room.alias}`} disabled={busy || sessionLocked} type="button" onClick={() => void deleteRoom(room)}><Trash2 aria-hidden="true" /></button>

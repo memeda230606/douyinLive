@@ -1,4 +1,4 @@
-//go:build !p2acceptance
+//go:build !p2acceptance && !p3uiacceptance
 
 package main
 

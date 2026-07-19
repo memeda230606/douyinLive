@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { UnavailablePage } from '../features/common/UnavailablePage'
 import { DiagnosticsPage } from '../features/diagnostics/DiagnosticsPage'
 import { OverviewPage } from '../features/overview/OverviewPage'
+import { RealtimeRoomPage } from '../features/realtime/RealtimeRoomPage'
 import { RoomsPage } from '../features/rooms/RoomsPage'
 import { useRoomsDashboard } from '../features/rooms/useRoomsDashboard'
 import { SettingsPage } from '../features/settings/SettingsPage'
@@ -14,6 +15,7 @@ import { useThemeStore } from './theme'
 const iconByCapability = {
   overview: Home,
   rooms: Radio,
+  realtime: Activity,
   sessions: History,
   analysis: BarChart3,
   diagnostics: Bug,
@@ -26,16 +28,22 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   const { resolvedTheme, toggleTheme } = useThemeStore()
   const [activePage, setActivePage] = useState<PageID>('overview')
   const [openRoomEditor, setOpenRoomEditor] = useState(false)
+  const [realtimeRoomId, setRealtimeRoomId] = useState<string>()
   const dashboard = useRoomsDashboard()
   const rooms = dashboard.roomsQuery.data ?? []
   const statusValues = Object.values(dashboard.statuses)
   const listening = rooms.filter((room) => room.monitorEnabled).length
-  const live = statusValues.filter((status) => status.state === 'LIVE').length
+  const live = statusValues.filter((status) => status.state === 'LIVE' || status.state === 'RECORDING').length
   const errors = statusValues.filter((status) => status.state === 'ERROR').length
 
   function addRoom() {
     setActivePage('rooms')
     setOpenRoomEditor(true)
+  }
+
+  function openRealtime(roomId?: string) {
+    setRealtimeRoomId(roomId ?? rooms[0]?.id)
+    setActivePage('realtime')
   }
 
   return (
@@ -53,12 +61,13 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
             const selected = item.id === activePage
             return (
               <button
+                aria-label={item.label}
                 aria-current={selected ? 'page' : undefined}
                 className={selected ? 'navigation__item navigation__item--active' : 'navigation__item'}
                 disabled={!item.available}
                 key={item.id}
                 type="button"
-                onClick={() => setActivePage(item.id as PageID)}
+                onClick={() => item.id === 'realtime' ? openRealtime() : setActivePage(item.id as PageID)}
               >
                 <Icon aria-hidden="true" />
                 <span>{item.label}</span>
@@ -86,7 +95,8 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
           </div>
         </header>
         {activePage === 'overview' && <OverviewPage data={bootstrap.data} dashboard={dashboard} onAddRoom={addRoom} />}
-        {activePage === 'rooms' && <RoomsPage dashboard={dashboard} openEditor={openRoomEditor} onEditorHandled={() => setOpenRoomEditor(false)} />}
+        {activePage === 'rooms' && <RoomsPage dashboard={dashboard} openEditor={openRoomEditor} onEditorHandled={() => setOpenRoomEditor(false)} onOpenRealtime={openRealtime} />}
+        {activePage === 'realtime' && <RealtimeRoomPage rooms={rooms} statuses={dashboard.statuses} roomId={realtimeRoomId} onRoomChange={setRealtimeRoomId} onBack={() => setActivePage('rooms')} />}
         {activePage === 'settings' && <SettingsPage />}
         {activePage === 'diagnostics' && <DiagnosticsPage bootstrap={bootstrap} />}
         {activePage === 'sessions' && <UnavailablePage title="历史场次" />}

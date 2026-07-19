@@ -62,28 +62,30 @@ type applicationShutdownState struct {
 
 // Application 是 Wails 绑定层与后续 Room/Settings/Capture 服务之间的装配边界。
 type Application struct {
-	initMu              sync.Mutex
-	mu                  sync.RWMutex
-	lifecycleGeneration uint64
-	name                string
-	version             string
-	state               State
-	cancel              context.CancelFunc
-	lifecycle           context.Context
-	initialized         bool
-	dataStatus          DataStatusDTO
-	store               *storage.Store
-	rooms               *room.Service
-	settings            *settings.Service
-	monitor             *room.MonitorManager
-	coordinator         capture.CaptureCoordinator
-	events              *eventstore.Manager
-	roomStatusPublisher room.StatusPublisher
-	credentials         *credentials.FileStore
-	logFile             *diagnostics.FileLogger
-	logger              *slog.Logger
-	instanceLease       applicationInstanceLease
-	shutdown            *applicationShutdownState
+	initMu                     sync.Mutex
+	mu                         sync.RWMutex
+	lifecycleGeneration        uint64
+	name                       string
+	version                    string
+	state                      State
+	cancel                     context.CancelFunc
+	lifecycle                  context.Context
+	initialized                bool
+	dataStatus                 DataStatusDTO
+	store                      *storage.Store
+	rooms                      *room.Service
+	settings                   *settings.Service
+	monitor                    *room.MonitorManager
+	coordinator                capture.CaptureCoordinator
+	events                     *eventstore.Manager
+	roomStatusPublisher        room.StatusPublisher
+	liveEventPublisher         eventstore.LiveEventPublisher
+	recordingProgressPublisher capture.RecordingProgressPublisher
+	credentials                *credentials.FileStore
+	logFile                    *diagnostics.FileLogger
+	logger                     *slog.Logger
+	instanceLease              applicationInstanceLease
+	shutdown                   *applicationShutdownState
 	// beforeInfrastructureCommit is a package-private test barrier. Production
 	// leaves it nil; it must never perform application work.
 	beforeInfrastructureCommit func()
@@ -251,6 +253,7 @@ func (a *Application) Bootstrap() BootstrapDTO {
 		Capabilities: []CapabilityDTO{
 			{ID: "overview", Label: "总览", Available: true},
 			{ID: "rooms", Label: "直播间", Available: a.rooms != nil},
+			{ID: "realtime", Label: "实时监控", Available: a.rooms != nil},
 			{ID: "sessions", Label: "历史场次", Available: false},
 			{ID: "analysis", Label: "分析", Available: false},
 			{ID: "diagnostics", Label: "诊断", Available: a.dataStatus.LoggingReady},
@@ -325,4 +328,26 @@ func (a *Application) SetRoomStatusPublisher(publisher room.StatusPublisher) {
 		return
 	}
 	a.roomStatusPublisher = publisher
+}
+
+// SetLiveEventPublisher must be called before infrastructure initialization.
+// The publisher receives only the eventstore UI allowlist after durable commit.
+func (a *Application) SetLiveEventPublisher(publisher eventstore.LiveEventPublisher) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.initialized {
+		return
+	}
+	a.liveEventPublisher = publisher
+}
+
+// SetRecordingProgressPublisher must be called before infrastructure initialization.
+// Capture emits a path-free, session-fenced progress DTO through this boundary.
+func (a *Application) SetRecordingProgressPublisher(publisher capture.RecordingProgressPublisher) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.initialized {
+		return
+	}
+	a.recordingProgressPublisher = publisher
 }

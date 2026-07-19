@@ -36,8 +36,8 @@ func TestApplicationBootstrapIsSanitizedAndVersioned(t *testing.T) {
 	if got.Name != "桌面端" || got.Version != "test" || got.State != StateRunning {
 		t.Fatalf("unexpected bootstrap: %#v", got)
 	}
-	if len(got.Capabilities) != 6 {
-		t.Fatalf("capabilities = %d, want 6", len(got.Capabilities))
+	if len(got.Capabilities) != 7 {
+		t.Fatalf("capabilities = %d, want 7", len(got.Capabilities))
 	}
 	if !got.Capabilities[0].Available || got.Capabilities[0].ID != "overview" {
 		t.Fatalf("unexpected initial capability: %#v", got.Capabilities[0])
@@ -45,6 +45,9 @@ func TestApplicationBootstrapIsSanitizedAndVersioned(t *testing.T) {
 	for _, capability := range got.Capabilities {
 		if capability.ID == "" || capability.Label == "" {
 			t.Fatalf("empty capability field: %#v", capability)
+		}
+		if capability.ID == "realtime" && capability.Available {
+			t.Fatalf("realtime capability became available before infrastructure: %#v", capability)
 		}
 	}
 }

@@ -1825,3 +1825,28 @@ func TestMonitorWorkerDropsPreRebindRecoveryEventWithoutRegressingOperation(t *t
 		t.Fatalf("current recovery event result = status:%+v published:%d", current, published)
 	}
 }
+
+func TestRoomStatusRevisionOrdersTransitionsWithSameTimestamp(t *testing.T) {
+	fixed := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	manager := &MonitorManager{options: MonitorOptions{Now: func() time.Time { return fixed }}}
+	worker := &monitorWorker{manager: manager, status: RoomRuntimeStatus{
+		RoomID: "room", State: RuntimeWaiting, ChangedAt: fixed.UnixMilli(),
+		Revision: manager.nextStatusRevision(),
+	}}
+
+	worker.mu.Lock()
+	first := worker.updateStatusLocked(
+		RuntimeStarting, "operation", "", "正在连接", fixed.UnixMilli(), 0, nil, nil, false,
+	)
+	second := worker.updateStatusLocked(
+		RuntimeLive, "operation", "", "直播中", fixed.UnixMilli(), 0, nil, nil, false,
+	)
+	worker.mu.Unlock()
+
+	if first.ChangedAt != second.ChangedAt {
+		t.Fatalf("ChangedAt values differ under fixed clock: first=%d second=%d", first.ChangedAt, second.ChangedAt)
+	}
+	if first.Revision <= 0 || second.Revision != first.Revision+1 {
+		t.Fatalf("revisions are not strictly ordered: first=%d second=%d", first.Revision, second.Revision)
+	}
+}

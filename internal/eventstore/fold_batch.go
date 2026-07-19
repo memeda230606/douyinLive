@@ -8,10 +8,11 @@ import (
 )
 
 type foldedDurableBatch struct {
-	Sources    []Event
-	Aggregates []Event
-	Combos     []GiftComboState
-	DedupeKeys []string
+	Sources        []Event
+	PublishSources []Event
+	Aggregates     []Event
+	Combos         []GiftComboState
+	DedupeKeys     []string
 }
 
 func (m *Manager) foldDurableBatch(
@@ -39,19 +40,19 @@ func (m *Manager) foldDurableBatch(
 		results[index] = result
 		folded.Sources = append(folded.Sources, result.Event)
 		folded.DedupeKeys = append(folded.DedupeKeys, result.Event.DedupeKey)
-		if result.Gift == nil || strings.TrimSpace(result.Gift.GiftID) == "" {
-			cachedDuplicates[index] = dedupe.Seen(result.Event.DedupeKey, dedupeNow)
-			continue
+		if result.Gift != nil && strings.TrimSpace(result.Gift.GiftID) != "" {
+			key, err := GiftObservationKey(*result.Gift)
+			if err != nil {
+				return foldedDurableBatch{}, err
+			}
+			comboKeys = append(comboKeys, key)
 		}
-		key, err := GiftObservationKey(*result.Gift)
-		if err != nil {
-			return foldedDurableBatch{}, err
-		}
-		comboKeys = append(comboKeys, key)
 		if dedupe.Seen(result.Event.DedupeKey, dedupeNow) {
 			cachedDuplicates[index] = true
 			continue
 		}
+		// Query SQLite for every non-cached source. The in-memory deduper is
+		// bounded and expiring, so it cannot prove that a non-gift source is new.
 		dedupeKeys = append(dedupeKeys, result.Event.DedupeKey)
 	}
 	existingDedupe, err := m.options.Writer.ExistingSourceDedupeKeys(
@@ -93,9 +94,6 @@ func (m *Manager) foldDurableBatch(
 		if cachedDuplicates[index] {
 			continue
 		}
-		if result.Gift == nil || strings.TrimSpace(result.Gift.GiftID) == "" {
-			continue
-		}
 		if _, exists := existingDedupe[result.Event.DedupeKey]; exists {
 			continue
 		}
@@ -103,6 +101,10 @@ func (m *Manager) foldDurableBatch(
 			continue
 		}
 		seen[result.Event.DedupeKey] = struct{}{}
+		folded.PublishSources = append(folded.PublishSources, result.Event)
+		if result.Gift == nil || strings.TrimSpace(result.Gift.GiftID) == "" {
+			continue
+		}
 		key, err := GiftObservationKey(*result.Gift)
 		if err != nil {
 			return foldedDurableBatch{}, err

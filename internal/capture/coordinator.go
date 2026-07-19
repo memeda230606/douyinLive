@@ -90,6 +90,7 @@ type CoordinatorOptions struct {
 	RecoveryJournal   RecorderRecoveryJournal
 	RecoveryPolicy    RecorderRecoveryPolicy
 	RecoveryScheduler RecorderRecoveryScheduler
+	ProgressPublisher RecordingProgressPublisher
 }
 
 type Session interface {
@@ -103,16 +104,17 @@ type CaptureCoordinator interface {
 }
 
 type Coordinator struct {
-	repository        SessionRepository
-	recorderFactory   RecorderFactory
-	eventSinkFactory  EventSinkFactory
-	now               func() time.Time
-	commitTimeout     time.Duration
-	recoveryJournal   RecorderRecoveryJournal
-	recoveryPolicy    RecorderRecoveryPolicy
-	recoveryScheduler RecorderRecoveryScheduler
-	registryMu        sync.Mutex
-	runtimes          map[string]*coordinatorRuntimeEntry
+	repository         SessionRepository
+	recorderFactory    RecorderFactory
+	eventSinkFactory   EventSinkFactory
+	now                func() time.Time
+	commitTimeout      time.Duration
+	recoveryJournal    RecorderRecoveryJournal
+	recoveryPolicy     RecorderRecoveryPolicy
+	recoveryScheduler  RecorderRecoveryScheduler
+	progressDispatcher *recordingProgressDispatcher
+	registryMu         sync.Mutex
+	runtimes           map[string]*coordinatorRuntimeEntry
 }
 
 func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*Coordinator, error) {
@@ -140,14 +142,15 @@ func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*
 		options.RecoveryScheduler = recorderRecoveryTimerScheduler{}
 	}
 	return &Coordinator{
-		repository:        repository,
-		recorderFactory:   options.RecorderFactory,
-		eventSinkFactory:  options.EventSinkFactory,
-		now:               options.Now,
-		commitTimeout:     options.CommitTimeout,
-		recoveryJournal:   options.RecoveryJournal,
-		recoveryPolicy:    normalizeRecorderRecoveryPolicy(options.RecoveryPolicy),
-		recoveryScheduler: options.RecoveryScheduler,
+		repository:         repository,
+		recorderFactory:    options.RecorderFactory,
+		eventSinkFactory:   options.EventSinkFactory,
+		now:                options.Now,
+		commitTimeout:      options.CommitTimeout,
+		recoveryJournal:    options.RecoveryJournal,
+		recoveryPolicy:     normalizeRecorderRecoveryPolicy(options.RecoveryPolicy),
+		recoveryScheduler:  options.RecoveryScheduler,
+		progressDispatcher: newRecordingProgressDispatcher(options.ProgressPublisher),
 	}, nil
 }
 
@@ -332,6 +335,7 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 	runtime.mu.Unlock()
 	if runtime.recorder != nil {
 		runtime.startRecorderEvents(runtime.recorder)
+		runtime.startRecorderProgress(runtime.recorder)
 	}
 	return runtime, nil
 }
@@ -357,40 +361,52 @@ func (c *Coordinator) commitContext(parent context.Context) (context.Context, co
 }
 
 type sessionRuntime struct {
-	coordinator               *Coordinator
-	operationMu               sync.Mutex
-	mu                        sync.Mutex
-	acceptWG                  sync.WaitGroup
-	current                   LiveSession
-	operationID               string
-	source                    CaptureSource
-	subscriptionID            string
-	recorder                  Recorder
-	recorderEventsCancel      context.CancelFunc
-	sink                      EventSink
-	recoveryEvents            chan SessionRecoveryEvent
-	recoveryEventsClosed      bool
-	recoveryGeneration        uint64
-	recoveryCancel            context.CancelFunc
-	recoveryRecorder          Recorder
-	recoveryGapID             string
-	recoveryWindowStartedAt   time.Time
-	recoveryAttempts          int
-	recoveryErrorCode         string
-	recoveryCloseAt           time.Time
-	finalizing                bool
-	finalized                 bool
-	finalizeErr               error
-	cleanupErr                error
-	cleanupPublicErr          error
-	finalizeOriginalRecording RecordingStatus
-	finalizeOriginalSet       bool
-	finalizeReason            FinalizeReason
-	finalizeReasonSet         bool
-	terminalStatus            SessionStatus
-	terminalRecordingStatus   RecordingStatus
-	terminalEndedAt           time.Time
-	terminalTargetSet         bool
+	coordinator                *Coordinator
+	operationMu                sync.Mutex
+	mu                         sync.Mutex
+	acceptWG                   sync.WaitGroup
+	current                    LiveSession
+	operationID                string
+	source                     CaptureSource
+	subscriptionID             string
+	recorder                   Recorder
+	recorderEventsCancel       context.CancelFunc
+	sink                       EventSink
+	recoveryEvents             chan SessionRecoveryEvent
+	recoveryEventsClosed       bool
+	recorderProgressCancel     context.CancelFunc
+	recorderProgressGeneration uint64
+	progressAttemptID          string
+	progressAttemptOrdinal     int
+	progressElapsedBase        int64
+	progressAttemptElapsed     int64
+	progressBytesBase          int64
+	progressAttemptBytes       int64
+	progressSegmentBase        int64
+	progressAttemptSegments    int64
+	progressRestartCount       int
+	progressLastPublishedAt    time.Time
+	recoveryGeneration         uint64
+	recoveryCancel             context.CancelFunc
+	recoveryRecorder           Recorder
+	recoveryGapID              string
+	recoveryWindowStartedAt    time.Time
+	recoveryAttempts           int
+	recoveryErrorCode          string
+	recoveryCloseAt            time.Time
+	finalizing                 bool
+	finalized                  bool
+	finalizeErr                error
+	cleanupErr                 error
+	cleanupPublicErr           error
+	finalizeOriginalRecording  RecordingStatus
+	finalizeOriginalSet        bool
+	finalizeReason             FinalizeReason
+	finalizeReasonSet          bool
+	terminalStatus             SessionStatus
+	terminalRecordingStatus    RecordingStatus
+	terminalEndedAt            time.Time
+	terminalTargetSet          bool
 }
 
 func (s *sessionRuntime) Snapshot() LiveSession {
@@ -542,6 +558,7 @@ func (s *sessionRuntime) cancelRecorderEventsLocked() {
 		s.recorderEventsCancel()
 		s.recorderEventsCancel = nil
 	}
+	s.cancelRecorderProgressLocked()
 }
 
 func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source CaptureSource) (LiveSession, error) {
@@ -607,6 +624,7 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 		return current, err
 	}
 	s.mu.Lock()
+	s.cancelRecorderProgressLocked()
 	s.current = reconnecting
 	s.operationID = operationID
 	s.mu.Unlock()
@@ -712,6 +730,9 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	if oldSource != nil && oldSubscriptionID != "" {
 		oldSource.Unsubscribe(oldSubscriptionID)
 	}
+	if recorder != nil && targetRecording == RecordingActive {
+		s.startRecorderProgress(recorder)
+	}
 	if recorder != nil && targetRecording == RecordingUnavailable && hasRecoveryGap {
 		// Stop owns shared asynchronous cleanup. Keep the stopped/stopping
 		// recorder attached so Finalize can wait for that owner.
@@ -782,6 +803,10 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		s.operationID = operationID
 	}
 	s.finalizing = true
+	// Finalization owns the recorder from this point onward. Progress is
+	// best-effort UI telemetry and must not retain the runtime when Stop or
+	// FlushAndClose returns early on a caller deadline. This is retry-safe.
+	s.cancelRecorderProgressLocked()
 	recorder, source, subscriptionID, sink := s.recorder, s.source, s.subscriptionID, s.sink
 	gapID := s.recoveryGapID
 	recoveryErrorCode := s.recoveryErrorCode

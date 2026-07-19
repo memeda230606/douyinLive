@@ -15,6 +15,7 @@ var version = "dev"
 func main() {
 	core := application.New(application.Options{Name: "抖音直播分析", Version: version})
 	desktop := NewDesktopApp(core)
+	desktop.armStartup()
 
 	err := wails.Run(&options.App{
 		Title:             "抖音直播分析",

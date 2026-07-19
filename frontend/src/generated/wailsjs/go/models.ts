@@ -211,6 +211,7 @@ export namespace room {
 	    title?: string;
 	    lastCheckedAt?: number;
 	    changedAt: number;
+	    revision: number;
 	    retryAt?: number;
 	    errorCode?: string;
 	    message: string;
@@ -232,6 +233,7 @@ export namespace room {
 	        this.title = source["title"];
 	        this.lastCheckedAt = source["lastCheckedAt"];
 	        this.changedAt = source["changedAt"];
+	        this.revision = source["revision"];
 	        this.retryAt = source["retryAt"];
 	        this.errorCode = source["errorCode"];
 	        this.message = source["message"];

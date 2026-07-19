@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 func TestDesktopAppLifecycleAndBootstrap(t *testing.T) {
 	core := application.New(application.Options{Name: "测试桌面端", Version: "test"})
 	desktop := newDesktopApp(core, application.InfrastructureOptions{DataRoot: t.TempDir()})
+	desktop.emitEvent = func(context.Context, string, ...interface{}) {}
 
 	desktop.startup(context.Background())
 	if got := desktop.GetState(); got != application.StateRunning {
@@ -61,11 +65,223 @@ func TestDesktopAppLifecycleAndBootstrap(t *testing.T) {
 	}
 }
 
+func TestDesktopBootstrapWaitsForStartupConclusion(t *testing.T) {
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-wait", Version: "test"}),
+		application.InfrastructureOptions{},
+	)
+	desktop.beginStartup(context.Background())
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	select {
+	case <-result:
+		t.Fatal("GetBootstrap() returned before startup concluded")
+	case <-time.After(50 * time.Millisecond):
+	}
+	desktop.finishStartup()
+	select {
+	case bootstrap := <-result:
+		if bootstrap.Name != "bootstrap-wait" {
+			t.Fatalf("GetBootstrap().Name = %q", bootstrap.Name)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetBootstrap() did not return after startup concluded")
+	}
+}
+
+func TestDesktopBootstrapWaitersReleaseTogether(t *testing.T) {
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-concurrent", Version: "test"}),
+		application.InfrastructureOptions{},
+	)
+	desktop.beginStartup(context.Background())
+	const waiters = 8
+	results := make(chan application.BootstrapDTO, waiters)
+	for index := 0; index < waiters; index++ {
+		go func() { results <- desktop.GetBootstrap() }()
+	}
+	desktop.finishStartup()
+	for index := 0; index < waiters; index++ {
+		select {
+		case bootstrap := <-results:
+			if bootstrap.Name != "bootstrap-concurrent" {
+				t.Fatalf("waiter %d name = %q", index, bootstrap.Name)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("waiter %d did not return", index)
+		}
+	}
+}
+
+func TestDesktopBootstrapStartupCancellationReleasesWait(t *testing.T) {
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-cancel", Version: "test"}),
+		application.InfrastructureOptions{},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	desktop.beginStartup(ctx)
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	cancel()
+	select {
+	case <-result:
+		t.Fatal("GetBootstrap() returned before the cancelled startup owner concluded")
+	case <-time.After(50 * time.Millisecond):
+	}
+	desktop.finishStartup()
+	select {
+	case bootstrap := <-result:
+		if bootstrap.State != application.StateRunning {
+			t.Fatalf("cancelled startup bootstrap state = %q", bootstrap.State)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetBootstrap() did not return after the cancelled startup concluded")
+	}
+}
+
+func TestDesktopBootstrapWithoutStartupDoesNotBlock(t *testing.T) {
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-unstarted", Version: "test"}),
+		application.InfrastructureOptions{},
+	)
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	select {
+	case bootstrap := <-result:
+		if bootstrap.Name != "bootstrap-unstarted" {
+			t.Fatalf("GetBootstrap().Name = %q", bootstrap.Name)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unstarted GetBootstrap() blocked")
+	}
+}
+
+func TestDesktopBootstrapInitializationFailureReleasesWait(t *testing.T) {
+	root := t.TempDir()
+	invalidRoot := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(invalidRoot, []byte("fixture"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-failure", Version: "test"}),
+		application.InfrastructureOptions{DataRoot: invalidRoot},
+	)
+	desktop.emitEvent = func(context.Context, string, ...interface{}) {}
+	desktop.startup(context.Background())
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	select {
+	case bootstrap := <-result:
+		if bootstrap.Data.Ready {
+			t.Fatalf("failed bootstrap reported ready: %#v", bootstrap.Data)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed startup did not release GetBootstrap()")
+	}
+	desktop.shutdown(context.Background())
+}
+
+func TestDesktopBootstrapShutdownReleasesWait(t *testing.T) {
+	desktop := newDesktopApp(
+		application.New(application.Options{Name: "bootstrap-shutdown", Version: "test"}),
+		application.InfrastructureOptions{},
+	)
+	desktop.beginStartup(context.Background())
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	desktop.shutdown(context.Background())
+	select {
+	case bootstrap := <-result:
+		if bootstrap.State != application.StateStopped {
+			t.Fatalf("shutdown bootstrap state = %q, want stopped", bootstrap.State)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not release GetBootstrap()")
+	}
+}
+
+func TestDesktopBootstrapArmedBeforeStartupWaits(t *testing.T) {
+	desktop := newDesktopApp(application.New(application.Options{Name: "bootstrap-armed"}), application.InfrastructureOptions{})
+	desktop.armStartup()
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	select {
+	case <-result:
+		t.Fatal("pre-armed GetBootstrap() returned before startup")
+	case <-time.After(50 * time.Millisecond):
+	}
+	desktop.beginStartup(context.Background())
+	desktop.finishStartup()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("pre-armed GetBootstrap() did not return after startup")
+	}
+}
+
+func TestDesktopShutdownPermanentlyRejectsLateStartup(t *testing.T) {
+	desktop := newDesktopApp(application.New(application.Options{Name: "late-startup"}), application.InfrastructureOptions{})
+	desktop.armStartup()
+	desktop.shutdown(context.Background())
+	desktop.startup(context.Background())
+	if state := desktop.GetState(); state != application.StateStopped {
+		t.Fatalf("late startup state = %q, want stopped", state)
+	}
+	if desktop.acceptingEvents.Load() {
+		t.Fatal("late startup reopened the event emitter")
+	}
+	if bootstrap := desktop.GetBootstrap(); bootstrap.State != application.StateStopped {
+		t.Fatalf("late startup bootstrap state = %q", bootstrap.State)
+	}
+}
+
+func TestDesktopDuplicateStartupCannotReleaseOwnerBarrier(t *testing.T) {
+	desktop := newDesktopApp(application.New(application.Options{Name: "duplicate-startup"}), application.InfrastructureOptions{})
+	if _, started := desktop.beginStartup(context.Background()); !started {
+		t.Fatal("first startup was rejected")
+	}
+	if _, started := desktop.beginStartup(context.Background()); started {
+		t.Fatal("duplicate startup was accepted")
+	}
+	result := make(chan application.BootstrapDTO, 1)
+	go func() { result <- desktop.GetBootstrap() }()
+	select {
+	case <-result:
+		t.Fatal("duplicate startup released the owner barrier")
+	case <-time.After(50 * time.Millisecond):
+	}
+	desktop.finishStartup()
+	select {
+	case <-result:
+	case <-time.After(time.Second):
+		t.Fatal("owner startup did not release the barrier")
+	}
+}
+
+func TestDesktopAppEmitterFenceDropsEventsAfterShutdownStarts(t *testing.T) {
+	var emitted atomic.Int32
+	desktop := &DesktopApp{emitEvent: func(context.Context, string, ...interface{}) {
+		emitted.Add(1)
+	}}
+	desktop.acceptingEvents.Store(true)
+	desktop.emit(context.Background(), room.StatusEventName, room.RoomRuntimeStatus{})
+	if got := emitted.Load(); got != 1 {
+		t.Fatalf("active emitter calls = %d, want 1", got)
+	}
+	desktop.acceptingEvents.Store(false)
+	desktop.emit(context.Background(), eventstore.LiveEventEventName, eventstore.LiveEventBatchDTO{})
+	desktop.emit(context.Background(), capture.RecordingProgressEventName, capture.RecordingProgressDTO{})
+	if got := emitted.Load(); got != 1 {
+		t.Fatalf("post-shutdown emitter calls = %d, want 1", got)
+	}
+}
+
 func TestDesktopUpdateSettingsAppliesToOpenEventSession(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	core := application.New(application.Options{Name: "privacy-runtime", Version: "test"})
 	desktop := newDesktopApp(core, application.InfrastructureOptions{DataRoot: root})
+	desktop.emitEvent = func(context.Context, string, ...interface{}) {}
 	desktop.startup(ctx)
 	t.Cleanup(func() { desktop.shutdown(context.Background()) })
 	if core.EventStoreManager() == nil || core.Store() == nil {

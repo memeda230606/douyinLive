@@ -1,5 +1,9 @@
 import { z } from 'zod'
 
+const nonnegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
+const finiteNonnegativeNumberSchema = z.number().finite().nonnegative()
+const capabilityIDSchema = z.enum(['overview', 'rooms', 'realtime', 'sessions', 'analysis', 'diagnostics', 'settings'])
+
 const qualitySchema = z.enum(['auto', 'original', 'ultra', 'high', 'standard'])
 
 export const dataStatusSchema = z.object({
@@ -16,7 +20,7 @@ export const bootstrapSchema = z.object({
   state: z.enum(['CREATED', 'RUNNING', 'STOPPING', 'STOPPED']),
   data: dataStatusSchema,
   capabilities: z.array(z.object({
-    id: z.string().min(1),
+    id: capabilityIDSchema,
     label: z.string().min(1),
     available: z.boolean(),
   }).strict()),
@@ -60,6 +64,7 @@ export const roomStatusSchema = z.object({
   liveId: z.string().min(1),
   alias: z.string().min(1),
   state: z.enum(runtimeStates),
+  revision: nonnegativeSafeIntegerSchema,
   operationId: z.string().uuid().optional(),
   sessionId: z.string().uuid().optional(),
   recordingStatus: z.enum(recordingStatuses).optional(),
@@ -71,6 +76,45 @@ export const roomStatusSchema = z.object({
   errorCode: z.string().optional(),
   message: z.string(),
 }).strict()
+
+export const liveEventSchema = z.object({
+  id: z.string().uuid(),
+  ingestSequence: nonnegativeSafeIntegerSchema,
+  role: z.literal('source'),
+  kind: z.enum(['chat', 'gift', 'like', 'member', 'follow', 'system', 'unknown']),
+  receivedAt: nonnegativeSafeIntegerSchema,
+  sessionOffsetMs: nonnegativeSafeIntegerSchema,
+  displayName: z.string().max(256).optional(),
+  content: z.string().max(4096).optional(),
+  numericValue: z.number().finite().optional(),
+  parseStatus: z.enum(['parsed', 'unknown', 'failed']),
+}).strict()
+
+export const liveEventBatchSchema = z.object({
+  sessionId: z.string().uuid(),
+  emittedAt: nonnegativeSafeIntegerSchema,
+  events: z.array(liveEventSchema).min(1).max(100),
+}).strict()
+
+export const recordingProgressSchema = z.object({
+  roomId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  operationId: z.string().uuid(),
+  state: z.enum(['recording', 'reconnecting']),
+  elapsedMs: nonnegativeSafeIntegerSchema,
+  bytesWritten: nonnegativeSafeIntegerSchema,
+  segmentCount: nonnegativeSafeIntegerSchema,
+  frame: nonnegativeSafeIntegerSchema,
+  restartCount: nonnegativeSafeIntegerSchema,
+  fps: finiteNonnegativeNumberSchema,
+  speed: finiteNonnegativeNumberSchema,
+  updatedAt: nonnegativeSafeIntegerSchema,
+}).strict()
+
+export type LiveEvent = z.infer<typeof liveEventSchema>
+export type LiveEventBatch = z.infer<typeof liveEventBatchSchema>
+export type RecordingProgress = z.infer<typeof recordingProgressSchema>
+export type RealtimeEvent = LiveEvent & { sessionId: string }
 
 export const settingsSchema = z.object({
   version: z.number().int().positive(),

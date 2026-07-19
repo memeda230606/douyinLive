@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -46,6 +47,7 @@ type RoomRuntimeStatus struct {
 	Title           string                  `json:"title,omitempty"`
 	LastCheckedAt   int64                   `json:"lastCheckedAt,omitempty"`
 	ChangedAt       int64                   `json:"changedAt"`
+	Revision        int64                   `json:"revision"`
 	RetryAt         int64                   `json:"retryAt,omitempty"`
 	ErrorCode       string                  `json:"errorCode,omitempty"`
 	Message         string                  `json:"message"`
@@ -83,6 +85,7 @@ type MonitorManager struct {
 	service                *Service
 	logger                 *slog.Logger
 	options                MonitorOptions
+	statusRevision         atomic.Int64
 	mu                     sync.RWMutex
 	workers                map[string]*monitorWorker
 	shuttingDown           bool
@@ -280,10 +283,23 @@ func (m *MonitorManager) GetRoomStatus(ctx context.Context, id string) (RoomRunt
 	if err != nil {
 		return RoomRuntimeStatus{}, err
 	}
-	return RoomRuntimeStatus{
-		RoomID: config.ID, LiveID: config.LiveID, Alias: config.Alias,
-		State: RuntimeStopped, ChangedAt: m.options.Now().UTC().UnixMilli(), Message: "已停止监控",
-	}, nil
+	// Recheck under the registry lock after the storage read. If a worker is
+	// created concurrently, either its revision is already visible here or its
+	// initial revision will be allocated after this stopped snapshot. This keeps
+	// response ordering correct even when an older query returns after an event.
+	m.mu.RLock()
+	worker = m.workers[id]
+	if worker == nil {
+		revision := m.nextStatusRevision()
+		m.mu.RUnlock()
+		return RoomRuntimeStatus{
+			RoomID: config.ID, LiveID: config.LiveID, Alias: config.Alias,
+			State: RuntimeStopped, ChangedAt: m.options.Now().UTC().UnixMilli(),
+			Revision: revision, Message: "已停止监控",
+		}, nil
+	}
+	m.mu.RUnlock()
+	return worker.snapshot(), nil
 }
 
 func (m *MonitorManager) Shutdown(ctx context.Context) error {
@@ -473,11 +489,13 @@ func (m *MonitorManager) startConfigured(config RoomConfig) error {
 		return &BusinessError{Code: "MONITOR_LIMIT_REACHED", Message: "已达到等待开播房间上限"}
 	}
 	workerContext, cancel := context.WithCancel(m.root)
+	revision := m.nextStatusRevision()
 	worker := &monitorWorker{
 		manager: m, ctx: workerContext, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1),
 		status: RoomRuntimeStatus{
 			RoomID: config.ID, LiveID: config.LiveID, Alias: config.Alias,
-			State: RuntimeWaiting, ChangedAt: m.options.Now().UTC().UnixMilli(), Message: "等待开播",
+			State: RuntimeWaiting, ChangedAt: m.options.Now().UTC().UnixMilli(),
+			Revision: revision, Message: "等待开播",
 		},
 	}
 	m.workers[config.ID] = worker
@@ -856,6 +874,7 @@ func (w *monitorWorker) finalizeActiveWithContext(parent context.Context, reason
 		w.stopOperation = ""
 		w.status.SessionID = finalized.ID
 		w.status.RecordingStatus = finalized.RecordingStatus
+		w.bumpStatusRevisionLocked()
 	}
 	w.mu.Unlock()
 	return terminal, err
@@ -979,6 +998,7 @@ func (w *monitorWorker) updateStatusLocked(state RuntimeState, operationID, erro
 	w.status.Message = message
 	w.status.RetryAt = retryAt
 	w.status.ChangedAt = w.nowMillis()
+	w.bumpStatusRevisionLocked()
 	if checkedAt != 0 {
 		w.status.LastCheckedAt = checkedAt
 	}
@@ -1013,6 +1033,7 @@ func (w *monitorWorker) installSession(operationID string, session capture.Sessi
 	w.session = session
 	w.status.SessionID = snapshot.ID
 	w.status.RecordingStatus = snapshot.RecordingStatus
+	w.bumpStatusRevisionLocked()
 	eventSource, watchesRecovery := session.(capture.SessionRecoveryEventSource)
 	var watchCtx context.Context
 	if watchesRecovery {
@@ -1103,6 +1124,7 @@ func (w *monitorWorker) applySessionRecoveryEvent(
 		return
 	}
 	w.status.ChangedAt = w.nowMillis()
+	w.bumpStatusRevisionLocked()
 	status := w.status
 	w.mu.Unlock()
 	if event.State == capture.SessionRecoveryRecovered {
@@ -1137,6 +1159,7 @@ func (w *monitorWorker) refreshConfig(config RoomConfig) {
 	w.mu.Lock()
 	w.status.LiveID = config.LiveID
 	w.status.Alias = config.Alias
+	w.bumpStatusRevisionLocked()
 	w.mu.Unlock()
 }
 
@@ -1147,6 +1170,17 @@ func (w *monitorWorker) snapshot() RoomRuntimeStatus {
 }
 
 func (w *monitorWorker) publish() { w.manager.publish(w.snapshot()) }
+
+func (m *MonitorManager) nextStatusRevision() int64 {
+	if m == nil {
+		return 0
+	}
+	return m.statusRevision.Add(1)
+}
+
+func (w *monitorWorker) bumpStatusRevisionLocked() {
+	w.status.Revision = w.manager.nextStatusRevision()
+}
 
 func (m *MonitorManager) publish(status RoomRuntimeStatus) {
 	defer func() {
@@ -1195,6 +1229,7 @@ func (w *monitorWorker) stop(reason capture.FinalizeReason) {
 		w.stopOperation = newOperationID()
 		if !w.finalizeInProgress {
 			w.status.OperationID = w.stopOperation
+			w.bumpStatusRevisionLocked()
 			if w.session != nil {
 				w.status.State = RuntimeFinalizing
 				w.status.RecordingStatus = capture.RecordingFinalizing
