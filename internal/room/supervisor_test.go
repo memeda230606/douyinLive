@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -91,6 +93,7 @@ type fakeCaptureCoordinator struct {
 	finalizePending                 int
 	finalizeTerminalErr             error
 	finalizeCalls                   []fakeFinalizeCall
+	recoveryEvents                  chan capture.SessionRecoveryEvent
 }
 
 func newFakeCaptureCoordinator() *fakeCaptureCoordinator { return &fakeCaptureCoordinator{} }
@@ -110,6 +113,9 @@ func (c *fakeCaptureCoordinator) Open(_ context.Context, request capture.OpenReq
 	}
 	session := &fakeCaptureSession{owner: c, current: current}
 	c.session = session
+	if c.recoveryEvents != nil {
+		return &fakeRecoveryCaptureSession{fakeCaptureSession: session, events: c.recoveryEvents}, nil
+	}
 	return session, nil
 }
 
@@ -131,6 +137,15 @@ type fakeCaptureSession struct {
 	owner   *fakeCaptureCoordinator
 	mu      sync.Mutex
 	current capture.LiveSession
+}
+
+type fakeRecoveryCaptureSession struct {
+	*fakeCaptureSession
+	events <-chan capture.SessionRecoveryEvent
+}
+
+func (session *fakeRecoveryCaptureSession) RecoveryEvents() <-chan capture.SessionRecoveryEvent {
+	return session.events
 }
 
 func (s *fakeCaptureSession) Snapshot() capture.LiveSession {
@@ -1651,5 +1666,162 @@ func waitForFinalizeCalls(t *testing.T, coordinator *fakeCaptureCoordinator, cou
 			t.Fatalf("timed out waiting for %d Finalize() calls; got %d", count, len(calls))
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestMonitorManagerPublishesRecorderRecoveryLifecycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID: "recorder-recovery", Alias: "录制恢复",
+		RecordEnabled:    true,
+		RecordingProfile: RecordingProfile{Quality: QualityAuto, SegmentMinutes: 10},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	online := newFakeLiveClient()
+	factory := &scriptedLiveFactory{clients: []LiveClient{online}}
+	statuses := make(chan RoomRuntimeStatus, 32)
+	recoveryEvents := make(chan capture.SessionRecoveryEvent, 4)
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.recoveryEvents = recoveryEvents
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator:  coordinator,
+		PollInterval: time.Second, ReconnectDelay: 5 * time.Millisecond,
+		Factory:   factory.create,
+		Publisher: func(status RoomRuntimeStatus) { statuses <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(context.Background(), config.ID); err != nil {
+		t.Fatal(err)
+	}
+	initial := waitForRuntimeState(t, statuses, RuntimeRecording, "")
+	coordinator.mu.Lock()
+	session := coordinator.session.Snapshot()
+	coordinator.mu.Unlock()
+	retryAt := time.Now().Add(time.Second).UnixMilli()
+	recoveryEvents <- capture.SessionRecoveryEvent{
+		SessionID: session.ID, OperationID: session.OperationID,
+		State:           capture.SessionRecoveryRetryScheduled,
+		RecordingStatus: capture.RecordingReconnecting,
+		ErrorCode:       capture.RecorderNetworkFailureErrorCode,
+		RetryAt:         retryAt, RestartAttempt: 1, OccurredAt: time.Now().UnixMilli(),
+	}
+	reconnecting := waitForRuntimeState(
+		t, statuses, RuntimeReconnecting, capture.RecorderNetworkFailureErrorCode,
+	)
+	if reconnecting.SessionID != initial.SessionID ||
+		reconnecting.RecordingStatus != capture.RecordingReconnecting ||
+		reconnecting.RetryAt != retryAt || reconnecting.Message != "录制中断，正在自动重试" {
+		t.Fatalf("unexpected reconnecting status: %+v", reconnecting)
+	}
+	recoveryEvents <- capture.SessionRecoveryEvent{
+		SessionID: session.ID, OperationID: session.OperationID,
+		State:           capture.SessionRecoveryRecovered,
+		RecordingStatus: capture.RecordingActive,
+		RestartAttempt:  1, OccurredAt: time.Now().UnixMilli(),
+	}
+	recovered := waitForRuntimeState(t, statuses, RuntimeRecording, "")
+	if recovered.RecordingStatus != capture.RecordingActive || recovered.RetryAt != 0 ||
+		recovered.Message != "录制已恢复" {
+		t.Fatalf("unexpected recovered status: %+v", recovered)
+	}
+	recoveryEvents <- capture.SessionRecoveryEvent{
+		SessionID: session.ID, OperationID: session.OperationID,
+		State:           capture.SessionRecoveryExhausted,
+		RecordingStatus: capture.RecordingUnavailable,
+		ErrorCode:       capture.RecorderRecoveryRetryExhaustedErrorCode,
+		RestartAttempt:  10, OccurredAt: time.Now().UnixMilli(),
+	}
+	exhausted := waitForRuntimeState(
+		t, statuses, RuntimeLive, capture.RecorderRecoveryRetryExhaustedErrorCode,
+	)
+	if exhausted.RecordingStatus != capture.RecordingUnavailable || exhausted.RetryAt != 0 ||
+		exhausted.Message != "录制重试已耗尽，直播消息仍在采集" {
+		t.Fatalf("unexpected exhausted status: %+v", exhausted)
+	}
+	close(recoveryEvents)
+	if err := manager.StopMonitoring(context.Background(), config.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMonitorWorkerDropsPreRebindRecoveryEventWithoutRegressingOperation(t *testing.T) {
+	oldOperationID := newOperationID()
+	currentOperationID := newOperationID()
+	sessionID := newOperationID()
+	coordinator := newFakeCaptureCoordinator()
+	session := &fakeRecoveryCaptureSession{
+		fakeCaptureSession: &fakeCaptureSession{
+			owner: coordinator,
+			current: capture.LiveSession{
+				ID: sessionID, OperationID: oldOperationID,
+				Status: capture.SessionRecording, RecordingStatus: capture.RecordingActive,
+			},
+		},
+		events: make(chan capture.SessionRecoveryEvent),
+	}
+	rebound, err := session.Rebind(context.Background(), currentOperationID, nil)
+	if err != nil || rebound.OperationID != currentOperationID {
+		t.Fatalf("rebind result = (%+v, %v)", rebound, err)
+	}
+
+	published := 0
+	manager := &MonitorManager{
+		logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		options: MonitorOptions{
+			Now: func() time.Time { return time.UnixMilli(123456789) },
+			Publisher: func(RoomRuntimeStatus) {
+				published++
+			},
+		},
+	}
+	before := RoomRuntimeStatus{
+		RoomID: "rebind-room", State: RuntimeRecording,
+		OperationID: currentOperationID, SessionID: sessionID,
+		RecordingStatus: capture.RecordingActive,
+		ChangedAt:       123, Message: "当前录制代际",
+	}
+	worker := &monitorWorker{
+		manager: manager, session: session,
+		recoveryWatchGeneration: 7,
+		status:                  before,
+	}
+
+	worker.applySessionRecoveryEvent(7, session, sessionID, capture.SessionRecoveryEvent{
+		SessionID: sessionID, OperationID: oldOperationID,
+		State:           capture.SessionRecoveryRetryScheduled,
+		RecordingStatus: capture.RecordingReconnecting,
+		ErrorCode:       capture.RecorderNetworkFailureErrorCode,
+		RetryAt:         999,
+	})
+	if got := worker.snapshot(); got != before {
+		t.Fatalf("stale pre-rebind event changed current status: got=%+v want=%+v", got, before)
+	}
+	if published != 0 {
+		t.Fatalf("stale pre-rebind event published %d statuses", published)
+	}
+
+	worker.applySessionRecoveryEvent(7, session, sessionID, capture.SessionRecoveryEvent{
+		SessionID: sessionID, OperationID: currentOperationID,
+		State:           capture.SessionRecoveryRetryScheduled,
+		RecordingStatus: capture.RecordingReconnecting,
+		ErrorCode:       capture.RecorderNetworkFailureErrorCode,
+		RetryAt:         1000,
+	})
+	current := worker.snapshot()
+	if current.OperationID != currentOperationID || current.SessionID != sessionID ||
+		current.State != RuntimeReconnecting ||
+		current.RecordingStatus != capture.RecordingReconnecting || published != 1 {
+		t.Fatalf("current recovery event result = status:%+v published:%d", current, published)
 	}
 }

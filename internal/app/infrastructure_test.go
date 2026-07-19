@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	douyinLive "github.com/jwwsjlm/douyinLive/v2"
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
+	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
@@ -31,7 +32,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if !bootstrap.Data.Ready || !bootstrap.Data.LoggingReady {
 		t.Fatalf("data status is not ready: %#v", bootstrap.Data)
 	}
-	if bootstrap.Data.SchemaVersion != 4 || bootstrap.Data.Mode != DataModeReadWrite {
+	if bootstrap.Data.SchemaVersion != 5 || bootstrap.Data.Mode != DataModeReadWrite {
 		t.Fatalf("unexpected data status: %#v", bootstrap.Data)
 	}
 	diagnosticsAvailable := false
@@ -72,11 +73,307 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(log) error = %v", err)
 	}
-	if !strings.Contains(string(logData), `"schema_version":4`) {
+	if !strings.Contains(string(logData), `"schema_version":5`) {
 		t.Fatalf("log does not contain schema version: %s", logData)
 	}
 	if strings.Contains(string(logData), root) {
 		t.Fatalf("log exposes data-root path: %s", logData)
+	}
+}
+
+func TestInitializeInfrastructureRecoversDurableAttemptWhenFFmpegDiscoveryFails(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "app-data")
+	layout, err := storage.PrepareLayout(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(ctx, layout, storage.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomID := mustAppUUIDv7(t)
+	if _, err := store.Writer().Exec(`INSERT INTO rooms(
+		id, live_id, alias, created_at, updated_at
+	) VALUES (?, ?, 'startup-recovery', 1, 1)`, roomID, "live-"+roomID); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	repository, err := capture.NewSQLiteRepository(store.Writer(), store.Reader(), layout.Root)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	startedAt := time.Now().UTC().Add(-2 * time.Minute)
+	session, err := repository.Create(ctx, capture.CreateSessionInput{
+		RoomConfigID: roomID,
+		OperationID:  mustAppUUIDv7(t),
+		Recording:    capture.RecordingPending,
+		StartedAt:    startedAt,
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	opened, err := repository.OpenSessionMedia(ctx, capture.OpenSessionMediaInput{
+		SessionID: session.ID, RelativePath: session.DataPath,
+		StartedAt: session.StartedAt,
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	attempt := capture.MediaAttempt{
+		ID: mustAppUUIDv7(t), Ordinal: 1,
+		StartedAt: startedAt.Add(time.Second).UnixMilli(), SegmentSeconds: 600,
+		Committed: true, Protocol: "flv", Codec: "h264",
+	}
+	if _, err := repository.PersistMediaSnapshot(ctx, capture.PersistMediaSnapshotInput{
+		SessionID: session.ID, ExpectedRevision: opened.Session.ManifestRevision,
+		State: capture.SessionMediaOpen, Attempts: []capture.MediaAttempt{attempt},
+		UpdatedAt: time.Now().UTC().UnixMilli(),
+	}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Options{Name: "startup-recovery", Version: "test"})
+	application.newRecorderFactory = func(
+		context.Context,
+		capture.FFmpegRecorderFactoryOptions,
+	) (capture.RecorderFactory, capture.FFmpegDependencyInfo, error) {
+		return nil, capture.FFmpegDependencyInfo{}, errors.New("dependency unavailable for test")
+	}
+	if err := application.InitializeInfrastructure(ctx, InfrastructureOptions{
+		DataRoot: root,
+		Now:      time.Now().UTC().Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+
+	var status, recordingStatus string
+	var endedAt int64
+	if err := application.Store().Reader().QueryRow(
+		"SELECT status, recording_status, ended_at FROM live_sessions WHERE id = ?",
+		session.ID,
+	).Scan(&status, &recordingStatus, &endedAt); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(capture.SessionInterrupted) ||
+		recordingStatus != string(capture.RecordingIncomplete) || endedAt < session.StartedAt {
+		t.Fatalf("old session was not terminalized: status=%q recording=%q ended=%d",
+			status, recordingStatus, endedAt)
+	}
+	var gapCount, openGapCount, pointGapCount int
+	if err := application.Store().Reader().QueryRow(
+		`SELECT COUNT(*),
+			SUM(CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END),
+			SUM(CASE WHEN started_at = ended_at THEN 1 ELSE 0 END)
+		 FROM capture_gaps WHERE session_id = ?`,
+		session.ID,
+	).Scan(&gapCount, &openGapCount, &pointGapCount); err != nil {
+		t.Fatal(err)
+	}
+	if gapCount < 1 || openGapCount != 0 || pointGapCount < 1 {
+		t.Fatalf("startup recovery gap audit = count:%d open:%d point:%d",
+			gapCount, openGapCount, pointGapCount)
+	}
+	logData, err := os.ReadFile(filepath.Join(
+		root, "logs", time.Now().UTC().Add(time.Minute).Format("app-2006-01-02.jsonl"),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "capture startup recovery completed") ||
+		!strings.Contains(string(logData), "MEDIA_RECOVERY_FAILED") {
+		t.Fatalf("startup recovery diagnostics missing: %s", logData)
+	}
+}
+
+func TestInitializeInfrastructureFailsClosedWhenStartupProcessRecoveryIsUnsafe(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "app-data")
+	layout, err := storage.PrepareLayout(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := storage.Open(ctx, layout, storage.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roomID := mustAppUUIDv7(t)
+	if _, err := store.Writer().Exec(`INSERT INTO rooms(
+		id, live_id, alias, created_at, updated_at
+	) VALUES (?, ?, 'startup-process-failure', 1, 1)`, roomID, "live-"+roomID); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	repository, err := capture.NewSQLiteRepository(store.Writer(), store.Reader(), layout.Root)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	session, err := repository.Create(ctx, capture.CreateSessionInput{
+		RoomConfigID: roomID,
+		OperationID:  mustAppUUIDv7(t),
+		Recording:    capture.RecordingPending,
+		StartedAt:    now.Add(-time.Minute),
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if _, err := repository.OpenSessionMedia(ctx, capture.OpenSessionMediaInput{
+		SessionID: session.ID, RelativePath: session.DataPath,
+		StartedAt: session.StartedAt,
+	}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if _, err := store.Writer().Exec(
+		"UPDATE session_media SET attempts_json = '[{}]' WHERE session_id = ?",
+		session.ID,
+	); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	application := New(Options{Name: "startup-process-failure", Version: "test"})
+	application.newRecorderFactory = func(
+		context.Context,
+		capture.FFmpegRecorderFactoryOptions,
+	) (capture.RecorderFactory, capture.FFmpegDependencyInfo, error) {
+		return nil, capture.FFmpegDependencyInfo{}, errors.New("dependency unavailable for test")
+	}
+	commitReached := false
+	application.beforeInfrastructureCommit = func() { commitReached = true }
+	err = application.InitializeInfrastructure(ctx, InfrastructureOptions{
+		DataRoot: root,
+		Now:      now.Add(time.Minute),
+	})
+	if !errors.Is(err, capture.ErrStartupProcessRecovery) ||
+		err.Error() != capture.ErrStartupProcessRecovery.Error() {
+		t.Fatalf("InitializeInfrastructure() error = %v, want stable process-recovery failure", err)
+	}
+	if commitReached || application.Store() != nil || application.EventStoreManager() != nil ||
+		application.CaptureCoordinator() != nil ||
+		application.MonitorManager() != nil || application.Bootstrap().Data.Ready {
+		t.Fatalf("failed infrastructure escaped: commit=%t bootstrap=%+v",
+			commitReached, application.Bootstrap())
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("uncommitted infrastructure retained open resources: %v", err)
+	}
+}
+
+func TestInitializeInfrastructureFailsClosedWhenEventRecoveryIsDeferred(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "app-data")
+	application := New(Options{Name: "startup-event-deferred", Version: "test"})
+	application.newRecorderFactory = func(
+		context.Context,
+		capture.FFmpegRecorderFactoryOptions,
+	) (capture.RecorderFactory, capture.FFmpegDependencyInfo, error) {
+		return nil, capture.FFmpegDependencyInfo{}, errors.New("dependency unavailable for test")
+	}
+	runnerCalled := false
+	application.recoverStartupSessions = func(
+		ctx context.Context,
+		options capture.StartupRecoveryOptions,
+	) (capture.StartupRecoveryReport, error) {
+		runnerCalled = true
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("startup recovery context error = %v", err)
+		}
+		if options.Repository == nil || options.ProcessRecoverer == nil ||
+			options.EventRecoverer == nil || options.Reporter == nil {
+			t.Fatal("startup recovery dependencies were not wired")
+		}
+		return capture.StartupRecoveryReport{Scanned: 2, Recovered: 1, Failed: 1},
+			errors.Join(capture.ErrStartupRecoveryIncomplete, capture.ErrStartupEventRecoveryDeferred)
+	}
+	commitReached := false
+	application.beforeInfrastructureCommit = func() { commitReached = true }
+	err := application.InitializeInfrastructure(context.Background(), InfrastructureOptions{
+		DataRoot: root,
+		Now:      time.Now().UTC(),
+	})
+	if !runnerCalled {
+		t.Fatal("startup recovery runner was not called")
+	}
+	if !errors.Is(err, capture.ErrStartupEventRecoveryDeferred) ||
+		err.Error() != capture.ErrStartupEventRecoveryDeferred.Error() {
+		t.Fatalf("InitializeInfrastructure() error = %v, want stable deferred-event failure", err)
+	}
+	if commitReached || application.Store() != nil || application.EventStoreManager() != nil ||
+		application.CaptureCoordinator() != nil || application.MonitorManager() != nil ||
+		application.Bootstrap().Data.Ready {
+		t.Fatalf("deferred event recovery escaped: commit=%t bootstrap=%+v",
+			commitReached, application.Bootstrap())
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("uncommitted infrastructure retained open resources: %v", err)
+	}
+}
+
+func TestStartupEventRecoveryErrorUsesStableApplicationBoundary(t *testing.T) {
+	mapped := startupEventRecoveryError(errors.Join(
+		eventstore.ErrRecoveryDeferred,
+		errors.New("native error must not cross boundary"),
+	))
+	if mapped != capture.ErrStartupEventRecoveryDeferred ||
+		strings.Contains(mapped.Error(), "native error") {
+		t.Fatalf("startupEventRecoveryError() = %v, want stable capture sentinel", mapped)
+	}
+	permanent := eventstore.ErrPrivacyKeyMismatch
+	if got := startupEventRecoveryError(permanent); got != permanent {
+		t.Fatalf("permanent recovery error = %v, want %v", got, permanent)
+	}
+	if got := startupEventRecoveryError(nil); got != nil {
+		t.Fatalf("nil recovery error = %v", got)
+	}
+}
+
+func TestStartupRecoveryFailClosedError(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "none", err: nil, want: nil},
+		{name: "process", err: errors.Join(capture.ErrStartupRecoveryIncomplete, capture.ErrStartupProcessRecovery), want: capture.ErrStartupProcessRecovery},
+		{name: "event deferred", err: errors.Join(capture.ErrStartupRecoveryIncomplete, capture.ErrStartupEventRecoveryDeferred), want: capture.ErrStartupEventRecoveryDeferred},
+		{name: "configuration", err: capture.ErrStartupRecoveryConfiguration, want: capture.ErrStartupRecoveryConfiguration},
+		{name: "escaped cancellation", err: context.Canceled, want: capture.ErrStartupRecoveryIncomplete},
+		{name: "escaped deadline", err: context.DeadlineExceeded, want: capture.ErrStartupRecoveryIncomplete},
+		{name: "incomplete", err: capture.ErrStartupRecoveryIncomplete, want: capture.ErrStartupRecoveryIncomplete},
+		{name: "unknown", err: errors.New("unknown recovery failure"), want: capture.ErrStartupRecoveryIncomplete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := startupRecoveryFailClosedError(test.err)
+			if !errors.Is(got, test.want) || (got == nil) != (test.want == nil) {
+				t.Fatalf("startupRecoveryFailClosedError(%v) = %v, want %v", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+func TestStableInfrastructureCleanupErrorMasksNativeDetails(t *testing.T) {
+	if got := stableInfrastructureCleanupError(nil, nil); got != nil {
+		t.Fatalf("nil cleanup errors = %v", got)
+	}
+	native := errors.New(`close D:\private\app.db: access denied`)
+	got := stableInfrastructureCleanupError(nil, native)
+	if got != ErrInfrastructureCleanup || errors.Is(got, native) ||
+		strings.Contains(got.Error(), "private") {
+		t.Fatalf("stable cleanup error = %v", got)
 	}
 }
 

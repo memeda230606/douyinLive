@@ -83,10 +83,13 @@ type EventSink interface {
 type EventSinkFactory func(context.Context, LiveSession, OpenRequest) (EventSink, error)
 
 type CoordinatorOptions struct {
-	RecorderFactory  RecorderFactory
-	EventSinkFactory EventSinkFactory
-	Now              func() time.Time
-	CommitTimeout    time.Duration
+	RecorderFactory   RecorderFactory
+	EventSinkFactory  EventSinkFactory
+	Now               func() time.Time
+	CommitTimeout     time.Duration
+	RecoveryJournal   RecorderRecoveryJournal
+	RecoveryPolicy    RecorderRecoveryPolicy
+	RecoveryScheduler RecorderRecoveryScheduler
 }
 
 type Session interface {
@@ -100,13 +103,16 @@ type CaptureCoordinator interface {
 }
 
 type Coordinator struct {
-	repository       SessionRepository
-	recorderFactory  RecorderFactory
-	eventSinkFactory EventSinkFactory
-	now              func() time.Time
-	commitTimeout    time.Duration
-	registryMu       sync.Mutex
-	runtimes         map[string]*coordinatorRuntimeEntry
+	repository        SessionRepository
+	recorderFactory   RecorderFactory
+	eventSinkFactory  EventSinkFactory
+	now               func() time.Time
+	commitTimeout     time.Duration
+	recoveryJournal   RecorderRecoveryJournal
+	recoveryPolicy    RecorderRecoveryPolicy
+	recoveryScheduler RecorderRecoveryScheduler
+	registryMu        sync.Mutex
+	runtimes          map[string]*coordinatorRuntimeEntry
 }
 
 func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*Coordinator, error) {
@@ -127,10 +133,21 @@ func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*
 	if options.EventSinkFactory == nil {
 		return nil, errors.New("capture coordinator event sink factory is nil")
 	}
+	if options.RecoveryJournal == nil {
+		options.RecoveryJournal, _ = repository.(RecorderRecoveryJournal)
+	}
+	if options.RecoveryScheduler == nil {
+		options.RecoveryScheduler = recorderRecoveryTimerScheduler{}
+	}
 	return &Coordinator{
-		repository: repository, recorderFactory: options.RecorderFactory,
-		eventSinkFactory: options.EventSinkFactory, now: options.Now,
-		commitTimeout: options.CommitTimeout,
+		repository:        repository,
+		recorderFactory:   options.RecorderFactory,
+		eventSinkFactory:  options.EventSinkFactory,
+		now:               options.Now,
+		commitTimeout:     options.CommitTimeout,
+		recoveryJournal:   options.RecoveryJournal,
+		recoveryPolicy:    normalizeRecorderRecoveryPolicy(options.RecoveryPolicy),
+		recoveryScheduler: options.RecoveryScheduler,
 	}, nil
 }
 
@@ -264,8 +281,12 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 		return nil, publicErr
 	}
 	runtime := &sessionRuntime{
-		coordinator: c, current: created, operationID: request.OperationID,
-		source: source, sink: sink,
+		coordinator:    c,
+		current:        created,
+		operationID:    request.OperationID,
+		source:         source,
+		sink:           sink,
+		recoveryEvents: make(chan SessionRecoveryEvent, defaultRecorderRecoveryEventBuffer),
 	}
 	subscriptionID := runtime.subscribe(source, request.OperationID)
 	if subscriptionID == "" {
@@ -347,6 +368,16 @@ type sessionRuntime struct {
 	recorder                  Recorder
 	recorderEventsCancel      context.CancelFunc
 	sink                      EventSink
+	recoveryEvents            chan SessionRecoveryEvent
+	recoveryEventsClosed      bool
+	recoveryGeneration        uint64
+	recoveryCancel            context.CancelFunc
+	recoveryRecorder          Recorder
+	recoveryGapID             string
+	recoveryWindowStartedAt   time.Time
+	recoveryAttempts          int
+	recoveryErrorCode         string
+	recoveryCloseAt           time.Time
 	finalizing                bool
 	finalized                 bool
 	finalizeErr               error
@@ -366,6 +397,69 @@ func (s *sessionRuntime) Snapshot() LiveSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.current
+}
+
+func (s *sessionRuntime) RecoveryEvents() <-chan SessionRecoveryEvent {
+	return s.recoveryEvents
+}
+
+func (s *sessionRuntime) enqueueRecoveryEventLocked(event SessionRecoveryEvent) {
+	if s.recoveryEventsClosed || s.recoveryEvents == nil {
+		return
+	}
+	select {
+	case s.recoveryEvents <- event:
+		return
+	default:
+	}
+	select {
+	case <-s.recoveryEvents:
+	default:
+	}
+	s.recoveryEvents <- event
+}
+
+func (s *sessionRuntime) closeRecoveryEventsLocked() {
+	if !s.recoveryEventsClosed && s.recoveryEvents != nil {
+		close(s.recoveryEvents)
+		s.recoveryEventsClosed = true
+	}
+}
+
+func (s *sessionRuntime) cancelRecorderRecoveryIntent() {
+	s.mu.Lock()
+	s.invalidateRecorderRecoveryLocked()
+	s.mu.Unlock()
+}
+
+func (s *sessionRuntime) invalidateRecorderRecoveryLocked() {
+	s.recoveryGeneration++
+	if s.recoveryCancel != nil {
+		s.recoveryCancel()
+		s.recoveryCancel = nil
+	}
+}
+
+func (s *sessionRuntime) startRecorderRecoveryGenerationLocked(recorder Recorder) (context.Context, uint64) {
+	s.invalidateRecorderRecoveryLocked()
+	recoveryCtx, cancel := context.WithCancel(context.Background())
+	s.recoveryCancel = cancel
+	s.recoveryRecorder = recorder
+	return recoveryCtx, s.recoveryGeneration
+}
+
+func (s *sessionRuntime) recorderRecoveryGenerationMatchesLocked(
+	generation uint64,
+	recorder Recorder,
+) bool {
+	return generation == s.recoveryGeneration &&
+		!s.finalizing &&
+		!s.finalized &&
+		s.recoveryGapID != "" &&
+		s.current.Status == SessionRecording &&
+		s.current.RecordingStatus == RecordingReconnecting &&
+		sameRecorderInstance(s.recorder, recorder) &&
+		sameRecorderInstance(s.recoveryRecorder, recorder)
 }
 
 func (s *sessionRuntime) startRecorderEvents(recorder Recorder) {
@@ -401,14 +495,8 @@ func (s *sessionRuntime) startRecorderEvents(recorder Recorder) {
 				}
 				retryDelay := 25 * time.Millisecond
 				for !s.handleRecorderEvent(recorder, eventSource, event) {
-					timer := time.NewTimer(retryDelay)
-					select {
-					case <-watchCtx.Done():
-						if !timer.Stop() {
-							<-timer.C
-						}
+					if err := s.coordinator.recoveryScheduler.Wait(watchCtx, retryDelay); err != nil {
 						return
-					case <-timer.C:
 					}
 					if retryDelay < time.Second {
 						retryDelay *= 2
@@ -446,37 +534,7 @@ func (s *sessionRuntime) handleRecorderEvent(
 	if !active {
 		return true
 	}
-
-	commitCtx, cancel := s.coordinator.commitContext(context.Background())
-	next, transitionErr := s.coordinator.repository.Transition(commitCtx, TransitionSessionInput{
-		ID: current.ID, ExpectedStatus: current.Status,
-		ExpectedRecordingStatus: current.RecordingStatus, ExpectedOperationID: current.OperationID,
-		Status: current.Status, RecordingStatus: RecordingUnavailable,
-	})
-	cancel()
-
-	// A process exit must never disappear behind a transient SQLite/CAS or
-	// manifest error. Keep the recorder and event correlation alive until the
-	// repository confirms the unavailable state; the watcher retries while
-	// Rebind/Finalize remain able to supersede it through operationMu.
-	transitionConfirmed := next.ID != "" && next.RecordingStatus == RecordingUnavailable
-	if transitionErr != nil && !transitionConfirmed {
-		return false
-	}
-	if !transitionConfirmed {
-		return false
-	}
-	s.mu.Lock()
-	s.current = next
-	if sameRecorderInstance(s.recorder, recorder) {
-		s.cancelRecorderEventsLocked()
-	}
-	s.mu.Unlock()
-
-	stopCtx, stopCancel := s.coordinator.commitContext(context.Background())
-	_ = boundedCall(stopCtx, recorder.Stop)
-	stopCancel()
-	return true
+	return s.beginRecorderRecoveryLocked(recorder, event)
 }
 
 func (s *sessionRuntime) cancelRecorderEventsLocked() {
@@ -493,6 +551,19 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	if source == nil {
 		return LiveSession{}, errors.New("capture source is nil")
 	}
+	s.mu.Lock()
+	if s.finalized || s.finalizing {
+		current := s.current
+		s.mu.Unlock()
+		return current, ErrCaptureFinalized
+	}
+	if operationID == s.operationID {
+		current := s.current
+		s.mu.Unlock()
+		return current, nil
+	}
+	s.mu.Unlock()
+	s.cancelRecorderRecoveryIntent()
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
 
@@ -508,6 +579,7 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 		return current, nil
 	}
 	current := s.current
+	recorder := s.recorder
 	s.mu.Unlock()
 
 	previousRecording := current.RecordingStatus
@@ -522,46 +594,114 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 		Status: current.Status, RecordingStatus: transitionRecording,
 		NextOperationID: operationID,
 	})
-	if err != nil {
+	operationTransitionErr := err
+	transitionConfirmed := reconnecting.ID == current.ID &&
+		reconnecting.Status == current.Status &&
+		reconnecting.RecordingStatus == transitionRecording &&
+		reconnecting.OperationID == operationID
+	if !transitionConfirmed {
+		s.resumeRecorderRecoveryLocked(recorder)
+		if err == nil {
+			err = ErrStaleTransition
+		}
 		return current, err
 	}
 	s.mu.Lock()
 	s.current = reconnecting
 	s.operationID = operationID
-	recorder := s.recorder
 	s.mu.Unlock()
 
 	newSubscriptionID := s.subscribe(source, operationID)
 	if newSubscriptionID == "" {
-		return reconnecting, ErrCaptureSubscription
-	}
-	targetRecording := transitionRecording
-	if needsRecorderRebind {
-		if recorder == nil || boundedCall(ctx, func(callCtx context.Context) error {
-			return recorder.Rebind(callCtx, source)
-		}) != nil {
-			targetRecording = RecordingUnavailable
-			if recorder != nil {
-				// Stop owns shared asynchronous cleanup. Keep the stopped/stopping
-				// recorder attached so Finalize can wait for that owner.
-				_ = boundedCall(ctx, recorder.Stop)
+		s.mu.Lock()
+		hasRecoveryGap := s.recoveryGapID != ""
+		s.mu.Unlock()
+		if hasRecoveryGap && s.coordinator.recoveryJournal != nil {
+			next, finishErr := s.finishExternalRecorderRebindLocked(
+				ctx,
+				reconnecting,
+				RecordingUnavailable,
+				RecorderProcessExitedErrorCode,
+			)
+			confirmed := next.ID == reconnecting.ID &&
+				next.OperationID == operationID &&
+				next.RecordingStatus == RecordingUnavailable
+			if confirmed {
+				s.mu.Lock()
+				s.materializeExternalRecorderRecoveryLocked(
+					next,
+					RecordingUnavailable,
+					RecorderProcessExitedErrorCode,
+				)
+				s.cancelRecorderEventsLocked()
+				s.mu.Unlock()
+				if recorder != nil {
+					_ = boundedCall(ctx, recorder.Stop)
+				}
+				return next, errors.Join(
+					operationTransitionErr,
+					ErrCaptureSubscription,
+					finishErr,
+				)
 			}
+			if finishErr != nil {
+				return reconnecting, errors.Join(
+					operationTransitionErr,
+					ErrCaptureSubscription,
+					finishErr,
+				)
+			}
+		}
+		return reconnecting, errors.Join(operationTransitionErr, ErrCaptureSubscription)
+	}
+	s.mu.Lock()
+	hasRecoveryGap := s.recoveryGapID != ""
+	s.mu.Unlock()
+	targetRecording := transitionRecording
+	var rebindErr error
+	if needsRecorderRebind {
+		if recorder == nil {
+			targetRecording = RecordingUnavailable
 		} else {
-			targetRecording = RecordingActive
+			rebindErr = boundedCall(ctx, func(callCtx context.Context) error {
+				return recorder.Rebind(callCtx, source)
+			})
+			if rebindErr != nil {
+				targetRecording = RecordingUnavailable
+			} else {
+				targetRecording = RecordingActive
+			}
 		}
 	}
-	next, err := s.coordinator.repository.Transition(ctx, TransitionSessionInput{
-		ID: reconnecting.ID, ExpectedStatus: reconnecting.Status,
-		ExpectedRecordingStatus: reconnecting.RecordingStatus, ExpectedOperationID: operationID,
-		Status: reconnecting.Status, RecordingStatus: targetRecording,
-	})
-	if err != nil {
+	var cleanupErr error
+	if recorder != nil && targetRecording == RecordingUnavailable && !hasRecoveryGap {
+		// Preserve the legacy ordering: a failed external rebind first converges
+		// the recorder owner, then attempts the unavailable transition.
+		cleanupErr = boundedCall(ctx, recorder.Stop)
+	}
+	next, finishErr := s.finishExternalRecorderRebindLocked(
+		ctx,
+		reconnecting,
+		targetRecording,
+		recorderRecoveryCodeForError(rebindErr),
+	)
+	confirmed := next.ID == reconnecting.ID &&
+		next.OperationID == operationID &&
+		next.RecordingStatus == targetRecording
+	if !confirmed {
 		source.Unsubscribe(newSubscriptionID)
-		return reconnecting, err
+		if finishErr == nil {
+			finishErr = ErrStaleTransition
+		}
+		return reconnecting, errors.Join(operationTransitionErr, finishErr)
 	}
 	s.mu.Lock()
 	oldSource, oldSubscriptionID := s.source, s.subscriptionID
-	s.current = next
+	s.materializeExternalRecorderRecoveryLocked(
+		next,
+		targetRecording,
+		recorderRecoveryCodeForError(rebindErr),
+	)
 	s.source = source
 	s.subscriptionID = newSubscriptionID
 	s.recorder = recorder
@@ -572,6 +712,14 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	if oldSource != nil && oldSubscriptionID != "" {
 		oldSource.Unsubscribe(oldSubscriptionID)
 	}
+	if recorder != nil && targetRecording == RecordingUnavailable && hasRecoveryGap {
+		// Stop owns shared asynchronous cleanup. Keep the stopped/stopping
+		// recorder attached so Finalize can wait for that owner.
+		cleanupErr = boundedCall(ctx, recorder.Stop)
+	}
+	if operationTransitionErr != nil || finishErr != nil || cleanupErr != nil {
+		return next, errors.Join(operationTransitionErr, finishErr, cleanupErr)
+	}
 	return next, nil
 }
 
@@ -579,6 +727,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	if ctx == nil {
 		return LiveSession{}, errors.New("capture finalize context is nil")
 	}
+	s.cancelRecorderRecoveryIntent()
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
 
@@ -634,7 +783,52 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	}
 	s.finalizing = true
 	recorder, source, subscriptionID, sink := s.recorder, s.source, s.subscriptionID, s.sink
+	gapID := s.recoveryGapID
+	recoveryErrorCode := s.recoveryErrorCode
+	recoveryCloseAt := s.recoveryCloseAt
+	if markCommitted && gapID != "" && recoveryCloseAt.IsZero() {
+		recoveryCloseAt = s.coordinator.now().UTC()
+		s.recoveryCloseAt = recoveryCloseAt
+	}
 	s.mu.Unlock()
+
+	var recoveryCloseErr error
+	if markCommitted && gapID != "" {
+		if s.coordinator.recoveryJournal == nil {
+			recoveryCloseErr = fmt.Errorf(
+				"close recorder recovery gap: journal is nil: %w",
+				ErrRecoveryPersistence,
+			)
+		} else {
+			closeCtx, cancel := s.coordinator.commitContext(ctx)
+			recoveryCloseErr = s.coordinator.recoveryJournal.CloseRecorderRecovery(
+				closeCtx,
+				CloseRecorderRecoveryInput{
+					SessionID:               current.ID,
+					GapID:                   gapID,
+					ExpectedStatus:          current.Status,
+					ExpectedRecordingStatus: current.RecordingStatus,
+					ExpectedOperationID:     current.OperationID,
+					Recovered:               false,
+					ErrorCode:               normalizeRecorderRecoveryErrorCode(recoveryErrorCode),
+					ClosedAt:                recoveryCloseAt,
+				},
+			)
+			cancel()
+			if recoveryCloseErr != nil {
+				recoveryCloseErr = fmt.Errorf("close recorder recovery gap: %w", recoveryCloseErr)
+			} else {
+				s.mu.Lock()
+				if s.recoveryGapID == gapID {
+					s.recoveryGapID = ""
+					s.recoveryRecorder = nil
+					s.recoveryCloseAt = time.Time{}
+				}
+				s.mu.Unlock()
+			}
+		}
+		materializationErr = errors.Join(materializationErr, recoveryCloseErr)
+	}
 
 	if !targetSet {
 		var recorderErr, sinkErr error
@@ -726,6 +920,16 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		return result, finalErr
 	}
 
+	if recoveryCloseErr != nil {
+		finalErr := errors.Join(materializationErr, publicComponentErr)
+		s.mu.Lock()
+		s.finalizing = true
+		s.finalizeErr = finalErr
+		result := s.current
+		s.mu.Unlock()
+		return result, finalErr
+	}
+
 	endedAt := targetEndedAt
 	commitCtx, cancel := s.coordinator.commitContext(ctx)
 	terminal, transitionErr := s.coordinator.repository.Transition(commitCtx, TransitionSessionInput{
@@ -742,6 +946,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	if terminalCommitted {
 		s.current = terminal
 		s.finalized = true
+		s.closeRecoveryEventsLocked()
 	}
 	s.finalizeErr = finalErr
 	result := s.current

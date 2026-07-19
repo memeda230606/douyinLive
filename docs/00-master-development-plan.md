@@ -21,28 +21,28 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-19T17:51:00+08:00"
+updated_at: "2026-07-19T21:24:00+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "6cfedc16b6dcacee03ccccffff81472123fcc823"
+last_verified_head: "5a6602856f3b64a6fb02bf915d5f70e03ec52cce"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 62
+overall_completion_percent: 66
 current_phase: "PHASE-3-CAPTURE-MVP"
-current_task: "P3-RCV-001"
-next_task: "P3-UI-001"
+current_task: "P3-UI-001"
+next_task: "P3-ACC-001"
 expected_dirty_paths:
   - "docs/00-master-development-plan.md"
+  - "docs/01-desktop-ui-development-plan.md"
   - "docs/02-capture-and-recording-development-plan.md"
-  - "docs/03-data-and-analysis-development-plan.md"
-  - "docs/validation/2026-07-19-p3-media-finalization.md"
+  - "docs/validation/2026-07-19-p3-rcv-recovery.md"
+  - "frontend/"
   - "internal/app/"
   - "internal/capture/"
   - "internal/room/"
-  - "internal/storage/"
 blockers: []
-last_completed_task: "P3-MEDIA-001"
-last_completion_evidence: "完成 SQLite Schema v4、内外部录制根注册与重解析点 fail-closed 校验、URL-free attempt 日志、分片/代理双阶段数据包探测、MKV 原子定稿、WAV/MP4 代理生成、media.json CAS 镜像、完成态文件篡改审计、有限基数与 128 MiB 清单上界以及收尾生命周期归属。全量 Go test/vet/build、P3 标签、重点重复测试、前端 typecheck/Vitest/build、Wails 生产构建及真实 FFmpeg 内外部根 E2E 通过，终审无 P0/P1；在线连通性在最终门禁后恢复，P3-MEDIA 不冒充 P3-ACC 的在线录制验收，留待 P3-ACC 使用授权测试房间执行。"
-resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media attempt/segment/artifact 状态实现启动恢复、异常重试和媒体缺口审计；按页修复遗留 active 场次，恢复 open/finalizing 媒体快照，确保旧 attempt 结果不能覆盖新操作，并在稳定错误码、退避上界和用户可见诊断下完成故障注入。"
+last_completed_task: "P3-RCV-001"
+last_completion_evidence: "完成 SQLite Schema v5 恢复索引、应用数据根全局实例租约、固定截止时间的严格 keyset 启动扫描、Global Job Object 进程证据恢复、open/finalizing 媒体审计、事件耐久尾重放与 checkpoint/fold 关闭、权威截止时间刷新、capture_gaps 和旧活动场次原子终态推进，以及 1/2/5/10 秒、最多 10 次或 5 分钟的运行期录制恢复。全量 Go test/vet/build、event source-tail/local-drop-gap 与关键恢复/Windows 跨进程测试 20 轮、前端 typecheck/Vitest/build、Wails 生产构建和 diff 门禁通过，独立终审 P0/P1/P2=0；P3-RCV 不依赖在线直播间，10 分钟在线、真实断流/崩溃/下播验收保留给 P3-ACC。"
+resume_instruction: "执行 P3-UI-001：消费现有 room/status、事件、录制恢复和缺口契约，实现实时弹幕、录制进度、重试状态与缺口告警；保持 DTO 运行时校验、事件监听单例、状态节流和 Cookie/流 URL/绝对路径脱敏，并完成前端组件、Go 绑定及真实 Wails GUI 验收。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -75,10 +75,10 @@ resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media att
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
-| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 73% | 22/30 点完成；场次编排、事件耐久链路、录制进程核心、媒体收尾与 Windows 进程树控制已完成 | 完成异常恢复、实时 UI 与 10 分钟验收 |
+| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 87% | 26/30 点完成；场次、事件、录制、媒体收尾、异常重试、缺口审计与启动恢复已完成 | 完成实时 UI 与 10 分钟验收 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **62%** | 已完成文档、流解析、桌面房间管理、场次编排、事件耐久链路、录制进程核心与媒体收尾 | 执行 P3-RCV-001 异常重试、缺口审计与启动恢复 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **66%** | 已完成文档、流解析、桌面房间管理、场次编排、事件耐久链路、录制、媒体收尾与异常恢复 | 执行 P3-UI-001 实时弹幕、录制进度与缺口告警 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -106,8 +106,8 @@ resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media att
 | P3-EVT-001 | 实现有界事件采集、spool、标准化、去重与批写 | 6 | P3-CAP-001 | `DONE` | [验收记录](validation/2026-07-17-p3-evt-durable-event-ingest.md)：Schema v3、双有界 FIFO、raw/WAL 双 Sync、原子批写、隐私/去重/礼物折叠、drop ledger 与双游标恢复完成；全量门禁及高风险 100 轮回归通过，终审无 P0/P1 | 执行 P3-REC-001 |
 | P3-REC-001 | 实现 FFmpeg、流候选、Job Object 与进程控制 | 6 | P3-EVT-001 | `DONE` | [验收记录](validation/2026-07-17-p3-rec-ffmpeg-process-control.md)：完成安全依赖发现、候选刷新与降级、唯一 attempt 隔离、有界进度解析、独立进程生命周期、Windows Job Object fail-closed 控制、分级停止、异步退出协调和隐私守卫；全量门禁、重点 100 轮、capture 包 20 轮及真实 FFmpeg/ffprobe 验收通过，终审无 P0/P1 | 执行 P3-MEDIA-001 |
 | P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `DONE` | [验收记录](validation/2026-07-19-p3-media-finalization.md)：Schema v4、内外部录制根、URL-free attempt、数据包级探测、MKV 原子定稿、WAV/MP4 代理、`media.json` CAS、完成态篡改审计与持久化上界完成；全量 Go/P3/Wails/真实 FFmpeg E2E 通过，终审无 P0/P1 | 执行 P3-RCV-001 |
-| P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `READY` | P3-MEDIA-001 已完成，Schema v4 的 attempt、segment、artifact 与脏清单状态可作为恢复事实源 | 实现启动协调、孤儿场次修复、重试退避和媒体缺口审计 |
-| P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `NOT_STARTED` | — | 等待恢复链路完成 |
+| P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `DONE` | [验收记录](validation/2026-07-19-p3-rcv-recovery.md)：Schema v5、全局实例租约、严格分页、Global Job 证据恢复、媒体/事件恢复、原子缺口与终态推进、运行期有界退避及 fail-closed 启动完成；全量 Go/前端/Wails 与重点 20 轮回归通过，终审 P0/P1/P2=0 | 执行 P3-UI-001 |
+| P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `READY` | P3-RCV-001 已提供运行期重试、恢复报告、录制状态和耐久缺口契约 | 实现实时状态、重试与缺口 UI，并完成真实 GUI 验收 |
 | P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `NOT_STARTED` | — | 等待 Phase 3 功能链路完成 |
 
 阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
@@ -141,10 +141,10 @@ resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media att
 
 ### 0.7 接续日志
 
+更早记录见[开发进度历史](development-progress-history.md)。PHASE-0 阶段总结：五份计划、机器可读进度账本与新会话接续协议均已建立并完成结构校验。
+
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
-| 2026-07-16 | P0-DOC-001 | `DONE` | 在 Windows `D:\douyinLive\docs` 创建五份计划，共 1527 行；链接、术语、Markdown 围栏和敏感样本检查通过 | 执行 P1-ENV-001 |
-| 2026-07-16 | P0-DOC-002 | `DONE` | 主文档增加机器可读进度、阶段完成度、任务队列、回写规则和“继续开发”接续协议；项目规则同步启动流程 | 回到 P1-ENV-001 并先复查工具链 |
 | 2026-07-16 | P1-ENV-001 | `BLOCKED` | SSH 会话可找到 Node/pnpm/Rust，找不到 Go/FFmpeg；未安装、未修改 PATH | 新会话先复查工具链，仍缺失则请求用户处理或授权 |
 | 2026-07-16 19:00 | P1-ENV-001 | `BLOCKED` | 再次验证 Go、FFmpeg、Wails CLI、WebView2、卸载注册表及现有 Docker 镜像；仅确认 `winget` 可用，未修改系统 | 等待用户授权安装开发前置，再执行 P1-STR-001 |
 | 2026-07-16 19:18 | P1-ENV-001 | `DONE` | 用户授权后完成工具链安装；哈希校验通过；`wails doctor` 就绪；`go test ./...`、`go build ./...` 与 FFmpeg H.264/AAC 冒烟通过 | 执行 P1-STR-001 脱敏流 fixture |
@@ -164,6 +164,7 @@ resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media att
 | 2026-07-17 20:40 | P3-EVT-001 | `DONE` | 完成 Schema v3、有界 FIFO、raw/WAL 双 Sync、SQLite 原子批写、隐私去重、礼物折叠、drop ledger 与双游标 fail-closed 恢复；全量/20 轮/关键 100 轮、前端与 Wails 门禁通过，授权直播间离线安全跳过，终审无 P0/P1 | 执行 P3-REC-001 FFmpeg 与进程控制 |
 | 2026-07-17 22:22 | P3-REC-001 | `DONE` | 完成 FFmpeg/ffprobe 安全发现、候选刷新降级、唯一 attempt 分片、受限进度解析、独立生命周期、Windows Job Object fail-closed 控制、分级停止和异步退出协调；全量 Go/前端/Wails、关键 100 轮、capture 包 20 轮及真实 FFmpeg/ffprobe 验收通过，授权直播间离线安全跳过，终审无 P0/P1 | 执行 P3-MEDIA-001 分片探测、媒体清单、音频代理与收尾 |
 | 2026-07-19 17:51 | P3-MEDIA-001 | `DONE` | 完成 Schema v4、录制根身份与安全路径、URL-free attempt、分片和代理数据包级探测、MKV 原子定稿、WAV/MP4、`media.json` CAS、完成态篡改审计及基数/清单上界；修复后全量 Go/P3/前端/Wails、capture 20 轮、重点高风险回归与真实 FFmpeg 内外部根 E2E 通过，终审无 P0/P1；在线连通性已恢复，10 分钟授权房间验收仍按计划由 P3-ACC 执行 | 执行 P3-RCV-001 异常重试、缺口审计与启动恢复 |
+| 2026-07-19 21:24 | P3-RCV-001 | `DONE` | 完成 Schema v5 恢复索引、数据根全局实例租约、固定截止严格 keyset 扫描、Global Job 进程恢复、媒体/事件耐久恢复、缺口和旧场次原子终态推进，以及 1/2/5/10 秒、最多 10 次或 5 分钟的运行期录制恢复；全量 Go test/vet/build、event source-tail/local-drop-gap 与关键跨进程/恢复测试 20 轮、前端 typecheck/Vitest/build、Wails 生产构建和 diff 门禁通过，终审 P0/P1/P2=0；无需直播间测试，在线 10 分钟与真实故障/下播留 P3-ACC | 执行 P3-UI-001 实时弹幕、录制进度与缺口告警 |
 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 

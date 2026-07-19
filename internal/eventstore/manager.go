@@ -34,6 +34,8 @@ var (
 	ErrPersistenceDegraded  = errors.New("EVENT_PERSISTENCE_DEGRADED")
 	ErrEventSpoolFatal      = errors.New("EVENT_SPOOL_FATAL")
 	ErrEventManagerNotReady = errors.New("EVENT_MANAGER_NOT_READY")
+	ErrRecoveryCutoff       = errors.New("EVENT_RECOVERY_CUTOFF_INVALID")
+	ErrRecoveryDeferred     = errors.New("EVENT_RECOVERY_DEFERRED")
 )
 
 type ManagerOptions struct {
@@ -160,6 +162,15 @@ func (m *Manager) OpenSession(ctx context.Context, descriptor SessionDescriptor)
 
 func (m *Manager) RecoverSession(ctx context.Context, descriptor SessionDescriptor) error {
 	return m.recoverSession(ctx, descriptor)
+}
+
+func (m *Manager) RecoverAndCloseSession(
+	ctx context.Context,
+	descriptor SessionDescriptor,
+	minimumCutoff time.Time,
+) (time.Time, error) {
+	cutoff, err := m.recoverAndCloseSession(ctx, descriptor, minimumCutoff)
+	return cutoff, classifyRecoveryFinalizationError(ctx, err)
 }
 
 // SetStoreDisplayName atomically updates the privacy policy used by all open

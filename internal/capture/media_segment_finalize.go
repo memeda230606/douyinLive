@@ -20,9 +20,10 @@ var (
 const mediaProbeVersion = "ffprobe_v1"
 
 type mediaSegmentProcessor struct {
-	prober *ffprobeSegmentProber
-	newID  func() (string, error)
-	verify func(context.Context) error
+	prober     *ffprobeSegmentProber
+	newID      func() (string, error)
+	verify     func(context.Context) error
+	recovering bool
 }
 
 func (processor mediaSegmentProcessor) finalize(
@@ -46,6 +47,9 @@ func (processor mediaSegmentProcessor) finalize(
 	}
 	probePath := candidate.PartialPath
 	status := MediaSegmentComplete
+	if processor.recovering {
+		status = MediaSegmentRecovered
+	}
 	if candidate.AlreadyFinal {
 		probePath = candidate.FinalPath
 		status = MediaSegmentRecovered
@@ -147,8 +151,10 @@ func (processor mediaSegmentProcessor) finalize(
 				return corruptMediaSegment(ctx, candidate, id, "MEDIA_TARGET_CONFLICT"),
 					[]string{"MEDIA_TARGET_CONFLICT"}, nil
 			default:
-				if err := os.Remove(candidate.PartialPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-					warnings = append(warnings, "MEDIA_DUPLICATE_CLEANUP_FAILED")
+				if !processor.recovering {
+					if err := os.Remove(candidate.PartialPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+						warnings = append(warnings, "MEDIA_DUPLICATE_CLEANUP_FAILED")
+					}
 				}
 			}
 		}
@@ -164,8 +170,10 @@ func (processor mediaSegmentProcessor) finalize(
 					[]string{"MEDIA_TARGET_CONFLICT"}, nil
 			}
 			status = MediaSegmentRecovered
-			if err := os.Remove(candidate.PartialPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				warnings = append(warnings, "MEDIA_DUPLICATE_CLEANUP_FAILED")
+			if !processor.recovering {
+				if err := os.Remove(candidate.PartialPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					warnings = append(warnings, "MEDIA_DUPLICATE_CLEANUP_FAILED")
+				}
 			}
 			finalSize, finalDigest, hashErr := stableMediaFileEvidence(ctx, candidate.FinalPath)
 			if hashErr != nil {

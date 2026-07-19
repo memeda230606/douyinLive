@@ -2,6 +2,8 @@ package capture
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +11,12 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -25,11 +32,119 @@ var (
 
 const managedProcessTerminateExitCode uint32 = 1
 
+const (
+	recorderAttemptJobNamePrefix = `Global\DouyinLive.Recorder.v1.`
+	recorderJobNamespaceBytes    = 16
+)
+
+type RecorderProcessRecoveryStatus string
+
+const (
+	RecorderProcessRecoveryClean      RecorderProcessRecoveryStatus = "clean"
+	RecorderProcessRecoveryTerminated RecorderProcessRecoveryStatus = "terminated"
+	RecorderProcessRecoveryFailed     RecorderProcessRecoveryStatus = "failed"
+
+	RecorderProcessRecoveryContextErrorCode        = "PROCESS_RECOVERY_CONTEXT_INVALID"
+	RecorderProcessRecoveryInterruptedErrorCode    = "PROCESS_RECOVERY_INTERRUPTED"
+	RecorderProcessRecoveryInvalidAttemptErrorCode = "PROCESS_RECOVERY_ATTEMPT_INVALID"
+	RecorderProcessRecoveryOpenErrorCode           = "PROCESS_RECOVERY_OPEN_FAILED"
+	RecorderProcessRecoveryQueryErrorCode          = "PROCESS_RECOVERY_QUERY_FAILED"
+	RecorderProcessRecoveryTerminateErrorCode      = "PROCESS_RECOVERY_TERMINATE_FAILED"
+	RecorderProcessRecoveryIncompleteErrorCode     = "PROCESS_RECOVERY_TERMINATION_INCOMPLETE"
+	RecorderProcessRecoveryCloseErrorCode          = "PROCESS_RECOVERY_CLOSE_FAILED"
+)
+
+var (
+	errRecorderProcessRecoveryContext        = errors.New(RecorderProcessRecoveryContextErrorCode)
+	errRecorderProcessRecoveryInterrupted    = errors.New(RecorderProcessRecoveryInterruptedErrorCode)
+	errRecorderProcessRecoveryInvalidAttempt = errors.New(RecorderProcessRecoveryInvalidAttemptErrorCode)
+	errRecorderProcessRecoveryOpen           = errors.New(RecorderProcessRecoveryOpenErrorCode)
+	errRecorderProcessRecoveryQuery          = errors.New(RecorderProcessRecoveryQueryErrorCode)
+	errRecorderProcessRecoveryTerminate      = errors.New(RecorderProcessRecoveryTerminateErrorCode)
+	errRecorderProcessRecoveryIncomplete     = errors.New(RecorderProcessRecoveryIncompleteErrorCode)
+	errRecorderProcessRecoveryClose          = errors.New(RecorderProcessRecoveryCloseErrorCode)
+)
+
+// RecorderProcessRecoveryResult deliberately carries no process ID,
+// command line, filesystem path, stream URL, or native error text.
+type RecorderProcessRecoveryResult struct {
+	Found      bool                          `json:"found"`
+	Terminated bool                          `json:"terminated"`
+	Status     RecorderProcessRecoveryStatus `json:"status"`
+	ErrorCode  string                        `json:"errorCode,omitempty"`
+}
+
+// inspectRecorderAttemptProcess checks only the Job Object derived from the
+// supplied UUIDv7 attempt ID. It never enumerates processes or matches a PID.
+func inspectRecorderAttemptProcess(
+	ctx context.Context,
+	jobNamespace string,
+	attemptID string,
+) (RecorderProcessRecoveryResult, error) {
+	if ctx == nil {
+		return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryContextErrorCode, errRecorderProcessRecoveryContext)
+	}
+	if ctx.Err() != nil {
+		return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryInterruptedErrorCode, errRecorderProcessRecoveryInterrupted)
+	}
+	jobName, valid := recorderAttemptJobName(jobNamespace, attemptID)
+	if !valid {
+		return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryInvalidAttemptErrorCode, errRecorderProcessRecoveryInvalidAttempt)
+	}
+	return recoverPlatformRecorderAttemptProcess(ctx, jobName)
+}
+
+func recorderJobNamespace(root string) (string, bool) {
+	canonicalRoot, err := canonicalMediaRoot(root)
+	if err != nil {
+		return "", false
+	}
+	canonicalRoot = filepath.ToSlash(filepath.Clean(canonicalRoot))
+	if runtime.GOOS == "windows" {
+		canonicalRoot = strings.ToLower(canonicalRoot)
+	}
+	digest := sha256.Sum256([]byte("douyinlive-recorder-job-v1\x00" + canonicalRoot))
+	return hex.EncodeToString(digest[:recorderJobNamespaceBytes]), true
+}
+
+func validRecorderJobNamespace(value string) bool {
+	if value == "" || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == recorderJobNamespaceBytes
+}
+
+func recorderAttemptJobName(jobNamespace, attemptID string) (string, bool) {
+	if !validRecorderJobNamespace(jobNamespace) {
+		return "", false
+	}
+	parsed, err := uuid.Parse(attemptID)
+	if err != nil || parsed.Version() != 7 {
+		return "", false
+	}
+	return recorderAttemptJobNamePrefix + jobNamespace + "." + parsed.String(), true
+}
+
+func recorderProcessRecoveryFailure(
+	found bool,
+	terminated bool,
+	errorCode string,
+	stableError error,
+) (RecorderProcessRecoveryResult, error) {
+	return RecorderProcessRecoveryResult{
+		Found: found, Terminated: terminated,
+		Status: RecorderProcessRecoveryFailed, ErrorCode: errorCode,
+	}, stableError
+}
+
 type processConfig struct {
-	Path string
-	Args []string
-	Dir  string
-	Env  []string
+	Path                 string
+	Args                 []string
+	Dir                  string
+	Env                  []string
+	RecorderJobNamespace string
+	RecorderAttemptID    string
 }
 
 func (c processConfig) String() string {
@@ -135,7 +250,7 @@ type processJob interface {
 
 type processDependencies struct {
 	newCommand func(context.Context, processConfig) processCommand
-	newJob     func() (processJob, error)
+	newJob     func(string, string) (processJob, error)
 }
 
 type execProcessCommand struct {
@@ -228,6 +343,17 @@ func startManagedProcessWithDependencies(callerCtx context.Context, config proce
 	if callerCtx == nil || config.Path == "" || dependencies.newCommand == nil || dependencies.newJob == nil {
 		return nil, processStreams{}, errManagedProcessConfiguration
 	}
+	if config.RecorderAttemptID == "" {
+		if config.RecorderJobNamespace != "" {
+			return nil, processStreams{}, errManagedProcessConfiguration
+		}
+	} else {
+		if _, valid := recorderAttemptJobName(
+			config.RecorderJobNamespace, config.RecorderAttemptID,
+		); !valid {
+			return nil, processStreams{}, errManagedProcessConfiguration
+		}
+	}
 	if err := callerCtx.Err(); err != nil {
 		return nil, processStreams{}, err
 	}
@@ -264,7 +390,9 @@ func startManagedProcessWithDependencies(callerCtx context.Context, config proce
 	trackedStdout := newTrackedProcessReader(stdout)
 	trackedStderr := newTrackedProcessReader(stderr)
 
-	job, err := dependencies.newJob()
+	job, err := dependencies.newJob(
+		config.RecorderJobNamespace, config.RecorderAttemptID,
+	)
 	if err != nil || job == nil {
 		cleanupErr := closeProcessPipes(stdin, trackedStdout, trackedStderr)
 		lifecycleCancel()

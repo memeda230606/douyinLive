@@ -82,6 +82,7 @@ type Application struct {
 	credentials         *credentials.FileStore
 	logFile             *diagnostics.FileLogger
 	logger              *slog.Logger
+	instanceLease       applicationInstanceLease
 	shutdown            *applicationShutdownState
 	// beforeInfrastructureCommit is a package-private test barrier. Production
 	// leaves it nil; it must never perform application work.
@@ -90,6 +91,10 @@ type Application struct {
 	// it nil and uses capture.NewFFmpegRecorderFactory.
 	newRecorderFactory func(context.Context, capture.FFmpegRecorderFactoryOptions) (
 		capture.RecorderFactory, capture.FFmpegDependencyInfo, error)
+	// recoverStartupSessions is a package-private dependency seam. Production
+	// leaves it nil and uses capture.RecoverStartupSessions.
+	recoverStartupSessions func(context.Context, capture.StartupRecoveryOptions) (
+		capture.StartupRecoveryReport, error)
 	// beforeShutdownCleanup is a package-private test barrier. Production leaves it nil.
 	beforeShutdownCleanup func()
 }
@@ -133,6 +138,7 @@ type applicationCleanup struct {
 	logFile *diagnostics.FileLogger
 	logger  *slog.Logger
 	hook    func()
+	lease   applicationInstanceLease
 }
 
 // Shutdown starts one shared cleanup for the current lifecycle generation.
@@ -153,6 +159,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		cleanup := applicationCleanup{
 			cancel: a.cancel, monitor: a.monitor, events: a.events, store: a.store,
 			logFile: a.logFile, logger: a.logger, hook: a.beforeShutdownCleanup,
+			lease: a.instanceLease,
 		}
 		a.store = nil
 		a.rooms = nil
@@ -164,6 +171,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		a.logFile = nil
 		a.logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
 		a.initialized = false
+		a.instanceLease = nil
 		a.state = StateStopping
 		a.dataStatus = DataStatusDTO{}
 		a.shutdown = &applicationShutdownState{done: make(chan struct{})}
@@ -209,7 +217,11 @@ func (a *Application) runShutdown(cleanup applicationCleanup, shutdown *applicat
 	if cleanup.logFile != nil {
 		logErr = cleanup.logFile.Close()
 	}
-	result := errors.Join(monitorErr, eventErr, storeErr, logErr)
+	var leaseErr error
+	if cleanup.lease != nil {
+		leaseErr = cleanup.lease.Close()
+	}
+	result := errors.Join(monitorErr, eventErr, storeErr, logErr, leaseErr)
 	stoppedLifecycle, cancelStoppedLifecycle := context.WithCancel(context.Background())
 	cancelStoppedLifecycle()
 	a.mu.Lock()

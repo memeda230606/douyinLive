@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	dropLedgerVersion  = 1
-	dropLedgerFilename = "drop-ledger.json"
-	maxDropLedgerBytes = 16 << 10
+	dropLedgerVersion           = 1
+	dropLedgerFilename          = "drop-ledger.json"
+	maxDropLedgerBytes          = 16 << 10
+	eventPersistenceGapKind     = "event_persistence"
+	eventDroppedLocalReasonCode = "EVENT_DROPPED_LOCAL"
 )
 
 var (
@@ -274,7 +276,8 @@ func (l *DropLedger) validState(state dropLedgerState) bool {
 func (l *DropLedger) validSnapshotLocked(snapshot DropSnapshot) bool {
 	if snapshot.TotalCount <= 0 || snapshot.Gap.ID != l.gapID ||
 		snapshot.Gap.SessionID != l.sessionID || snapshot.Gap.DedupeKey != l.dedupeKey ||
-		snapshot.Gap.Kind != "event_persistence" || snapshot.Gap.ReasonCode != "EVENT_DROPPED_LOCAL" ||
+		snapshot.Gap.Kind != eventPersistenceGapKind ||
+		snapshot.Gap.ReasonCode != eventDroppedLocalReasonCode ||
 		snapshot.Gap.DetailsJSON != dropCountDetails(snapshot.TotalCount) {
 		return false
 	}
@@ -288,10 +291,11 @@ func (l *DropLedger) snapshotLocked() DropSnapshot {
 	return DropSnapshot{
 		TotalCount: state.TotalCount,
 		Gap: CaptureGap{
-			ID: l.gapID, SessionID: l.sessionID, Kind: "event_persistence",
+			ID: l.gapID, SessionID: l.sessionID, Kind: eventPersistenceGapKind,
 			StartedAt: time.UnixMilli(state.StartedAtMS).UTC(), EndedAt: &endedAt,
 			StartOffsetMS: state.StartOffsetMS, EndOffsetMS: &endOffsetMS,
-			Severity: "error", Recovered: false, ReasonCode: "EVENT_DROPPED_LOCAL",
+			Severity: "error", Recovered: false,
+			ReasonCode:  eventDroppedLocalReasonCode,
 			DetailsJSON: dropCountDetails(state.TotalCount), DedupeKey: l.dedupeKey,
 		},
 	}

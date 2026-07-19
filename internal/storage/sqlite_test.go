@@ -54,7 +54,13 @@ func TestOpenInitializesSchemaAndPragmas(t *testing.T) {
 			t.Fatalf("live_sessions missing column %q", column)
 		}
 	}
-	for _, index := range []string{"idx_live_sessions_active_room", "idx_live_sessions_operation_id", "idx_live_sessions_manifest_dirty"} {
+	for _, index := range []string{
+		"idx_live_sessions_active_room",
+		"idx_live_sessions_operation_id",
+		"idx_live_sessions_manifest_dirty",
+		"idx_live_sessions_recovery_page",
+		"idx_session_media_recovery_page",
+	} {
 		var count int
 		if err := store.Reader().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&count); err != nil {
 			t.Fatalf("query index %q: %v", index, err)
@@ -489,8 +495,8 @@ func TestSchemaV2UpgradePreservesLegacyEventsAndCaptureGaps(t *testing.T) {
 		t.Fatalf("Open() v3 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 4 {
-		t.Fatalf("SchemaVersion() = %d, want 4", got)
+	if got := store.SchemaVersion(); got != 5 {
+		t.Fatalf("SchemaVersion() = %d, want 5", got)
 	}
 
 	var sequence int64
@@ -769,8 +775,8 @@ func TestSchemaV3UpgradeCreatesV4BackupAndMediaObjects(t *testing.T) {
 		t.Fatalf("Open() schema v4 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 4 {
-		t.Fatalf("SchemaVersion() = %d, want 4", got)
+	if got := store.SchemaVersion(); got != 5 {
+		t.Fatalf("SchemaVersion() = %d, want 5", got)
 	}
 	for _, table := range []string{"recording_roots", "session_media", "media_artifacts"} {
 		assertSQLiteObject(t, store.Reader(), "table", table)
@@ -957,6 +963,117 @@ func TestSchemaV4EnforcesMediaRootAndArtifactConstraints(t *testing.T) {
 	) VALUES ('artifact-v4-path-case', 'session-v4', 'segment-v4-2', 'asr_wav',
 		'ARTIFACTS/1.MP4', 'complete', 1, 1)`); err == nil {
 		t.Fatal("case-aliased artifact path succeeded")
+	}
+}
+
+func TestSchemaV4UpgradeCreatesV5RecoveryIndexesAndBackup(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	database, err := sql.Open("sqlite", sqliteDSN(layout.Database, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	database.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(
+		ctx, database, schemaMigrations[:4], time.Unix(1_700_000_000, 0),
+	); err != nil {
+		database.Close()
+		t.Fatalf("apply schema v4: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close schema v4 database: %v", err)
+	}
+
+	upgradeAt := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	store, err := Open(ctx, layout, OpenOptions{
+		Now: upgradeAt, CreateBackups: true,
+	})
+	if err != nil {
+		t.Fatalf("Open() schema v5 upgrade error = %v", err)
+	}
+	defer store.Close()
+	if got := store.SchemaVersion(); got != 5 {
+		t.Fatalf("SchemaVersion() = %d, want 5", got)
+	}
+	for _, index := range []string{
+		"idx_live_sessions_recovery_page",
+		"idx_session_media_recovery_page",
+	} {
+		assertSQLiteObject(t, store.Reader(), "index", index)
+	}
+
+	backups, err := filepath.Glob(filepath.Join(layout.BackupsDir, "app-v4-*.db"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("v4 backup files = (%v, %v), want one", backups, err)
+	}
+	backup, err := sql.Open("sqlite", sqliteDSN(backups[0], true))
+	if err != nil {
+		t.Fatalf("open v4 backup: %v", err)
+	}
+	defer backup.Close()
+	version, err := currentSchemaVersion(ctx, backup)
+	if err != nil || version != 4 {
+		t.Fatalf("backup schema version = (%d, %v), want (4, nil)", version, err)
+	}
+	for _, index := range []string{
+		"idx_live_sessions_recovery_page",
+		"idx_session_media_recovery_page",
+	} {
+		var count int
+		if err := backup.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+			index,
+		).Scan(&count); err != nil {
+			t.Fatalf("inspect v4 backup index %q: %v", index, err)
+		}
+		if count != 0 {
+			t.Fatalf("v4 backup unexpectedly contains index %q", index)
+		}
+	}
+}
+
+func TestSchemaV5FailureRollsBackIndexesAndVersion(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v5-rollback.db")
+	database, err := sql.Open("sqlite", sqliteDSN(path, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(
+		ctx, database, schemaMigrations[:4], time.Now(),
+	); err != nil {
+		t.Fatalf("apply schema v4: %v", err)
+	}
+	broken := schemaMigrations[4]
+	broken.Statements = []string{broken.Statements[0], "THIS IS NOT SQL"}
+	if _, err := applyMigrationSet(
+		ctx, database, []migration{broken}, time.Now(),
+	); err == nil {
+		t.Fatal("broken schema v5 migration succeeded")
+	}
+	for _, index := range []string{
+		"idx_live_sessions_recovery_page",
+		"idx_session_media_recovery_page",
+	} {
+		var count int
+		if err := database.QueryRow(
+			"SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+			index,
+		).Scan(&count); err != nil {
+			t.Fatalf("inspect rolled-back index %q: %v", index, err)
+		}
+		if count != 0 {
+			t.Fatalf("failed schema v5 migration left index %q behind", index)
+		}
+	}
+	version, err := currentSchemaVersion(ctx, database)
+	if err != nil || version != 4 {
+		t.Fatalf("schema version after rollback = (%d, %v), want (4, nil)", version, err)
 	}
 }
 

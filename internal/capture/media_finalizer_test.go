@@ -1331,6 +1331,63 @@ func TestMediaSegmentProcessorKeepsPublishConflictCorruptAcrossRetries(t *testin
 	}
 }
 
+func TestMediaSegmentProcessorRecoveryPreservesDuplicatePartialEvidence(t *testing.T) {
+	for _, alreadyFinal := range []bool{true, false} {
+		name := "publish_conflict"
+		if alreadyFinal {
+			name = "already_final"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newMediaFinalizerFixture(t, writeSegmentProbeJSON(validSegmentProbeJSON))
+			t.Cleanup(fixture.close)
+			partialContent, err := os.ReadFile(fixture.partialPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			finalName := mediaFinalSegmentName(1, fixture.attempt.StartedAt)
+			finalPath := filepath.Join(fixture.sessionDirectory, "media", finalName)
+			if err := os.WriteFile(finalPath, partialContent, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			candidate := mediaCandidate{
+				Attempt: fixture.attempt, Sequence: 1, AttemptSequence: 1,
+				WallStartedAt: fixture.attempt.StartedAt,
+				SourceRelativePath: fixture.session.DataPath + "/media/.attempt-" + fixture.attempt.ID + "/" +
+					mediaAttemptSegmentName(1, fixture.attempt),
+				FinalRelativePath: fixture.session.DataPath + "/media/" + finalName,
+				PartialPath:       fixture.partialPath,
+				FinalPath:         finalPath,
+				AlreadyFinal:      alreadyFinal,
+			}
+			processor := mediaSegmentProcessor{
+				prober: fixture.prober,
+				newID: func() (string, error) {
+					return newV7(t), nil
+				},
+				recovering: true,
+			}
+			segment, warnings, err := processor.finalize(context.Background(), candidate, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if segment.Status != MediaSegmentRecovered || containsMediaWarning(warnings, "MEDIA_TARGET_CONFLICT") {
+				t.Fatalf("unexpected recovery result: segment=%#v warnings=%v", segment, warnings)
+			}
+			preservedPartial, err := os.ReadFile(fixture.partialPath)
+			if err != nil {
+				t.Fatalf("recovery removed partial evidence: %v", err)
+			}
+			preservedFinal, err := os.ReadFile(finalPath)
+			if err != nil {
+				t.Fatalf("recovery removed final evidence: %v", err)
+			}
+			if string(preservedPartial) != string(partialContent) || string(preservedFinal) != string(partialContent) {
+				t.Fatalf("recovery changed evidence: partial=%q final=%q", preservedPartial, preservedFinal)
+			}
+		})
+	}
+}
+
 func TestSQLiteSessionMediaFinalizerRejectsExternalRootDriftBeforeMutation(t *testing.T) {
 	probeRun := writeSegmentProbeJSON(validSegmentProbeJSON)
 	var probeCalls atomic.Int32

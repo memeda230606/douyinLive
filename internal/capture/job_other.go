@@ -2,7 +2,10 @@
 
 package capture
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 type portableProcessJob struct {
 	mu      sync.Mutex
@@ -18,8 +21,27 @@ func (c *execProcessCommand) resume() error {
 	return nil
 }
 
-func newPlatformProcessJob() (processJob, error) {
+func newPlatformProcessJob(jobNamespace, attemptID string) (processJob, error) {
+	if attemptID == "" {
+		if jobNamespace != "" {
+			return nil, errManagedProcessConfiguration
+		}
+	} else {
+		if _, valid := recorderAttemptJobName(jobNamespace, attemptID); !valid {
+			return nil, errManagedProcessConfiguration
+		}
+	}
 	return &portableProcessJob{}, nil
+}
+
+func recoverPlatformRecorderAttemptProcess(ctx context.Context, _ string) (RecorderProcessRecoveryResult, error) {
+	if ctx == nil {
+		return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryContextErrorCode, errRecorderProcessRecoveryContext)
+	}
+	if ctx.Err() != nil {
+		return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryInterruptedErrorCode, errRecorderProcessRecoveryInterrupted)
+	}
+	return recorderProcessRecoveryFailure(false, false, RecorderProcessRecoveryOpenErrorCode, errRecorderProcessRecoveryOpen)
 }
 
 func (j *portableProcessJob) assign(command processCommand) error {

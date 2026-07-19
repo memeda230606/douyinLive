@@ -26,7 +26,10 @@ const (
 
 const captureManifestHealthLogSyncFailedErrorCode = "CAPTURE_MANIFEST_HEALTH_LOG_SYNC_FAILED"
 
-var ErrInfrastructureSuperseded = errors.New("application infrastructure initialization was superseded")
+var (
+	ErrInfrastructureSuperseded = errors.New("application infrastructure initialization was superseded")
+	ErrInfrastructureCleanup    = errors.New("APPLICATION_INFRASTRUCTURE_CLEANUP_FAILED")
+)
 
 type InfrastructureOptions struct {
 	DataRoot string
@@ -35,7 +38,7 @@ type InfrastructureOptions struct {
 
 // InitializeInfrastructure prepares the local data root, redacted JSONL logs,
 // and the migrated SQLite store before the Wails window is created.
-func (a *Application) InitializeInfrastructure(ctx context.Context, options InfrastructureOptions) error {
+func (a *Application) InitializeInfrastructure(ctx context.Context, options InfrastructureOptions) (resultErr error) {
 	if ctx == nil {
 		return errors.New("initialize infrastructure: context is nil")
 	}
@@ -50,6 +53,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	statusPublisher := a.roomStatusPublisher
 	commitHook := a.beforeInfrastructureCommit
 	recorderFactoryBuilder := a.newRecorderFactory
+	startupRecoveryRunner := a.recoverStartupSessions
 	a.mu.RUnlock()
 	if alreadyInitialized {
 		return errors.New("application infrastructure is already initialized")
@@ -65,6 +69,17 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	if err != nil {
 		return fmt.Errorf("prepare application data layout: %w", err)
 	}
+	instanceLease, err := acquireApplicationInstanceLease(layout.Root)
+	if err != nil {
+		return fmt.Errorf("acquire application instance lease: %w", err)
+	}
+	leaseTransferred := false
+	defer func() {
+		if !leaseTransferred {
+			resultErr = errors.Join(resultErr, instanceLease.Close())
+		}
+	}()
+
 	logFile, err := diagnostics.OpenFileLogger(layout.LogsDir, diagnostics.FileOptions{Now: options.Now})
 	if err != nil {
 		return fmt.Errorf("initialize diagnostics logger: %w", err)
@@ -118,13 +133,6 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = logFile.Close()
 		return fmt.Errorf("initialize capture repository: %w", err)
 	}
-	repairReport, repairErr := captureRepository.RepairManifests(ctx)
-	if repairErr != nil {
-		logger.WarnContext(ctx, "capture manifest startup repair incomplete",
-			"component", "capture", "error_code", capture.ManifestRepairIncompleteErrorCode,
-			"correlation_id", "startup", "scanned", repairReport.Scanned,
-			"repaired", repairReport.Repaired, "failed", repairReport.Failed)
-	}
 	eventWriter, err := eventstore.NewWriter(store.Writer())
 	if err != nil {
 		_ = store.Close()
@@ -140,41 +148,49 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = logFile.Close()
 		return fmt.Errorf("initialize event manager: %w", err)
 	}
-	recoverable, recoveryListErr := captureRepository.ListRecoverable(ctx)
-	if recoveryListErr != nil {
-		logger.WarnContext(ctx, "event spool startup recovery deferred",
-			"component", "eventstore", "error_code", "EVENT_RECOVERY_DEFERRED",
-			"correlation_id", "startup")
-	} else {
-		for _, session := range recoverable {
-			if err := eventManager.RecoverSession(ctx, eventSessionDescriptor(session)); err != nil {
-				logger.WarnContext(ctx, "event spool startup recovery incomplete",
-					"component", "eventstore", "error_code", "EVENT_RECOVERY_INCOMPLETE",
-					"correlation_id", session.ID, "session_id", session.ID)
-			}
-		}
+	repairReport, repairErr := captureRepository.RepairManifests(ctx)
+	if repairErr != nil {
+		logger.WarnContext(ctx, "capture manifest startup repair incomplete",
+			"component", "capture", "error_code", capture.ManifestRepairIncompleteErrorCode,
+			"correlation_id", "startup", "scanned", repairReport.Scanned,
+			"repaired", repairReport.Repaired, "failed", repairReport.Failed)
+	}
+	processRecoverer, err := capture.NewSessionProcessRecoverer(captureRepository)
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("initialize recorder process recovery: %w", err),
+			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+		)
 	}
 	var recorderFactory capture.RecorderFactory
-	if recorderFactoryBuilder == nil {
-		recorderFactoryBuilder = capture.NewFFmpegRecorderFactory
-	}
-	factory, dependencyInfo, discoveryErr := recorderFactoryBuilder(ctx, capture.FFmpegRecorderFactoryOptions{
+	var mediaRecoverer capture.SessionMediaRecoverer
+	var dependencyInfo capture.FFmpegDependencyInfo
+	recorderOptions := capture.FFmpegRecorderFactoryOptions{
 		DataRoot: layout.Root, RecordingRoot: appSettings.RecordingDirectory,
 		BundledDir: recorderBundledDirectory(), Repository: captureRepository,
 		MaxConcurrentRecordings: appSettings.MaxConcurrentRecordings,
-	})
+	}
+	var discoveryErr error
+	if recorderFactoryBuilder == nil {
+		components, err := capture.NewFFmpegRecorderComponents(ctx, recorderOptions)
+		discoveryErr = err
+		recorderFactory = components.RecorderFactory
+		mediaRecoverer = components.MediaRecoverer
+		dependencyInfo = components.DependencyInfo
+	} else {
+		recorderFactory, dependencyInfo, discoveryErr = recorderFactoryBuilder(ctx, recorderOptions)
+	}
 	if ctx.Err() != nil {
 		return errors.Join(
 			ctx.Err(),
 			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
 		)
 	}
-	if discoveryErr != nil || factory == nil {
+	if discoveryErr != nil || recorderFactory == nil {
 		logger.WarnContext(ctx, "recording dependency unavailable",
 			"component", "capture", "error_code", recordingDependencyUnavailableErrorCode,
 			"correlation_id", "startup")
 	} else {
-		recorderFactory = factory
 		logger.InfoContext(ctx, "recording dependency ready",
 			"component", "capture", "error_code", "", "correlation_id", "startup",
 			"ffmpeg_version", dependencyInfo.FFmpeg.Version,
@@ -184,6 +200,70 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 			"ffprobe_build_summary", dependencyInfo.FFprobe.BuildSummary,
 			"ffprobe_sha256", dependencyInfo.FFprobe.SHA256)
 	}
+	if startupRecoveryRunner == nil {
+		startupRecoveryRunner = capture.RecoverStartupSessions
+	}
+	startupRecoveryReport, startupRecoveryErr := startupRecoveryRunner(
+		ctx,
+		capture.StartupRecoveryOptions{
+			Repository:       captureRepository,
+			ProcessRecoverer: processRecoverer,
+			MediaRecoverer:   mediaRecoverer,
+			EventRecoverer: capture.SessionEventRecoveryFunc(func(
+				recoveryCtx context.Context,
+				session capture.LiveSession,
+				minimumCutoff time.Time,
+			) (time.Time, error) {
+				cutoff, recoveryErr := eventManager.RecoverAndCloseSession(
+					recoveryCtx, eventSessionDescriptor(session), minimumCutoff,
+				)
+				return cutoff, startupEventRecoveryError(recoveryErr)
+			}),
+			Reporter: capture.StartupRecoveryReporterFunc(func(event capture.StartupRecoveryEvent) {
+				attributes := []any{
+					"component", "capture", "error_code", event.ErrorCode,
+					"correlation_id", event.SessionID, "session_id", event.SessionID,
+					"room_config_id", event.RoomConfigID, "warning_codes", event.WarningCodes,
+					"cutoff_at", event.CutoffAtMS,
+				}
+				if event.State == capture.StartupRecoverySessionFailed {
+					logger.WarnContext(ctx, "capture startup recovery incomplete", attributes...)
+					return
+				}
+				logger.InfoContext(ctx, "capture startup recovery completed", attributes...)
+			}),
+			Now: func() time.Time { return options.Now },
+		},
+	)
+	if ctx.Err() != nil {
+		return errors.Join(
+			ctx.Err(),
+			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+		)
+	}
+	if fatalRecoveryErr := startupRecoveryFailClosedError(startupRecoveryErr); fatalRecoveryErr != nil {
+		logger.ErrorContext(ctx, "capture startup recovery failed closed",
+			"component", "capture", "error_code", fatalRecoveryErr.Error(),
+			"correlation_id", "startup", "scanned", startupRecoveryReport.Scanned,
+			"recovered", startupRecoveryReport.Recovered, "failed", startupRecoveryReport.Failed,
+			"warnings", startupRecoveryReport.Warnings)
+		return errors.Join(
+			fatalRecoveryErr,
+			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+		)
+	}
+	if startupRecoveryErr != nil {
+		logger.WarnContext(ctx, "capture startup recovery finished with failures",
+			"component", "capture", "error_code", "STARTUP_RECOVERY_INCOMPLETE",
+			"correlation_id", "startup", "scanned", startupRecoveryReport.Scanned,
+			"recovered", startupRecoveryReport.Recovered, "failed", startupRecoveryReport.Failed,
+			"warnings", startupRecoveryReport.Warnings)
+	} else {
+		logger.InfoContext(ctx, "capture startup recovery ready",
+			"component", "capture", "error_code", "", "correlation_id", "startup",
+			"scanned", startupRecoveryReport.Scanned, "recovered", startupRecoveryReport.Recovered,
+			"warnings", startupRecoveryReport.Warnings)
+	}
 	captureCoordinator, err := capture.NewCoordinator(captureRepository, capture.CoordinatorOptions{
 		RecorderFactory: recorderFactory,
 		EventSinkFactory: func(factoryCtx context.Context, session capture.LiveSession, request capture.OpenRequest) (capture.EventSink, error) {
@@ -191,10 +271,10 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		},
 	})
 	if err != nil {
-		_ = eventManager.Shutdown(context.Background())
-		_ = store.Close()
-		_ = logFile.Close()
-		return fmt.Errorf("initialize capture coordinator: %w", err)
+		return errors.Join(
+			fmt.Errorf("initialize capture coordinator: %w", err),
+			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+		)
 	}
 
 	if monitorRoot == nil {
@@ -205,10 +285,10 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		Publisher:   statusPublisher,
 	})
 	if err != nil {
-		_ = eventManager.Shutdown(context.Background())
-		_ = store.Close()
-		_ = logFile.Close()
-		return fmt.Errorf("initialize room monitor manager: %w", err)
+		return errors.Join(
+			fmt.Errorf("initialize room monitor manager: %w", err),
+			cleanupUncommittedInfrastructure(nil, eventManager, store, logFile),
+		)
 	}
 	if err := monitorManager.StartEnabled(ctx); err != nil {
 		return errors.Join(
@@ -247,6 +327,8 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		Mode:          DataModeReadWrite,
 		LoggingReady:  true,
 	}
+	a.instanceLease = instanceLease
+	leaseTransferred = true
 	a.mu.Unlock()
 
 	logger.InfoContext(ctx, "application infrastructure ready",
@@ -257,6 +339,37 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		"journal_mode", "WAL",
 	)
 	return nil
+}
+
+func startupEventRecoveryError(err error) error {
+	if errors.Is(err, eventstore.ErrRecoveryDeferred) {
+		// Do not carry lower-layer causes across the application boundary: startup
+		// recovery only needs the stable retry disposition.
+		return capture.ErrStartupEventRecoveryDeferred
+	}
+	return err
+}
+
+func startupRecoveryFailClosedError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, capture.ErrStartupProcessRecovery):
+		return capture.ErrStartupProcessRecovery
+	case errors.Is(err, capture.ErrStartupEventRecoveryDeferred):
+		return capture.ErrStartupEventRecoveryDeferred
+	case errors.Is(err, capture.ErrStartupRecoveryConfiguration):
+		return capture.ErrStartupRecoveryConfiguration
+	case errors.Is(err, capture.ErrStartupRecoveryIncomplete),
+		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// A component-local context error must never become a best-effort startup.
+		// The caller context is checked before this helper.
+		return capture.ErrStartupRecoveryIncomplete
+	default:
+		// Unknown startup-recovery failures have no proof that every recorder
+		// process was inspected, so the application boundary remains fail-closed.
+		return capture.ErrStartupRecoveryIncomplete
+	}
 }
 
 type manifestHealthLogReporter struct {
@@ -395,5 +508,14 @@ func cleanupUncommittedInfrastructure(monitor *room.MonitorManager, events *even
 	if logFile != nil {
 		logErr = logFile.Close()
 	}
-	return errors.Join(monitorErr, eventErr, storeErr, logErr)
+	return stableInfrastructureCleanupError(monitorErr, eventErr, storeErr, logErr)
+}
+
+func stableInfrastructureCleanupError(values ...error) error {
+	for _, value := range values {
+		if value != nil {
+			return ErrInfrastructureCleanup
+		}
+	}
+	return nil
 }

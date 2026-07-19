@@ -94,9 +94,14 @@ func TestP3AcceptanceRealFFmpegRecorderWritesReadablePartialAndStops(t *testing.
 	dependencies := defaultRecorderDependencies()
 	dependencies.startupWindow = 5 * time.Second
 	var releases atomic.Int32
+	processNamespace, valid := recorderJobNamespace(workingDirectory)
+	if !valid {
+		t.Fatal("derive recorder Job namespace")
+	}
 	recorder, err := newFFmpegRecorder(testCtx, source, recorderOptions{
 		tools: tools, mediaDirectory: mediaDirectory,
-		segmentSeconds: defaultRecorderSegmentSeconds,
+		processNamespace: processNamespace,
+		segmentSeconds:   defaultRecorderSegmentSeconds,
 	}, dependencies, func() { releases.Add(1) })
 	if err != nil {
 		t.Fatalf("start real FFmpeg recorder: %v", err)

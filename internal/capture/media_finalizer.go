@@ -27,6 +27,7 @@ type sessionMediaFinalizerOptions struct {
 	ProxyCapacity chan struct{}
 	Prober        *ffprobeSegmentProber
 	Dependencies  mediaFinalizerDependencies
+	Recovering    bool
 }
 
 func (sessionMediaFinalizerOptions) String() string {
@@ -98,6 +99,7 @@ type sqliteSessionMediaFinalizer struct {
 	proxyCapacity    chan struct{}
 	prober           *ffprobeSegmentProber
 	dependencies     mediaFinalizerDependencies
+	recovering       bool
 }
 
 func newSQLiteSessionMediaFinalizer(
@@ -153,7 +155,8 @@ func newSQLiteSessionMediaFinalizer(
 		rootID = &value
 	}
 	return &sqliteSessionMediaFinalizer{
-		repository: options.Repository, tools: options.Tools, root: root, rootID: rootID,
+		repository: options.Repository, tools: options.Tools, root: root,
+		rootID: rootID, recovering: options.Recovering,
 		sessionDirectory: sessionDirectory, sessionID: options.SessionID,
 		relativePath: options.RelativePath, proxyCapacity: proxyCapacity,
 		prober: prober, dependencies: normalizeMediaFinalizerDependencies(options.Dependencies),
@@ -287,9 +290,10 @@ func (finalizer *sqliteSessionMediaFinalizer) Finalize(
 	processedSegments := make([]MediaSegment, 0, len(candidates)+len(current.Segments))
 	matchedSegmentIDs := make(map[string]struct{}, len(candidates))
 	processor := mediaSegmentProcessor{
-		prober: finalizer.prober,
-		newID:  finalizer.dependencies.newID,
-		verify: finalizer.verifyBoundRoot,
+		prober:     finalizer.prober,
+		newID:      finalizer.dependencies.newID,
+		verify:     finalizer.verifyBoundRoot,
+		recovering: finalizer.recovering,
 	}
 	for _, candidate := range candidates {
 		existing, findErr := findExistingMediaSegment(current.Segments, candidate)

@@ -17,6 +17,11 @@ import (
 	"time"
 )
 
+const (
+	managedProcessTestAttemptID = "0198f6e4-4d00-7000-8000-000000000001"
+	managedProcessTestNamespace = "0123456789abcdef0123456789abcdef"
+)
+
 type fakeProcessPipe struct {
 	mu       sync.Mutex
 	data     []byte
@@ -206,7 +211,7 @@ func fakeProcessDependencies(command *fakeProcessCommand, job *fakeProcessJob) p
 			command.lifecycle = lifecycle
 			return command
 		},
-		newJob: func() (processJob, error) { return job, nil },
+		newJob: func(string, string) (processJob, error) { return job, nil },
 	}
 }
 
@@ -247,16 +252,18 @@ func overrideOutputDependencies(command *outputOverrideProcessCommand, job *fake
 			command.lifecycle = lifecycle
 			return command
 		},
-		newJob: func() (processJob, error) { return job, nil },
+		newJob: func(string, string) (processJob, error) { return job, nil },
 	}
 }
 
 func TestProcessConfigFormattingRedactsExecutableArgumentsAndEnvironment(t *testing.T) {
 	config := processConfig{
-		Path: `C:\private\ffmpeg.exe`,
-		Dir:  `D:\private\recordings`,
-		Args: []string{"https://example.invalid/live?token=argument-secret", "-progress"},
-		Env:  []string{"ACCESS_TOKEN=environment-secret", "PRIVATE_PATH=C:\\private"},
+		Path:                 `C:\private\ffmpeg.exe`,
+		Dir:                  `D:\private\recordings`,
+		Args:                 []string{"https://example.invalid/live?token=argument-secret", "-progress"},
+		Env:                  []string{"ACCESS_TOKEN=environment-secret", "PRIVATE_PATH=C:\\private"},
+		RecorderJobNamespace: "namespace-secret",
+		RecorderAttemptID:    "https://example.invalid/?token=attempt-secret",
 	}
 	formatted := []string{fmt.Sprint(config), fmt.Sprintf("%+v", config), fmt.Sprintf("%#v", config)}
 	for _, value := range formatted {
@@ -301,12 +308,15 @@ func TestManagedProcessCreatesJobBeforeStartAndAssignsAfterStart(t *testing.T) {
 	var orderMu sync.Mutex
 	command.order, command.orderMu = &order, &orderMu
 	job.order, job.orderMu = &order, &orderMu
+	var createdNamespace, createdAttemptID string
 	dependencies := processDependencies{
 		newCommand: func(lifecycle context.Context, _ processConfig) processCommand {
 			command.lifecycle = lifecycle
 			return command
 		},
-		newJob: func() (processJob, error) {
+		newJob: func(jobNamespace, attemptID string) (processJob, error) {
+			createdNamespace = jobNamespace
+			createdAttemptID = attemptID
 			orderMu.Lock()
 			order = append(order, "create_set_job")
 			orderMu.Unlock()
@@ -314,7 +324,10 @@ func TestManagedProcessCreatesJobBeforeStartAndAssignsAfterStart(t *testing.T) {
 		},
 	}
 	process, streams, err := startManagedProcessWithDependencies(
-		context.Background(), processConfig{Path: "ffmpeg"}, dependencies,
+		context.Background(), processConfig{
+			Path: "ffmpeg", RecorderJobNamespace: managedProcessTestNamespace,
+			RecorderAttemptID: managedProcessTestAttemptID,
+		}, dependencies,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +343,9 @@ func TestManagedProcessCreatesJobBeforeStartAndAssignsAfterStart(t *testing.T) {
 	if !containsOrderedSubsequence(gotOrder, []string{"create_set_job", "configure", "start", "assign", "resume"}) {
 		t.Fatalf("process setup order = %v", gotOrder)
 	}
+	if createdNamespace != managedProcessTestNamespace || createdAttemptID != managedProcessTestAttemptID {
+		t.Fatalf("created Job identity = namespace:%q attempt:%q", createdNamespace, createdAttemptID)
+	}
 	closeTestProcessStreams(t, streams)
 	select {
 	case <-command.waitEntered:
@@ -339,6 +355,61 @@ func TestManagedProcessCreatesJobBeforeStartAndAssignsAfterStart(t *testing.T) {
 	close(release)
 	if err := process.wait(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestManagedProcessRejectsInvalidRecorderAttemptBeforeSideEffects(t *testing.T) {
+	const secretAttempt = "https://secret.invalid/live?token=private"
+	var commandCalls, jobCalls atomic.Int32
+	dependencies := processDependencies{
+		newCommand: func(context.Context, processConfig) processCommand {
+			commandCalls.Add(1)
+			return newFakeProcessCommand()
+		},
+		newJob: func(string, string) (processJob, error) {
+			jobCalls.Add(1)
+			return &fakeProcessJob{}, nil
+		},
+	}
+	process, streams, err := startManagedProcessWithDependencies(
+		context.Background(),
+		processConfig{Path: "ffmpeg", RecorderAttemptID: secretAttempt},
+		dependencies,
+	)
+	if process != nil || streams.Stdout != nil || streams.Stderr != nil || !errors.Is(err, errManagedProcessConfiguration) {
+		t.Fatalf("invalid attempt result = process:%v streams:%#v err:%v", process, streams, err)
+	}
+	if commandCalls.Load() != 0 || jobCalls.Load() != 0 {
+		t.Fatalf("invalid attempt side effects = command:%d job:%d", commandCalls.Load(), jobCalls.Load())
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "http") {
+		t.Fatalf("invalid attempt leaked detail: %v", err)
+	}
+}
+
+func TestManagedProcessRejectsRecorderAttemptWithoutNamespaceBeforeSideEffects(t *testing.T) {
+	var commandCalls, jobCalls atomic.Int32
+	dependencies := processDependencies{
+		newCommand: func(context.Context, processConfig) processCommand {
+			commandCalls.Add(1)
+			return newFakeProcessCommand()
+		},
+		newJob: func(string, string) (processJob, error) {
+			jobCalls.Add(1)
+			return &fakeProcessJob{}, nil
+		},
+	}
+	process, streams, err := startManagedProcessWithDependencies(
+		context.Background(),
+		processConfig{Path: "ffmpeg", RecorderAttemptID: managedProcessTestAttemptID},
+		dependencies,
+	)
+	if process != nil || streams.Stdout != nil || streams.Stderr != nil ||
+		!errors.Is(err, errManagedProcessConfiguration) {
+		t.Fatalf("missing namespace result = process:%v streams:%#v err:%v", process, streams, err)
+	}
+	if commandCalls.Load() != 0 || jobCalls.Load() != 0 {
+		t.Fatalf("missing namespace side effects = command:%d job:%d", commandCalls.Load(), jobCalls.Load())
 	}
 }
 
@@ -515,7 +586,7 @@ func TestManagedProcessJobCreationFailureDoesNotStartCommand(t *testing.T) {
 			command.lifecycle = lifecycle
 			return command
 		},
-		newJob: func() (processJob, error) { return nil, secret },
+		newJob: func(string, string) (processJob, error) { return nil, secret },
 	}
 	_, _, err := startManagedProcessWithDependencies(context.Background(), processConfig{Path: "ffmpeg"}, dependencies)
 	if !errors.Is(err, errManagedProcessIsolation) || strings.Contains(err.Error(), "sensitive") {
@@ -600,7 +671,7 @@ func TestManagedProcessCallerCancellationBeforeStartHasNoSideEffects(t *testing.
 			commandCalls.Add(1)
 			return newFakeProcessCommand()
 		},
-		newJob: func() (processJob, error) {
+		newJob: func(string, string) (processJob, error) {
 			jobCalls.Add(1)
 			return &fakeProcessJob{}, nil
 		},

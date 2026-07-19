@@ -172,6 +172,8 @@ func (s *recorderTestStarter) start(ctx context.Context, config processConfig) (
 	copyConfig := processConfig{
 		Path: config.Path, Args: append([]string(nil), config.Args...),
 		Dir: config.Dir, Env: append([]string(nil), config.Env...),
+		RecorderAttemptID:    config.RecorderAttemptID,
+		RecorderJobNamespace: config.RecorderJobNamespace,
 	}
 	s.calls = append(s.calls, copyConfig)
 	if index >= len(s.results) {
@@ -209,6 +211,8 @@ func (s *recorderTestStarter) configSnapshot() []processConfig {
 		result[index] = processConfig{
 			Path: config.Path, Args: append([]string(nil), config.Args...),
 			Dir: config.Dir, Env: append([]string(nil), config.Env...),
+			RecorderAttemptID:    config.RecorderAttemptID,
+			RecorderJobNamespace: config.RecorderJobNamespace,
 		}
 	}
 	return result
@@ -216,12 +220,14 @@ func (s *recorderTestStarter) configSnapshot() []processConfig {
 
 func recorderTestOptions(t *testing.T) recorderOptions {
 	t.Helper()
+	mediaDirectory := t.TempDir()
 	return recorderOptions{
 		tools: ffmpegTools{
 			ffmpegPath:  filepath.Join(t.TempDir(), "ffmpeg.exe"),
 			ffprobePath: filepath.Join(t.TempDir(), "ffprobe.exe"),
 		},
-		mediaDirectory: t.TempDir(), segmentSeconds: defaultRecorderSegmentSeconds,
+		mediaDirectory: mediaDirectory, processNamespace: managedProcessTestNamespace,
+		segmentSeconds: defaultRecorderSegmentSeconds,
 	}
 }
 
@@ -395,6 +401,10 @@ func TestRecorderUnexpectedExitEmitsSafeUUIDv7AndStopIsIdempotent(t *testing.T) 
 	parsed, parseErr := uuid.Parse(event.AttemptID)
 	if parseErr != nil || parsed.Version() != 7 {
 		t.Fatalf("attempt ID = %q, want UUIDv7", event.AttemptID)
+	}
+	configs := starter.configSnapshot()
+	if len(configs) != 1 || configs[0].RecorderAttemptID != event.AttemptID {
+		t.Fatalf("managed process attempt correlation = %#v, event = %q", configs, event.AttemptID)
 	}
 	if event.Kind != RecorderEventProcessExited || event.ErrorCode != RecorderProcessExitedErrorCode {
 		t.Fatalf("unexpected event: %#v", event)
@@ -594,6 +604,9 @@ func TestFFmpegRecorderFactoryBoundsLifetimeAndReturnsRedactedDependencyInfo(t *
 	configs := starter.configSnapshot()
 	if len(configs) != 1 || !strings.Contains(recorderInputURL(configs[0]), "/hd.flv") {
 		t.Fatalf("profile quality was not applied: %+v", configs)
+	}
+	if !validRecorderJobNamespace(configs[0].RecorderJobNamespace) {
+		t.Fatal("factory omitted recorder Job namespace")
 	}
 	if !pathWithinRecorderRoot(dataRoot, configs[0].Dir) {
 		t.Fatalf("media directory escaped canonical data root: %q", configs[0].Dir)

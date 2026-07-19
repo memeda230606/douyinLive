@@ -444,6 +444,16 @@ var schemaMigrations = []migration{
 				ON media_artifacts(session_id, lower(relative_path))`,
 		},
 	},
+	{
+		Version: 5,
+		Name:    "startup_recovery_indexes",
+		Statements: []string{
+			"CREATE INDEX idx_live_sessions_recovery_page " +
+				"ON live_sessions(id, created_at) WHERE status IN ('starting', 'recording', 'finalizing')",
+			"CREATE INDEX idx_session_media_recovery_page " +
+				"ON session_media(state, session_id) WHERE state IN ('open', 'finalizing')",
+		},
+	},
 }
 
 const createMigrationTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (

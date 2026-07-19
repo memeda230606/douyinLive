@@ -535,22 +535,24 @@ func (m *MonitorManager) retryDoneFinalization(ctx context.Context, worker *moni
 }
 
 type monitorWorker struct {
-	manager              *MonitorManager
-	ctx                  context.Context
-	cancel               context.CancelFunc
-	done                 chan struct{}
-	wake                 chan struct{}
-	mu                   sync.RWMutex
-	finalizeMu           sync.Mutex
-	finalizeInProgress   bool
-	status               RoomRuntimeStatus
-	active               LiveClient
-	session              capture.Session
-	stopRequested        bool
-	stopReason           capture.FinalizeReason
-	stopOperation        string
-	offlineConfirmations int
-	runErr               error
+	manager                 *MonitorManager
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	done                    chan struct{}
+	wake                    chan struct{}
+	mu                      sync.RWMutex
+	finalizeMu              sync.Mutex
+	finalizeInProgress      bool
+	status                  RoomRuntimeStatus
+	active                  LiveClient
+	session                 capture.Session
+	recoveryWatchCancel     context.CancelFunc
+	recoveryWatchGeneration uint64
+	stopRequested           bool
+	stopReason              capture.FinalizeReason
+	stopOperation           string
+	offlineConfirmations    int
+	runErr                  error
 }
 
 func (w *monitorWorker) run() {
@@ -847,6 +849,7 @@ func (w *monitorWorker) finalizeActiveWithContext(parent context.Context, reason
 	if terminal {
 		if w.session == session {
 			w.session = nil
+			w.cancelRecoveryWatchLocked()
 		}
 		// A stop intent that linearized after this terminal finalization no
 		// longer needs a capture retry; the terminal operation already won.
@@ -1000,14 +1003,134 @@ func (w *monitorWorker) updateStatusLocked(state RuntimeState, operationID, erro
 func (w *monitorWorker) installSession(operationID string, session capture.Session) bool {
 	snapshot := session.Snapshot()
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.stopRequested || w.status.OperationID != operationID {
+		w.mu.Unlock()
 		return false
 	}
+	w.cancelRecoveryWatchLocked()
+	w.recoveryWatchGeneration++
+	generation := w.recoveryWatchGeneration
 	w.session = session
 	w.status.SessionID = snapshot.ID
 	w.status.RecordingStatus = snapshot.RecordingStatus
+	eventSource, watchesRecovery := session.(capture.SessionRecoveryEventSource)
+	var watchCtx context.Context
+	if watchesRecovery {
+		watchCtx, w.recoveryWatchCancel = context.WithCancel(w.ctx)
+	}
+	w.mu.Unlock()
+	if watchesRecovery {
+		go w.watchSessionRecovery(watchCtx, generation, session, snapshot.ID, eventSource)
+	}
 	return true
+}
+
+func (w *monitorWorker) cancelRecoveryWatchLocked() {
+	if w.recoveryWatchCancel != nil {
+		w.recoveryWatchCancel()
+		w.recoveryWatchCancel = nil
+	}
+}
+
+func (w *monitorWorker) watchSessionRecovery(
+	ctx context.Context,
+	generation uint64,
+	session capture.Session,
+	sessionID string,
+	source capture.SessionRecoveryEventSource,
+) {
+	events := source.RecoveryEvents()
+	if events == nil {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, open := <-events:
+			if !open {
+				return
+			}
+			w.applySessionRecoveryEvent(generation, session, sessionID, event)
+		}
+	}
+}
+
+func (w *monitorWorker) applySessionRecoveryEvent(
+	generation uint64,
+	session capture.Session,
+	sessionID string,
+	event capture.SessionRecoveryEvent,
+) {
+	if event.SessionID != sessionID || event.OperationID == "" {
+		return
+	}
+	sessionSnapshot := session.Snapshot()
+	if sessionSnapshot.ID != sessionID ||
+		sessionSnapshot.OperationID != event.OperationID {
+		return
+	}
+	w.mu.Lock()
+	if generation != w.recoveryWatchGeneration || w.session != session ||
+		w.finalizeInProgress || w.status.State == RuntimeFinalizing ||
+		w.status.SessionID != sessionID ||
+		w.status.OperationID != event.OperationID {
+		w.mu.Unlock()
+		return
+	}
+	errorCode := safeSessionRecoveryErrorCode(event.ErrorCode)
+	switch event.State {
+	case capture.SessionRecoveryRetryScheduled:
+		w.status.State = RuntimeReconnecting
+		w.status.RecordingStatus = capture.RecordingReconnecting
+		w.status.ErrorCode = errorCode
+		w.status.Message = "录制中断，正在自动重试"
+		w.status.RetryAt = event.RetryAt
+	case capture.SessionRecoveryRecovered:
+		w.status.State = RuntimeRecording
+		w.status.RecordingStatus = capture.RecordingActive
+		w.status.ErrorCode = ""
+		w.status.Message = "录制已恢复"
+		w.status.RetryAt = 0
+	case capture.SessionRecoveryExhausted:
+		w.status.State = RuntimeLive
+		w.status.RecordingStatus = capture.RecordingUnavailable
+		w.status.ErrorCode = errorCode
+		w.status.Message = "录制重试已耗尽，直播消息仍在采集"
+		w.status.RetryAt = 0
+	default:
+		w.mu.Unlock()
+		return
+	}
+	w.status.ChangedAt = w.nowMillis()
+	status := w.status
+	w.mu.Unlock()
+	if event.State == capture.SessionRecoveryRecovered {
+		w.manager.logger.Info("录制异常恢复完成",
+			"component", "room", "error_code", "",
+			"room_config_id", status.RoomID, "session_id", status.SessionID)
+	} else {
+		w.manager.logger.Warn("录制异常恢复状态变化",
+			"component", "room", "error_code", status.ErrorCode,
+			"room_config_id", status.RoomID, "session_id", status.SessionID)
+	}
+	w.manager.publish(status)
+}
+
+func safeSessionRecoveryErrorCode(code string) string {
+	switch code {
+	case capture.RecorderProcessExitedErrorCode,
+		capture.RecorderStreamExpiredErrorCode,
+		capture.RecorderNetworkFailureErrorCode,
+		capture.RecorderUnsupportedInputErrorCode,
+		capture.RecorderLocalResourceErrorCode,
+		capture.RecorderDependencyFailureErrorCode,
+		capture.RecorderRecoveryRetryExhaustedErrorCode,
+		capture.RecorderRecoveryPersistenceErrorCode:
+		return code
+	default:
+		return capture.RecorderProcessExitedErrorCode
+	}
 }
 
 func (w *monitorWorker) refreshConfig(config RoomConfig) {

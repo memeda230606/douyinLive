@@ -92,6 +92,12 @@ type FFmpegRecorderFactoryOptions struct {
 	Repository              *SQLiteRepository
 }
 
+type FFmpegRecorderComponents struct {
+	RecorderFactory RecorderFactory
+	MediaRecoverer  SessionMediaRecoverer
+	DependencyInfo  FFmpegDependencyInfo
+}
+
 // String deliberately omits dependency and data-root paths as well as raw
 // preference values.
 func (FFmpegRecorderFactoryOptions) String() string {
@@ -117,8 +123,20 @@ func NewFFmpegRecorderFactory(
 	ctx context.Context,
 	options FFmpegRecorderFactoryOptions,
 ) (RecorderFactory, FFmpegDependencyInfo, error) {
+	components, err := NewFFmpegRecorderComponents(ctx, options)
+	return components.RecorderFactory, components.DependencyInfo, err
+}
+
+// NewFFmpegRecorderComponents discovers the trusted FFmpeg pair once and
+// shares that immutable dependency identity with live recording and startup
+// media recovery.
+func NewFFmpegRecorderComponents(
+	ctx context.Context,
+	options FFmpegRecorderFactoryOptions,
+) (FFmpegRecorderComponents, error) {
+	var components FFmpegRecorderComponents
 	if err := validateRecorderFactoryOptions(ctx, options); err != nil {
-		return nil, FFmpegDependencyInfo{}, err
+		return components, err
 	}
 	tools, err := discoverFFmpeg(ctx, ffmpegDiscoveryOptions{
 		ExplicitFFmpeg: options.ExplicitFFmpeg,
@@ -126,9 +144,24 @@ func NewFFmpegRecorderFactory(
 		BundledDir:     options.BundledDir,
 	})
 	if err != nil {
-		return nil, FFmpegDependencyInfo{}, err
+		return components, err
 	}
-	return newFFmpegRecorderFactoryWithTools(options, tools, defaultRecorderDependencies())
+	factory, info, err := newFFmpegRecorderFactoryWithTools(
+		options, tools, defaultRecorderDependencies(),
+	)
+	if err != nil {
+		return components, err
+	}
+	components.RecorderFactory = factory
+	components.DependencyInfo = info
+	if options.Repository != nil {
+		recoverer, recoveryErr := newSQLiteSessionMediaRecoverer(options, tools)
+		if recoveryErr != nil {
+			return FFmpegRecorderComponents{}, recoveryErr
+		}
+		components.MediaRecoverer = recoverer
+	}
+	return components, nil
 }
 
 type recorderProcess interface {
@@ -269,6 +302,16 @@ func newFFmpegRecorderFactoryWithTools(
 		maximum = defaultRecorderConcurrency
 	}
 	dataRoot := filepath.Clean(options.DataRoot)
+	processNamespace, valid := recorderJobNamespace(dataRoot)
+	if !valid {
+		return nil, FFmpegDependencyInfo{}, ErrRecorderConfiguration
+	}
+	if options.Repository != nil {
+		repositoryNamespace, repositoryValid := recorderJobNamespace(options.Repository.dataRoot)
+		if !repositoryValid || repositoryNamespace != processNamespace {
+			return nil, FFmpegDependencyInfo{}, ErrRecorderConfiguration
+		}
+	}
 	recordingRoot := options.RecordingRoot
 	if recordingRoot == "" {
 		recordingRoot = filepath.Join(dataRoot, "rooms")
@@ -337,7 +380,8 @@ func newFFmpegRecorderFactoryWithTools(
 		preference.QualityKey = request.Profile.Quality
 		recorder, recorderErr := newFFmpegRecorder(ctx, source, recorderOptions{
 			tools: tools, mediaDirectory: mediaDirectory,
-			preference: preference, segmentSeconds: segmentSeconds,
+			processNamespace: processNamespace,
+			preference:       preference, segmentSeconds: segmentSeconds,
 			mediaFinalizer: mediaFinalizer, attemptJournal: attemptJournal,
 		}, normalizedDependencies, release)
 		if recorderErr != nil {
@@ -467,12 +511,13 @@ func recorderSegmentSeconds(minutes int) (int, error) {
 }
 
 type recorderOptions struct {
-	tools          ffmpegTools
-	mediaDirectory string
-	preference     douyinLive.StreamSelectionPreference
-	segmentSeconds int
-	mediaFinalizer SessionMediaFinalizer
-	attemptJournal SessionMediaAttemptJournal
+	tools            ffmpegTools
+	mediaDirectory   string
+	processNamespace string
+	preference       douyinLive.StreamSelectionPreference
+	segmentSeconds   int
+	mediaFinalizer   SessionMediaFinalizer
+	attemptJournal   SessionMediaAttemptJournal
 }
 
 func (recorderOptions) String() string {
@@ -544,6 +589,7 @@ func newFFmpegRecorder(
 ) (*FFmpegRecorder, error) {
 	if ctx == nil || source == nil || options.tools.ffmpegPath == "" ||
 		options.mediaDirectory == "" || !filepath.IsAbs(options.mediaDirectory) ||
+		!validRecorderJobNamespace(options.processNamespace) ||
 		options.segmentSeconds < 300 || options.segmentSeconds > 1800 ||
 		(options.mediaFinalizer == nil) != (options.attemptJournal == nil) {
 		if releaseCapacity != nil {
@@ -1008,6 +1054,8 @@ func (r *FFmpegRecorder) startCandidate(ctx context.Context, candidate douyinLiv
 	}
 	process, streams, err := r.dependencies.startProcess(ctx, processConfig{
 		Path: r.options.tools.ffmpegPath, Args: args, Dir: attemptDirectory,
+		RecorderJobNamespace: r.options.processNamespace,
+		RecorderAttemptID:    attemptID,
 	})
 	if err != nil || process == nil {
 		if streams.Stdout != nil {

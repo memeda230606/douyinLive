@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,13 +38,18 @@ type windowsJobProbe struct {
 	jobHandle  windows.Handle
 	procHandle windows.Handle
 	exitCode   uint32
+	jobName    string
 }
 
 func (p *windowsJobProbe) ops() windowsJobOps {
 	return windowsJobOps{
-		create: func() (windows.Handle, error) {
+		create: func(name string) (windows.Handle, bool, error) {
 			p.createCalls.Add(1)
-			return windows.Handle(100), p.createErr
+			p.jobName = name
+			if p.createErr != nil {
+				return 0, false, p.createErr
+			}
+			return windows.Handle(100), true, p.createErr
 		},
 		setLimits: func(job windows.Handle, limits *windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION) error {
 			p.setCalls.Add(1)
@@ -69,10 +75,80 @@ func (p *windowsJobProbe) ops() windowsJobOps {
 	}
 }
 
+func TestCreateWindowsJobObjectWithProviderClassifiesExpectedLastErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		callErr   error
+		wantFresh bool
+	}{
+		{name: "nil_success", wantFresh: true},
+		{name: "error_success", callErr: syscall.Errno(0), wantFresh: true},
+		{name: "already_exists", callErr: windows.ERROR_ALREADY_EXISTS},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			closeCalls := 0
+			handle, fresh, err := createWindowsJobObjectWithProvider(windowsJobCreateProvider{
+				create: func() (windows.Handle, error) {
+					return windows.Handle(91), test.callErr
+				},
+				close: func(windows.Handle) error {
+					closeCalls++
+					return nil
+				},
+			})
+			if err != nil || handle != windows.Handle(91) || fresh != test.wantFresh {
+				t.Fatalf("create result = (%v, %t, %v), want handle 91 fresh %t", handle, fresh, err, test.wantFresh)
+			}
+			if closeCalls != 0 {
+				t.Fatalf("CloseHandle calls = %d, want 0", closeCalls)
+			}
+		})
+	}
+}
+
+func TestCreateWindowsJobObjectWithProviderClosesAmbiguousHandleAndFailsClosed(t *testing.T) {
+	secret := errors.New("https://secret.invalid/create-job")
+	tests := []struct {
+		name        string
+		closeErr    error
+		wantCleanup bool
+	}{
+		{name: "close_succeeds"},
+		{name: "close_fails", closeErr: secret, wantCleanup: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			closeCalls := 0
+			var closedHandle windows.Handle
+			handle, fresh, err := createWindowsJobObjectWithProvider(windowsJobCreateProvider{
+				create: func() (windows.Handle, error) {
+					return windows.Handle(92), secret
+				},
+				close: func(handle windows.Handle) error {
+					closeCalls++
+					closedHandle = handle
+					return test.closeErr
+				},
+			})
+			if handle != 0 || fresh || !errors.Is(err, errManagedProcessIsolation) ||
+				errors.Is(err, secret) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("ambiguous create result = (%v, %t, %v)", handle, fresh, err)
+			}
+			if errors.Is(err, errManagedProcessCleanup) != test.wantCleanup {
+				t.Fatalf("cleanup classification = %v, want %t", err, test.wantCleanup)
+			}
+			if closeCalls != 1 || closedHandle != windows.Handle(92) {
+				t.Fatalf("CloseHandle calls = %d handle = %v, want 1 / 92", closeCalls, closedHandle)
+			}
+		})
+	}
+}
+
 func TestWindowsJobCreateFailureDoesNotSetOrCloseInvalidHandle(t *testing.T) {
 	secret := errors.New("sensitive create detail")
 	probe := &windowsJobProbe{createErr: secret}
-	job, err := newWindowsProcessJobWithOps(probe.ops())
+	job, err := newWindowsProcessJobWithOps("", "", probe.ops())
 	if job != nil || !errors.Is(err, errManagedProcessIsolation) || strings.Contains(err.Error(), "sensitive") {
 		t.Fatalf("new job = (%v, %v), want masked create failure", job, err)
 	}
@@ -81,10 +157,46 @@ func TestWindowsJobCreateFailureDoesNotSetOrCloseInvalidHandle(t *testing.T) {
 	}
 }
 
+func TestWindowsJobCreateFailurePreservesStableCleanupClassification(t *testing.T) {
+	secret := errors.New("https://secret.invalid/create-close")
+	probe := &windowsJobProbe{}
+	ops := probe.ops()
+	createCloseCalls := 0
+	ops.create = func(string) (windows.Handle, bool, error) {
+		return createWindowsJobObjectWithProvider(windowsJobCreateProvider{
+			create: func() (windows.Handle, error) {
+				return windows.Handle(93), secret
+			},
+			close: func(handle windows.Handle) error {
+				createCloseCalls++
+				if handle != windows.Handle(93) {
+					t.Fatalf("ambiguous create close handle = %v, want 93", handle)
+				}
+				return secret
+			},
+		})
+	}
+
+	job, err := newWindowsProcessJobWithOps("", "", ops)
+	if job != nil || !errors.Is(err, errManagedProcessIsolation) ||
+		!errors.Is(err, errManagedProcessCleanup) || errors.Is(err, secret) ||
+		strings.Contains(err.Error(), "secret") {
+		t.Fatalf("new job = (%v, %v), want stable isolation and cleanup", job, err)
+	}
+	if createCloseCalls != 1 || probe.closeCalls.Load() != 0 || probe.setCalls.Load() != 0 {
+		t.Fatalf(
+			"ambiguous create calls = helper-close:%d outer-close:%d set:%d",
+			createCloseCalls,
+			probe.closeCalls.Load(),
+			probe.setCalls.Load(),
+		)
+	}
+}
+
 func TestWindowsJobSetFailureClosesHandleAndMasksFaults(t *testing.T) {
 	secret := errors.New("sensitive set detail")
 	probe := &windowsJobProbe{setErr: secret, closeErr: secret}
-	job, err := newWindowsProcessJobWithOps(probe.ops())
+	job, err := newWindowsProcessJobWithOps("", "", probe.ops())
 	if job != nil || !errors.Is(err, errManagedProcessIsolation) || !errors.Is(err, errManagedProcessCleanup) {
 		t.Fatalf("new job = (%v, %v), want isolation and cleanup", job, err)
 	}
@@ -98,7 +210,7 @@ func TestWindowsJobSetFailureClosesHandleAndMasksFaults(t *testing.T) {
 
 func TestWindowsJobSetsKillOnCloseBeforeAssigningNativeHandle(t *testing.T) {
 	probe := &windowsJobProbe{}
-	job, err := newWindowsProcessJobWithOps(probe.ops())
+	job, err := newWindowsProcessJobWithOps("", "", probe.ops())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +232,7 @@ func TestWindowsJobSetsKillOnCloseBeforeAssigningNativeHandle(t *testing.T) {
 func TestWindowsJobAssignAndTerminateErrorsAreStableAndMasked(t *testing.T) {
 	secret := errors.New("https://secret.invalid/process")
 	probe := &windowsJobProbe{assignErr: secret, terminateErr: secret}
-	job, err := newWindowsProcessJobWithOps(probe.ops())
+	job, err := newWindowsProcessJobWithOps("", "", probe.ops())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +250,7 @@ func TestWindowsJobAssignAndTerminateErrorsAreStableAndMasked(t *testing.T) {
 
 func TestWindowsJobCloseIsConcurrentAndIdempotent(t *testing.T) {
 	probe := &windowsJobProbe{}
-	job, err := newWindowsProcessJobWithOps(probe.ops())
+	job, err := newWindowsProcessJobWithOps("", "", probe.ops())
 	if err != nil {
 		t.Fatal(err)
 	}
