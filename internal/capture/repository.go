@@ -32,6 +32,7 @@ type SQLiteRepository struct {
 	outcomeTimeout            time.Duration
 	promoteManifest           func(*stagedManifest) error
 	manifestIssueMu           sync.RWMutex
+	loadMediaAfterCommit      func(context.Context, string) (MediaSnapshot, error)
 	manifestIssues            map[string]manifestIssueState
 	manifestReporter          ManifestHealthReporter
 	updateManifestDirty       func(context.Context, LiveSession, bool) error

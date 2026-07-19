@@ -86,7 +86,9 @@ type fakeCaptureCoordinator struct {
 	finalizeOnce                    sync.Once
 	finalizeNonterminal             bool
 	finalizeCancellationNonterminal bool
+	finalizeCancellationPending     bool
 	finalizeFailures                int
+	finalizePending                 int
 	finalizeTerminalErr             error
 	finalizeCalls                   []fakeFinalizeCall
 }
@@ -163,10 +165,11 @@ func (s *fakeCaptureSession) Finalize(ctx context.Context, operationID string, r
 		case <-ctx.Done():
 			s.owner.mu.Lock()
 			nonterminal := s.owner.finalizeCancellationNonterminal
+			pending := s.owner.finalizeCancellationPending
 			s.owner.mu.Unlock()
 			s.mu.Lock()
 			s.current.OperationID = operationID
-			if nonterminal {
+			if nonterminal || pending {
 				s.current.Status = capture.SessionFinalizing
 				s.current.RecordingStatus = capture.RecordingFinalizing
 			} else {
@@ -175,10 +178,17 @@ func (s *fakeCaptureSession) Finalize(ctx context.Context, operationID string, r
 			}
 			current := s.current
 			s.mu.Unlock()
+			if pending {
+				return current, errors.Join(capture.ErrCaptureCleanupPending, ctx.Err())
+			}
 			return current, ctx.Err()
 		}
 	}
 	s.owner.mu.Lock()
+	pending := s.owner.finalizePending > 0
+	if pending {
+		s.owner.finalizePending--
+	}
 	nonterminal := s.owner.finalizeNonterminal
 	if !nonterminal && s.owner.finalizeFailures > 0 {
 		s.owner.finalizeFailures--
@@ -186,6 +196,15 @@ func (s *fakeCaptureSession) Finalize(ctx context.Context, operationID string, r
 	}
 	terminalErr := s.owner.finalizeTerminalErr
 	s.owner.mu.Unlock()
+	if pending {
+		s.mu.Lock()
+		s.current.OperationID = operationID
+		s.current.Status = capture.SessionFinalizing
+		s.current.RecordingStatus = capture.RecordingFinalizing
+		current := s.current
+		s.mu.Unlock()
+		return current, errors.Join(capture.ErrCaptureCleanupPending, context.DeadlineExceeded)
+	}
 	if nonterminal {
 		s.mu.Lock()
 		s.current.OperationID = operationID
@@ -1465,6 +1484,158 @@ func waitForRuntimeStatus(t *testing.T, events <-chan RoomRuntimeStatus, match f
 		case <-timeout.C:
 			t.Fatal("timed out waiting for matching runtime status")
 		}
+	}
+}
+
+func TestMonitorWorkerCleanupPendingDoesNotConsumeAutomaticFinalizeRetryBudget(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	owner := newFakeCaptureCoordinator()
+	owner.finalizePending = maxAutomaticFinalizeAttempts + 2
+	session := &fakeCaptureSession{owner: owner, current: capture.LiveSession{
+		ID: newOperationID(), RoomConfigID: newOperationID(), OperationID: newOperationID(),
+		Status: capture.SessionRecording, RecordingStatus: capture.RecordingActive,
+		StartedAt: time.Now().UTC().UnixMilli(), ClockSource: capture.ClockReceived,
+	}}
+	manager := &MonitorManager{options: MonitorOptions{
+		FinalizeTimeout: 5 * time.Millisecond,
+		ReconnectDelay:  time.Millisecond,
+		Now:             time.Now,
+		Publisher:       func(RoomRuntimeStatus) {},
+	}}
+	worker := &monitorWorker{
+		manager: manager, ctx: ctx, done: make(chan struct{}), wake: make(chan struct{}, 1),
+		session: session, status: RoomRuntimeStatus{
+			RoomID: session.current.RoomConfigID, SessionID: session.current.ID,
+			OperationID: session.current.OperationID, State: RuntimeFinalizing,
+		},
+	}
+
+	terminal, err := worker.finalizeActiveWithRetry(capture.FinalizeOffline)
+	if err != nil || !terminal {
+		t.Fatalf("finalize after extended pending cleanup = terminal:%t err:%v", terminal, err)
+	}
+	_, _, calls := owner.counts()
+	wantCalls := maxAutomaticFinalizeAttempts + 3
+	if calls != wantCalls {
+		t.Fatalf("Finalize calls = %d, want %d (> ordinary retry budget)", calls, wantCalls)
+	}
+	worker.mu.Lock()
+	remainingSession := worker.session
+	worker.mu.Unlock()
+	if remainingSession != nil {
+		t.Fatalf("worker retained terminal session after pending cleanup: %v", remainingSession)
+	}
+}
+
+func TestMonitorManagerShutdownWaitsForPendingCaptureCleanupOwner(t *testing.T) {
+	root, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(root, CreateRoomInput{
+		LiveID: "shutdown-pending-owner", RecordEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.finalizeStarted = make(chan struct{})
+	coordinator.finalizeRelease = make(chan struct{})
+	coordinator.finalizeCancellationPending = true
+	manager, err := NewMonitorManager(root, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: time.Hour,
+		ReconnectDelay: time.Millisecond, FinalizeTimeout: 10 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return client, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(root, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("live client did not start")
+	}
+
+	shutdownResult := make(chan error, 1)
+	go func() { shutdownResult <- manager.Shutdown(context.Background()) }()
+	select {
+	case <-coordinator.finalizeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("capture finalization did not start during shutdown")
+	}
+	select {
+	case err := <-shutdownResult:
+		t.Fatalf("monitor shutdown returned before capture cleanup completion: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	if manager.ShutdownComplete() {
+		t.Fatal("monitor marked shutdown complete while capture cleanup remained pending")
+	}
+	close(coordinator.finalizeRelease)
+	select {
+	case err := <-shutdownResult:
+		if err != nil {
+			t.Fatalf("monitor shutdown after capture cleanup: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("monitor shutdown did not complete after capture cleanup")
+	}
+	if !manager.ShutdownComplete() {
+		t.Fatal("monitor did not publish completed shutdown")
+	}
+}
+
+func TestMonitorWorkerDetachedSessionWaitsPastTimeoutUntilPendingCleanupCompletes(t *testing.T) {
+	owner := newFakeCaptureCoordinator()
+	owner.finalizeStarted = make(chan struct{})
+	owner.finalizeRelease = make(chan struct{})
+	owner.finalizeCancellationPending = true
+	session := &fakeCaptureSession{owner: owner, current: capture.LiveSession{
+		ID: newOperationID(), RoomConfigID: newOperationID(), OperationID: newOperationID(),
+		Status: capture.SessionRecording, RecordingStatus: capture.RecordingActive,
+		StartedAt: time.Now().UTC().UnixMilli(), ClockSource: capture.ClockReceived,
+	}}
+	worker := &monitorWorker{manager: &MonitorManager{options: MonitorOptions{
+		FinalizeTimeout: 10 * time.Millisecond, ReconnectDelay: time.Millisecond,
+	}}}
+	done := make(chan struct{})
+	go func() {
+		worker.finalizeDetached(session, capture.FinalizeShutdown)
+		close(done)
+	}()
+	select {
+	case <-owner.finalizeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("detached finalization did not start")
+	}
+	select {
+	case <-done:
+		t.Fatal("detached session lost its owner after one finalize timeout")
+	case <-time.After(45 * time.Millisecond):
+	}
+	_, _, callsBeforeRelease := owner.counts()
+	if callsBeforeRelease <= maxAutomaticFinalizeAttempts {
+		t.Fatalf("detached pending retries = %d, want more than ordinary budget", callsBeforeRelease)
+	}
+	close(owner.finalizeRelease)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("detached finalization did not finish after cleanup completed")
+	}
+	if snapshot := session.Snapshot(); !terminalSession(snapshot.Status) {
+		t.Fatalf("detached session remained nonterminal: %+v", snapshot)
 	}
 }
 

@@ -21,27 +21,28 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-17T22:22:00+08:00"
-authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
+updated_at: "2026-07-19T17:51:00+08:00"
+authoritative_workspace: "GJS-20250801EFK:D:\\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "9e4200b49477fa5eb5d5737292a9e4db5fbdab6a"
+last_verified_head: "6cfedc16b6dcacee03ccccffff81472123fcc823"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 58
+overall_completion_percent: 62
 current_phase: "PHASE-3-CAPTURE-MVP"
-current_task: "P3-MEDIA-001"
-next_task: "P3-RCV-001"
+current_task: "P3-RCV-001"
+next_task: "P3-UI-001"
 expected_dirty_paths:
   - "docs/00-master-development-plan.md"
   - "docs/02-capture-and-recording-development-plan.md"
   - "docs/03-data-and-analysis-development-plan.md"
-  - "docs/validation/2026-07-17-p3-media-finalization.md"
+  - "docs/validation/2026-07-19-p3-media-finalization.md"
   - "internal/app/"
   - "internal/capture/"
+  - "internal/room/"
   - "internal/storage/"
 blockers: []
-last_completed_task: "P3-REC-001"
-last_completion_evidence: "完成 FFmpeg/ffprobe 安全发现与摘要校验、流候选稳定排序和逐一降级、UUIDv7 attempt 目录隔离、有界 progress/stderr 解析、独立进程生命周期、Windows CREATE_SUSPENDED→Job Object→NtResumeProcess fail-closed 控制、q→5 秒→Job 进程树→3 秒分级停止、异步退出协调和全链路 URL 脱敏。全量 Go test/vet/build、capture 包 20 轮及关键路径 100 轮、前端 typecheck/Vitest/build、P2/P3 标签、真实本地 HTTP 流分片与 ffprobe 验收通过；授权直播间当时离线并按协议安全跳过，最终审计无 P0/P1。"
-resume_instruction: "执行 P3-MEDIA-001：逐分片使用 ffprobe 探测 .mkv.partial，校验成功后原子改名为最终 .mkv，原子维护不含流 URL 的 media.json，生成音频代理并完成场次媒体收尾；实现外部录制根目录注册与兼容边界，保留 UUIDv7 attempt 目录用于崩溃恢复，不得复用或覆盖既有分片。"
+last_completed_task: "P3-MEDIA-001"
+last_completion_evidence: "完成 SQLite Schema v4、内外部录制根注册与重解析点 fail-closed 校验、URL-free attempt 日志、分片/代理双阶段数据包探测、MKV 原子定稿、WAV/MP4 代理生成、media.json CAS 镜像、完成态文件篡改审计、有限基数与 128 MiB 清单上界以及收尾生命周期归属。全量 Go test/vet/build、P3 标签、重点重复测试、前端 typecheck/Vitest/build、Wails 生产构建及真实 FFmpeg 内外部根 E2E 通过，终审无 P0/P1；在线连通性在最终门禁后恢复，P3-MEDIA 不冒充 P3-ACC 的在线录制验收，留待 P3-ACC 使用授权测试房间执行。"
+resume_instruction: "执行 P3-RCV-001：基于 Schema v4 和持久化 media attempt/segment/artifact 状态实现启动恢复、异常重试和媒体缺口审计；按页修复遗留 active 场次，恢复 open/finalizing 媒体快照，确保旧 attempt 结果不能覆盖新操作，并在稳定错误码、退避上界和用户可见诊断下完成故障注入。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -74,10 +75,10 @@ resume_instruction: "执行 P3-MEDIA-001：逐分片使用 ffprobe 探测 .mkv.p
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
-| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 60% | 18/30 点完成；场次编排、事件耐久链路、录制进程核心与 Windows 进程树控制已完成 | 完成媒体收尾、异常恢复、实时 UI 与 10 分钟验收 |
+| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 73% | 22/30 点完成；场次编排、事件耐久链路、录制进程核心、媒体收尾与 Windows 进程树控制已完成 | 完成异常恢复、实时 UI 与 10 分钟验收 |
 | PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **58%** | 已完成文档、流解析、桌面房间管理、场次编排、事件耐久链路与录制进程核心 | 执行 P3-MEDIA-001 分片探测、媒体清单、音频代理与收尾 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **62%** | 已完成文档、流解析、桌面房间管理、场次编排、事件耐久链路、录制进程核心与媒体收尾 | 执行 P3-RCV-001 异常重试、缺口审计与启动恢复 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -104,8 +105,8 @@ resume_instruction: "执行 P3-MEDIA-001：逐分片使用 ffprobe 探测 .mkv.p
 | P3-CAP-001 | 建立场次契约、仓储与监督器编排 | 6 | P2-ACC-001 | `DONE` | [验收记录](validation/2026-07-17-p3-cap-session-lifecycle.md)：Schema v2 双状态/CAS、单场次编排、manifest 耐久恢复、共享收尾与 UI 锁定完成；全量门禁、20 轮重复测试及故障注入通过 | 执行 P3-EVT-001 |
 | P3-EVT-001 | 实现有界事件采集、spool、标准化、去重与批写 | 6 | P3-CAP-001 | `DONE` | [验收记录](validation/2026-07-17-p3-evt-durable-event-ingest.md)：Schema v3、双有界 FIFO、raw/WAL 双 Sync、原子批写、隐私/去重/礼物折叠、drop ledger 与双游标恢复完成；全量门禁及高风险 100 轮回归通过，终审无 P0/P1 | 执行 P3-REC-001 |
 | P3-REC-001 | 实现 FFmpeg、流候选、Job Object 与进程控制 | 6 | P3-EVT-001 | `DONE` | [验收记录](validation/2026-07-17-p3-rec-ffmpeg-process-control.md)：完成安全依赖发现、候选刷新与降级、唯一 attempt 隔离、有界进度解析、独立进程生命周期、Windows Job Object fail-closed 控制、分级停止、异步退出协调和隐私守卫；全量门禁、重点 100 轮、capture 包 20 轮及真实 FFmpeg/ffprobe 验收通过，终审无 P0/P1 | 执行 P3-MEDIA-001 |
-| P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `READY` | P3-REC-001 已完成，安全 `.mkv.partial` 分片与唯一 attempt 命名空间可供媒体收尾复用 | 实现分片探测、原子定稿、`media.json`、音频代理与场次收尾 |
-| P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `NOT_STARTED` | — | 等待媒体收尾完成 |
+| P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `DONE` | [验收记录](validation/2026-07-19-p3-media-finalization.md)：Schema v4、内外部录制根、URL-free attempt、数据包级探测、MKV 原子定稿、WAV/MP4 代理、`media.json` CAS、完成态篡改审计与持久化上界完成；全量 Go/P3/Wails/真实 FFmpeg E2E 通过，终审无 P0/P1 | 执行 P3-RCV-001 |
+| P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `READY` | P3-MEDIA-001 已完成，Schema v4 的 attempt、segment、artifact 与脏清单状态可作为恢复事实源 | 实现启动协调、孤儿场次修复、重试退避和媒体缺口审计 |
 | P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `NOT_STARTED` | — | 等待恢复链路完成 |
 | P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `NOT_STARTED` | — | 等待 Phase 3 功能链路完成 |
 
@@ -162,6 +163,7 @@ resume_instruction: "执行 P3-MEDIA-001：逐分片使用 ffprobe 探测 .mkv.p
 | 2026-07-17 18:14 | P3-CAP-001 | `DONE` | 完成 Schema v2 双状态与 CAS、CaptureCoordinator/RoomSupervisor 单场次编排、manifest_dirty 耐久恢复和 STOPPING 共享收尾；全量 Go/前端/Wails 门禁、20 轮重复测试、129 条分页和故障注入通过；授权直播间当时离线，真实验收安全跳过且未冒充成功 | 执行 P3-EVT-001 有界事件持久化 |
 | 2026-07-17 20:40 | P3-EVT-001 | `DONE` | 完成 Schema v3、有界 FIFO、raw/WAL 双 Sync、SQLite 原子批写、隐私去重、礼物折叠、drop ledger 与双游标 fail-closed 恢复；全量/20 轮/关键 100 轮、前端与 Wails 门禁通过，授权直播间离线安全跳过，终审无 P0/P1 | 执行 P3-REC-001 FFmpeg 与进程控制 |
 | 2026-07-17 22:22 | P3-REC-001 | `DONE` | 完成 FFmpeg/ffprobe 安全发现、候选刷新降级、唯一 attempt 分片、受限进度解析、独立生命周期、Windows Job Object fail-closed 控制、分级停止和异步退出协调；全量 Go/前端/Wails、关键 100 轮、capture 包 20 轮及真实 FFmpeg/ffprobe 验收通过，授权直播间离线安全跳过，终审无 P0/P1 | 执行 P3-MEDIA-001 分片探测、媒体清单、音频代理与收尾 |
+| 2026-07-19 17:51 | P3-MEDIA-001 | `DONE` | 完成 Schema v4、录制根身份与安全路径、URL-free attempt、分片和代理数据包级探测、MKV 原子定稿、WAV/MP4、`media.json` CAS、完成态篡改审计及基数/清单上界；修复后全量 Go/P3/前端/Wails、capture 20 轮、重点高风险回归与真实 FFmpeg 内外部根 E2E 通过，终审无 P0/P1；在线连通性已恢复，10 分钟授权房间验收仍按计划由 P3-ACC 执行 | 执行 P3-RCV-001 异常重试、缺口审计与启动恢复 |
 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
@@ -463,3 +465,4 @@ UI 只能调用应用服务，不直接持有 `DouyinLive`、数据库连接或 
 - 2026-07-17，决策：将长耗时稳定性门禁改为 10/30/60 分钟分层验证；理由：避免 2/24/72 小时测试阻塞迭代；替代方案：保留原时长或仅在最终发布前执行，均不采用；影响：提高采样频率并保留恢复、资源趋势和缺口审计，后续发现分钟级测试无法暴露的问题时再按故障证据定向延长。
 - 2026-07-17，决策：SQLite Schema v2 为 `live_sessions` 增加独立 `recording_status`、`operation_id` 与 `manifest_dirty`，保留现有场次 `status` 约束，并以 CAS 和部分唯一索引保证每房间最多一个活动场次；理由：消息场次可在录制禁用或无流时继续存在，异步旧结果不能覆盖较新状态，且数据库提交后即使进程崩溃也能发现未确认的文件镜像；替代方案：把 `unavailable` 塞入场次状态、仅以内存记录镜像失败或重建被多张表引用的父表，均不采用；影响：`status=recording` 在 v2 表示活动场次阶段，真实录制生命周期由 `recording_status` 表达；`session.json` 只有在同目录原子替换、健康日志 Sync 确认和精确版本 CAS 后才清除脏标记，启动时按页修复。
 - 2026-07-17，决策：SQLite Schema v3 以场次 `ingest_sequence` 和双位置 checkpoint 为事件提交边界，单 FIFO 同时受条数与字节限制，先 raw binpack Sync、再 WAL Sync，最后在一个 SQLite 事务中提交 source/aggregate、礼物折叠、缺口和 checkpoint；理由：崩溃、数据库降级和高基数礼物下仍需可证明的顺序、幂等和内存上界；替代方案：source-only 推进 checkpoint、普通/紧急双队列、无限 deferred map、零值无限 spool 或只保护 WAL 游标，均不采用；影响：每场次 raw+WAL 默认上限 4 GiB，容量批次先验零写入，致命故障只审计未双 Sync 后缀，恢复只修复 checkpoint 之后可证明的最终崩溃尾，privacy key 不匹配或 WAL/raw 游标不一致时 fail closed。
+- 2026-07-19，决策：SQLite Schema v4 以 `recording_roots`、`session_media`、扩展后的 `media_segments` 和 `media_artifacts` 作为媒体恢复事实源，并把外部根的 marker、卷身份、大小写无关 canonical key、URL-free attempt 日志、清单 revision/dirty CAS 与完成态文件证据持久化；理由：跨盘保存、崩溃重入、文件系统替换和数据库/`media.json` 双写必须可审计且不得覆盖既有媒体；替代方案：仅把绝对路径写入设置、扫描目录推断状态、复用旧 attempt、相信文件名或把完整 URL 写入日志，均不采用；影响：内部根的 `root_id` 为空，外部根每阶段 fail-closed 重验，单场次最多 128 attempts、4096 segments、8192 artifacts 和 128 MiB 清单，P3-RCV 必须基于这些耐久状态协调重试与缺口修复。

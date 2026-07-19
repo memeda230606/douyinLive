@@ -776,8 +776,9 @@ func (w *monitorWorker) finalizeActive(reason capture.FinalizeReason) (bool, err
 }
 
 func (w *monitorWorker) finalizeActiveWithRetry(reason capture.FinalizeReason) (bool, error) {
-	var finalizeErrors error
-	for attempt := 0; attempt < maxAutomaticFinalizeAttempts; attempt++ {
+	var finalizeErrors, pendingErr error
+	ordinaryAttempts := 0
+	for {
 		terminal, err := w.finalizeActiveWithContext(w.ctx, reason)
 		if terminal {
 			return true, err
@@ -785,22 +786,33 @@ func (w *monitorWorker) finalizeActiveWithRetry(reason capture.FinalizeReason) (
 		if err == nil {
 			err = errCaptureFinalizeNonterminal
 		}
-		finalizeErrors = errors.Join(finalizeErrors, err)
-		if attempt+1 == maxAutomaticFinalizeAttempts {
-			w.markFinalizeFailed()
-			return false, finalizeErrors
+		pending := errors.Is(err, capture.ErrCaptureCleanupPending)
+		if pending {
+			// A recorder proxy/DB cleanup already has an owner. Keep polling its
+			// shared completion without consuming the ordinary retry budget.
+			pendingErr = err
+		} else {
+			finalizeErrors = errors.Join(finalizeErrors, err)
+			ordinaryAttempts++
+			if ordinaryAttempts == maxAutomaticFinalizeAttempts {
+				w.markFinalizeFailed()
+				return false, finalizeErrors
+			}
 		}
-		delay := time.Duration(attempt+1) * w.manager.options.ReconnectDelay
+		delayMultiplier := ordinaryAttempts
+		if pending || delayMultiplier == 0 {
+			delayMultiplier = 1
+		}
+		delay := time.Duration(delayMultiplier) * w.manager.options.ReconnectDelay
 		w.markFinalizeRetry(delay)
 		timer := time.NewTimer(delay)
 		select {
 		case <-w.ctx.Done():
 			timer.Stop()
-			return false, errors.Join(finalizeErrors, w.ctx.Err())
+			return false, errors.Join(finalizeErrors, pendingErr, w.ctx.Err())
 		case <-timer.C:
 		}
 	}
-	panic("unreachable finalize retry loop")
 }
 
 func (w *monitorWorker) finalizeActiveWithContext(parent context.Context, reason capture.FinalizeReason) (bool, error) {
@@ -867,9 +879,33 @@ func (w *monitorWorker) markFinalizeRetry(delay time.Duration) {
 }
 
 func (w *monitorWorker) finalizeDetached(session capture.Session, reason capture.FinalizeReason) {
-	ctx, cancel := context.WithTimeout(context.Background(), w.manager.options.FinalizeTimeout)
-	defer cancel()
-	_, _ = session.Finalize(ctx, newOperationID(), reason)
+	ordinaryAttempts := 0
+	for session != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), w.manager.options.FinalizeTimeout)
+		finalized, err := session.Finalize(ctx, newOperationID(), reason)
+		cancel()
+		if terminalSession(finalized.Status) {
+			if err != nil {
+				w.addError(err)
+			}
+			return
+		}
+		pending := errors.Is(err, capture.ErrCaptureCleanupPending)
+		if !pending {
+			ordinaryAttempts++
+			if ordinaryAttempts >= maxAutomaticFinalizeAttempts {
+				if err == nil {
+					err = errCaptureFinalizeNonterminal
+				}
+				w.addError(err)
+				return
+			}
+		}
+		// The detached session itself remains the owner. Do not observe w.ctx:
+		// installSession loss commonly means that context is already cancelled.
+		timer := time.NewTimer(w.manager.options.ReconnectDelay)
+		<-timer.C
+	}
 }
 
 func terminalSession(status capture.SessionStatus) bool {

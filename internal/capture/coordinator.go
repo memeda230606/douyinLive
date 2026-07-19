@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	ErrRecordingUnavailable = errors.New("recording is unavailable")
-	ErrCaptureFinalized     = errors.New("capture session is finalized")
-	ErrCaptureSubscription  = errors.New("capture source subscription failed")
-	ErrCaptureEventSink     = errors.New("capture event sink is unavailable")
-	ErrCaptureCleanup       = errors.New("capture component cleanup failed")
+	ErrRecordingUnavailable  = errors.New("recording is unavailable")
+	ErrCaptureFinalized      = errors.New("capture session is finalized")
+	ErrCaptureSubscription   = errors.New("capture source subscription failed")
+	ErrCaptureEventSink      = errors.New("capture event sink is unavailable")
+	ErrCaptureCleanup        = errors.New("capture component cleanup failed")
+	ErrCaptureCleanupPending = errors.New("capture component cleanup is still running")
 )
 
 type FinalizeReason string
@@ -279,7 +280,7 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 		recorder, recorderErr := c.recorderFactory(ctx, created, request, source)
 		if recorderErr != nil || recorder == nil {
 			if recorder != nil {
-				_ = boundedCall(ctx, recorder.Stop)
+				_ = stopOwnedRecorder(recorder)
 			}
 			targetRecording = RecordingUnavailable
 		} else {
@@ -295,7 +296,7 @@ func (c *Coordinator) openReserved(ctx context.Context, request OpenRequest, sou
 	if err != nil {
 		runtime.stopAcceptingMessages(source, subscriptionID)
 		if runtime.recorder != nil {
-			_ = boundedCall(ctx, runtime.recorder.Stop)
+			_ = stopOwnedRecorder(runtime.recorder)
 		}
 		_ = boundedCall(ctx, sink.FlushAndClose)
 		failedSession := created
@@ -468,7 +469,6 @@ func (s *sessionRuntime) handleRecorderEvent(
 	s.mu.Lock()
 	s.current = next
 	if sameRecorderInstance(s.recorder, recorder) {
-		s.recorder = nil
 		s.cancelRecorderEventsLocked()
 	}
 	s.mu.Unlock()
@@ -542,9 +542,10 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 		}) != nil {
 			targetRecording = RecordingUnavailable
 			if recorder != nil {
+				// Stop owns shared asynchronous cleanup. Keep the stopped/stopping
+				// recorder attached so Finalize can wait for that owner.
 				_ = boundedCall(ctx, recorder.Stop)
 			}
-			recorder = nil
 		} else {
 			targetRecording = RecordingActive
 		}
@@ -564,7 +565,7 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	s.source = source
 	s.subscriptionID = newSubscriptionID
 	s.recorder = recorder
-	if recorder == nil {
+	if recorder == nil || targetRecording == RecordingUnavailable {
 		s.cancelRecorderEventsLocked()
 	}
 	s.mu.Unlock()
@@ -639,6 +640,21 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		var recorderErr, sinkErr error
 		if recorder != nil {
 			recorderErr = boundedCall(ctx, recorder.Stop)
+			if recorderErr != nil && ctx.Err() != nil {
+				// Recorder.Stop owns a shared asynchronous completion. A caller
+				// deadline only stops this wait; it must not orphan media proxy/DB
+				// work or turn the session terminal before that work is observed.
+				pendingErr := errors.Join(ErrCaptureCleanupPending, ctx.Err())
+				if materializationErr != nil {
+					pendingErr = errors.Join(materializationErr, pendingErr)
+				}
+				s.mu.Lock()
+				s.finalizing = true
+				s.finalizeErr = pendingErr
+				result := s.current
+				s.mu.Unlock()
+				return result, pendingErr
+			}
 		}
 		if source != nil && subscriptionID != "" {
 			source.Unsubscribe(subscriptionID)
@@ -646,6 +662,25 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		s.acceptWG.Wait()
 		if sink != nil {
 			sinkErr = boundedCall(ctx, sink.FlushAndClose)
+			if sinkErr != nil && ctx.Err() != nil {
+				// SessionSink uses the same shared-completion shape as Recorder:
+				// its caller deadline does not stop the SQLite spool finalizer.
+				pendingErr := errors.Join(ErrCaptureCleanupPending, ctx.Err())
+				if materializationErr != nil {
+					pendingErr = errors.Join(materializationErr, pendingErr)
+				}
+				s.mu.Lock()
+				if s.source == source && s.subscriptionID == subscriptionID {
+					// Message acceptance has converged; only the sink remains owned.
+					s.source = nil
+					s.subscriptionID = ""
+				}
+				s.finalizing = true
+				s.finalizeErr = pendingErr
+				result := s.current
+				s.mu.Unlock()
+				return result, pendingErr
+			}
 		}
 		componentErr = errors.Join(componentErr, recorderErr, sinkErr, ctx.Err())
 		if recorderErr != nil || sinkErr != nil {
@@ -807,6 +842,15 @@ func boundedCall(ctx context.Context, call func(context.Context) error) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func stopOwnedRecorder(recorder Recorder) error {
+	if recorder == nil {
+		return nil
+	}
+	// Open has not published a session owner yet. Keep the registry reservation
+	// until Stop's shared completion finishes, even if the opening caller left.
+	return boundedCall(context.Background(), recorder.Stop)
 }
 
 func coordinatorContext(ctx context.Context) error {

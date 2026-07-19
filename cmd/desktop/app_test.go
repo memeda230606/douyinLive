@@ -32,7 +32,7 @@ func TestDesktopAppLifecycleAndBootstrap(t *testing.T) {
 	if bootstrap.APIVersion != application.BootstrapAPIVersion {
 		t.Fatalf("APIVersion = %q, want %q", bootstrap.APIVersion, application.BootstrapAPIVersion)
 	}
-	if !bootstrap.Data.Ready || bootstrap.Data.SchemaVersion != 3 {
+	if !bootstrap.Data.Ready || bootstrap.Data.SchemaVersion != 4 {
 		t.Fatalf("data infrastructure not ready: %#v", bootstrap.Data)
 	}
 	created, err := desktop.CreateRoom(room.CreateRoomInput{

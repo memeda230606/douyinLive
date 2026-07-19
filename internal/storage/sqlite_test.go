@@ -489,8 +489,8 @@ func TestSchemaV2UpgradePreservesLegacyEventsAndCaptureGaps(t *testing.T) {
 		t.Fatalf("Open() v3 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 3 {
-		t.Fatalf("SchemaVersion() = %d, want 3", got)
+	if got := store.SchemaVersion(); got != 4 {
+		t.Fatalf("SchemaVersion() = %d, want 4", got)
 	}
 
 	var sequence int64
@@ -744,6 +744,222 @@ func TestSchemaV3EnforcesCheckpointComboAndGapConstraints(t *testing.T) {
 	}
 }
 
+func TestSchemaV3UpgradeCreatesV4BackupAndMediaObjects(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	db, err := sql.Open("sqlite", sqliteDSN(layout.Database, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(ctx, db, schemaMigrations[:3], time.Unix(1_700_000_000, 0)); err != nil {
+		db.Close()
+		t.Fatalf("apply schema v3: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close schema v3 database: %v", err)
+	}
+
+	upgradeAt := time.Date(2026, 7, 17, 11, 0, 0, 0, time.UTC)
+	store, err := Open(ctx, layout, OpenOptions{Now: upgradeAt, CreateBackups: true})
+	if err != nil {
+		t.Fatalf("Open() schema v4 upgrade error = %v", err)
+	}
+	defer store.Close()
+	if got := store.SchemaVersion(); got != 4 {
+		t.Fatalf("SchemaVersion() = %d, want 4", got)
+	}
+	for _, table := range []string{"recording_roots", "session_media", "media_artifacts"} {
+		assertSQLiteObject(t, store.Reader(), "table", table)
+	}
+	for _, column := range []string{"attempt_id", "attempt_sequence", "source_relative_path", "probe_version", "error_code"} {
+		if !tableHasColumn(t, store.Reader(), "media_segments", column) {
+			t.Fatalf("media_segments missing schema v4 column %q", column)
+		}
+	}
+	if !tableHasExtendedColumn(t, store.Reader(), "session_media", "relative_key") {
+		t.Fatal("session_media missing generated relative_key column")
+	}
+
+	backups, err := filepath.Glob(filepath.Join(layout.BackupsDir, "app-v3-*.db"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("v3 backup files = (%v, %v), want one", backups, err)
+	}
+	backupDB, err := sql.Open("sqlite", sqliteDSN(backups[0], true))
+	if err != nil {
+		t.Fatalf("open v3 backup: %v", err)
+	}
+	defer backupDB.Close()
+	version, err := currentSchemaVersion(ctx, backupDB)
+	if err != nil || version != 3 {
+		t.Fatalf("backup schema version = (%d, %v), want (3, nil)", version, err)
+	}
+	var v4TableCount int
+	if err := backupDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_media'`).Scan(&v4TableCount); err != nil {
+		t.Fatalf("inspect v3 backup: %v", err)
+	}
+	if v4TableCount != 0 || tableHasColumn(t, backupDB, "media_segments", "attempt_id") {
+		t.Fatal("v3 backup unexpectedly contains schema v4 objects")
+	}
+}
+
+func TestSchemaV4FailureRollsBackDDLAndVersion(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v4-rollback.db")
+	db, err := sql.Open("sqlite", sqliteDSN(path, false))
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	if _, err := applyMigrationSet(ctx, db, schemaMigrations[:3], time.Now()); err != nil {
+		t.Fatalf("apply schema v3: %v", err)
+	}
+	brokenV4 := schemaMigrations[3]
+	brokenV4.Statements = append([]string(nil), brokenV4.Statements[:3]...)
+	brokenV4.Statements = append(brokenV4.Statements, `THIS IS NOT SQL`)
+	if _, err := applyMigrationSet(ctx, db, []migration{brokenV4}, time.Now()); err == nil {
+		t.Fatal("broken schema v4 migration succeeded")
+	}
+	for _, table := range []string{"recording_roots", "session_media"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatalf("inspect rolled-back table %q: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("failed schema v4 migration left table %q behind", table)
+		}
+	}
+	if tableHasColumn(t, db, "media_segments", "attempt_id") {
+		t.Fatal("failed schema v4 migration left media_segments column behind")
+	}
+	version, err := currentSchemaVersion(ctx, db)
+	if err != nil || version != 3 {
+		t.Fatalf("schema version after rollback = (%d, %v), want (3, nil)", version, err)
+	}
+}
+
+func TestSchemaV4EnforcesMediaRootAndArtifactConstraints(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	store, err := Open(ctx, layout, OpenOptions{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+	db := store.Writer()
+	if _, err := db.Exec(`INSERT INTO rooms(id, live_id, alias, created_at, updated_at)
+		VALUES ('room-v4', 'live-v4', 'v4', 1, 1)`); err != nil {
+		t.Fatalf("insert room: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO live_sessions(
+		id, room_config_id, status, started_at, clock_source, data_path,
+		schema_version, created_at, updated_at
+	) VALUES ('session-v4', 'room-v4', 'completed', 1, 'received', 'rooms/v4', 1, 1, 1)`); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO live_sessions(
+		id, room_config_id, status, started_at, clock_source, data_path,
+		schema_version, created_at, updated_at
+	) VALUES ('session-v4-case', 'room-v4', 'completed', 1, 'received',
+		'rooms/v4-case', 1, 1, 1)`); err != nil {
+		t.Fatalf("insert case-alias session: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO recording_roots(
+		id, absolute_path, canonical_key, volume_identity, status,
+		created_at, updated_at, last_verified_at
+	) VALUES ('root-v4', 'D:/recordings', ?, ?, 'ready', 1, 1, 1)`,
+		strings.Repeat("a", 64), strings.Repeat("b", 64)); err != nil {
+		t.Fatalf("insert recording root: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO recording_roots(
+		id, absolute_path, canonical_key, volume_identity, status,
+		created_at, updated_at, last_verified_at
+	) VALUES ('bad-root', 'D:/bad', ?, ?, 'missing', 1, 1, 1)`,
+		strings.Repeat("c", 64), strings.Repeat("d", 64)); err == nil {
+		t.Fatal("recording root with invalid status succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO session_media(
+		session_id, root_id, relative_path, state, attempts_json, created_at, updated_at
+	) VALUES ('session-v4', 'root-v4', 'sessions/v4/media', 'open', '[]', 1, 1)`); err != nil {
+		t.Fatalf("insert session media: %v", err)
+	}
+	var relativeKey string
+	if err := db.QueryRow(`SELECT relative_key FROM session_media WHERE session_id = 'session-v4'`).Scan(&relativeKey); err != nil {
+		t.Fatalf("read generated relative key: %v", err)
+	}
+	if relativeKey != "sessions/v4/media" {
+		t.Fatalf("generated relative key = %q", relativeKey)
+	}
+	if _, err := db.Exec(`INSERT INTO session_media(
+		session_id, root_id, relative_path, state, attempts_json, created_at, updated_at
+	) VALUES ('session-v4-case', 'root-v4', 'SESSIONS/V4/MEDIA', 'open', '[]', 1, 1)`); err == nil {
+		t.Fatal("case-aliased session media path succeeded")
+	}
+	if _, err := db.Exec(`UPDATE session_media SET relative_path = 'sessions/v4/other' WHERE session_id = 'session-v4'`); err == nil {
+		t.Fatal("session media location mutation succeeded")
+	}
+	if _, err := db.Exec(`DELETE FROM recording_roots WHERE id = 'root-v4'`); err == nil {
+		t.Fatal("deleting an in-use recording root succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO media_segments(
+		id, session_id, sequence, relative_path, container, started_at, ended_at,
+		duration_ms, size_bytes, status, attempt_id, attempt_sequence,
+		source_relative_path, probe_version
+	) VALUES ('segment-v4', 'session-v4', 1, 'segments/1.mkv', 'matroska', 1, 2,
+		1, 1, 'complete', 'attempt-v4', 1, 'attempts/1.partial', 'ffprobe-8.1.2')`); err != nil {
+		t.Fatalf("insert media segment: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO media_segments(
+		id, session_id, sequence, relative_path, container, started_at, ended_at,
+		duration_ms, size_bytes, status, attempt_id, attempt_sequence,
+		source_relative_path, probe_version
+	) VALUES ('segment-v4-path-case', 'session-v4', 2, 'SEGMENTS/1.MKV', 'matroska', 1, 2,
+		1, 1, 'complete', 'attempt-v4-path-case', 2, 'attempts/path-case.partial', 'ffprobe-8.1.2')`); err == nil {
+		t.Fatal("case-aliased segment relative path succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO media_segments(
+		id, session_id, sequence, relative_path, container, started_at, ended_at,
+		duration_ms, size_bytes, status, attempt_id, attempt_sequence,
+		source_relative_path, probe_version
+	) VALUES ('segment-v4-source-case', 'session-v4', 2, 'segments/source-case.mkv', 'matroska', 1, 2,
+		1, 1, 'complete', 'attempt-v4-source-case', 2, 'ATTEMPTS/1.PARTIAL', 'ffprobe-8.1.2')`); err == nil {
+		t.Fatal("case-aliased segment source path succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO media_segments(
+		id, session_id, sequence, relative_path, container, started_at, ended_at,
+		duration_ms, size_bytes, status, attempt_id, attempt_sequence,
+		source_relative_path, probe_version
+	) VALUES ('segment-v4-2', 'session-v4', 2, 'segments/2.mkv', 'matroska', 1, 2,
+		1, 1, 'complete', 'attempt-v4-2', 2, 'attempts/2.partial', 'ffprobe-8.1.2')`); err != nil {
+		t.Fatalf("insert second media segment: %v", err)
+	}
+	insertArtifact := `INSERT INTO media_artifacts(
+		id, session_id, media_segment_id, kind, relative_path, status, created_at, updated_at
+	) VALUES (?, 'session-v4', 'segment-v4', ?, ?, ?, 1, 1)`
+	if _, err := db.Exec(insertArtifact, "artifact-v4", "playback_mp4", "artifacts/1.mp4", "pending_transcode"); err != nil {
+		t.Fatalf("insert pending_transcode artifact: %v", err)
+	}
+	if _, err := db.Exec(insertArtifact, "bad-artifact", "asr_wav", "artifacts/1.wav", "uploaded"); err == nil {
+		t.Fatal("media artifact with invalid status succeeded")
+	}
+	if _, err := db.Exec(insertArtifact, "duplicate-artifact", "playback_mp4", "artifacts/other.mp4", "complete"); err == nil {
+		t.Fatal("duplicate segment artifact kind succeeded")
+	}
+	if _, err := db.Exec(`INSERT INTO media_artifacts(
+		id, session_id, media_segment_id, kind, relative_path, status, created_at, updated_at
+	) VALUES ('artifact-v4-path-case', 'session-v4', 'segment-v4-2', 'asr_wav',
+		'ARTIFACTS/1.MP4', 'complete', 1, 1)`); err == nil {
+		t.Fatal("case-aliased artifact path succeeded")
+	}
+}
+
 func assertSQLiteObject(t *testing.T, db *sql.DB, objectType, name string) {
 	t.Helper()
 	var count int
@@ -767,6 +983,29 @@ func tableHasColumn(t *testing.T, db *sql.DB, table, column string) bool {
 		var defaultValue any
 		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
 			t.Fatalf("scan table_info(%s): %v", table, err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
+}
+
+func tableHasExtendedColumn(t *testing.T, db *sql.DB, table, column string) bool {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA table_xinfo(` + table + `)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_xinfo(%s): %v", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey, hidden int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(
+			&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey, &hidden,
+		); err != nil {
+			t.Fatalf("scan table_xinfo(%s): %v", table, err)
 		}
 		if name == column {
 			return true

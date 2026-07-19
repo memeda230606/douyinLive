@@ -353,6 +353,97 @@ var schemaMigrations = []migration{
 				ON capture_gaps(session_id, kind, recovered, start_offset_ms)`,
 		},
 	},
+	{
+		Version: 4,
+		Name:    "media_manifest_and_recording_roots",
+		Statements: []string{
+			`CREATE TABLE recording_roots (
+				id TEXT PRIMARY KEY,
+				absolute_path TEXT NOT NULL CHECK (length(trim(absolute_path)) > 0),
+				canonical_key TEXT NOT NULL UNIQUE
+					CHECK (length(canonical_key) = 64 AND canonical_key NOT GLOB '*[^0-9a-f]*'),
+				volume_identity TEXT NOT NULL
+					CHECK (length(volume_identity) = 64 AND volume_identity NOT GLOB '*[^0-9a-f]*'),
+				status TEXT NOT NULL CHECK (status IN ('ready')),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+				last_verified_at INTEGER NOT NULL CHECK (last_verified_at >= created_at)
+			)`,
+			`CREATE INDEX idx_recording_roots_status_verified
+				ON recording_roots(status, last_verified_at, id)`,
+			`CREATE TABLE session_media (
+				session_id TEXT PRIMARY KEY REFERENCES live_sessions(id) ON DELETE CASCADE,
+				root_id TEXT REFERENCES recording_roots(id) ON DELETE RESTRICT,
+				relative_path TEXT NOT NULL CHECK (length(trim(relative_path)) > 0),
+				relative_key TEXT GENERATED ALWAYS AS (lower(relative_path)) STORED,
+				state TEXT NOT NULL CHECK (state IN ('open', 'finalizing', 'completed', 'incomplete')),
+				manifest_revision INTEGER NOT NULL DEFAULT 0 CHECK (manifest_revision >= 0),
+				manifest_dirty INTEGER NOT NULL DEFAULT 1 CHECK (manifest_dirty IN (0, 1)),
+				media_epoch_at INTEGER,
+				attempts_json TEXT NOT NULL DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL CHECK (updated_at >= created_at)
+			)`,
+			`CREATE UNIQUE INDEX idx_session_media_internal_path
+				ON session_media(relative_key) WHERE root_id IS NULL`,
+			`CREATE UNIQUE INDEX idx_session_media_external_path
+				ON session_media(root_id, relative_key) WHERE root_id IS NOT NULL`,
+			`CREATE INDEX idx_session_media_dirty
+				ON session_media(manifest_dirty, state, session_id)`,
+			`CREATE TRIGGER trg_session_media_location_immutable
+				BEFORE UPDATE ON session_media
+				WHEN NEW.root_id IS NOT OLD.root_id OR NEW.relative_path IS NOT OLD.relative_path
+				BEGIN
+					SELECT RAISE(ABORT, 'session media location is immutable');
+				END`,
+			`ALTER TABLE media_segments ADD COLUMN attempt_id TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE media_segments ADD COLUMN attempt_sequence INTEGER
+				CHECK ((attempt_id = '' AND attempt_sequence IS NULL)
+					OR (length(trim(attempt_id)) > 0 AND attempt_sequence > 0))`,
+			`ALTER TABLE media_segments ADD COLUMN source_relative_path TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE media_segments ADD COLUMN probe_version TEXT NOT NULL DEFAULT ''`,
+			`ALTER TABLE media_segments ADD COLUMN error_code TEXT
+				CHECK (error_code IS NULL OR length(trim(error_code)) > 0)`,
+			`CREATE UNIQUE INDEX idx_media_segments_attempt_sequence
+				ON media_segments(session_id, attempt_id, attempt_sequence)
+				WHERE attempt_id <> ''`,
+			`CREATE UNIQUE INDEX idx_media_segments_relative_path_key
+				ON media_segments(session_id, lower(relative_path))`,
+			`CREATE UNIQUE INDEX idx_media_segments_source_path
+				ON media_segments(session_id, lower(source_relative_path))
+				WHERE source_relative_path <> ''`,
+			`CREATE UNIQUE INDEX idx_media_segments_session_id
+				ON media_segments(session_id, id)`,
+			`CREATE TABLE media_artifacts (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+				media_segment_id TEXT NOT NULL,
+				kind TEXT NOT NULL CHECK (kind IN ('asr_wav', 'playback_mp4')),
+				relative_path TEXT NOT NULL CHECK (length(trim(relative_path)) > 0),
+				container TEXT NOT NULL DEFAULT '',
+				codec TEXT NOT NULL DEFAULT '',
+				duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+				size_bytes INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+				sample_rate INTEGER NOT NULL DEFAULT 0 CHECK (sample_rate >= 0),
+				channels INTEGER NOT NULL DEFAULT 0 CHECK (channels >= 0),
+				sha256 TEXT NOT NULL DEFAULT '' CHECK (length(sha256) IN (0, 64)),
+				source_sha256 TEXT NOT NULL DEFAULT '' CHECK (length(source_sha256) IN (0, 64)),
+				status TEXT NOT NULL
+					CHECK (status IN ('pending', 'pending_transcode', 'complete', 'failed', 'missing', 'not_applicable')),
+				error_code TEXT CHECK (error_code IS NULL OR length(trim(error_code)) > 0),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+				UNIQUE(media_segment_id, kind),
+				UNIQUE(session_id, relative_path),
+				FOREIGN KEY(session_id, media_segment_id)
+					REFERENCES media_segments(session_id, id) ON DELETE CASCADE
+			)`,
+			`CREATE INDEX idx_media_artifacts_session_status
+				ON media_artifacts(session_id, status, kind, media_segment_id)`,
+			`CREATE UNIQUE INDEX idx_media_artifacts_relative_path_key
+				ON media_artifacts(session_id, lower(relative_path))`,
+		},
+	},
 }
 
 const createMigrationTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (

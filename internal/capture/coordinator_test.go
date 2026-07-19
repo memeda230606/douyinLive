@@ -653,7 +653,7 @@ func TestCoordinatorRecorderRebindFailureDegradesWithoutEndingSession(t *testing
 	}
 }
 
-func TestCoordinatorFinalizeTimeoutIsBoundedAndMarksIncomplete(t *testing.T) {
+func TestCoordinatorFinalizeTimeoutIsBoundedAndRemainsOwnedNonterminal(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
 	recorder := &fakeRecorder{stopFunc: func(ctx context.Context) error {
@@ -679,13 +679,13 @@ func TestCoordinatorFinalizeTimeoutIsBoundedAndMarksIncomplete(t *testing.T) {
 	defer cancel()
 	started := time.Now()
 	finalized, err := session.Finalize(ctx, newV7(t), FinalizeShutdown)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("Finalize() error = %v, want deadline", err)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrCaptureCleanupPending) {
+		t.Fatalf("Finalize() error = %v, want owned cleanup pending deadline", err)
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("Finalize() elapsed = %v, want bounded return", elapsed)
 	}
-	if finalized.Status != SessionInterrupted || finalized.RecordingStatus != RecordingIncomplete {
+	if finalized.Status != SessionFinalizing || finalized.RecordingStatus != RecordingFinalizing {
 		t.Fatalf("timed out finalization = %+v", finalized)
 	}
 }
@@ -754,10 +754,18 @@ func TestCoordinatorCleansCommittedRowsWhenManifestMaterializationReportsError(t
 	}
 }
 
-func TestCoordinatorCancelledFinalizeStillPersistsInterruptedTerminalState(t *testing.T) {
+func TestCoordinatorCancelledFinalizeRetainsSinkOwnerUntilRetryConverges(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
-	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{Now: func() time.Time { return now }})
+	release := make(chan struct{})
+	sink := &fakeEventSink{flushFunc: func(context.Context) error {
+		<-release
+		return nil
+	}}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now:              func() time.Time { return now },
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) { return sink, nil },
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,11 +778,20 @@ func TestCoordinatorCancelledFinalizeStillPersistsInterruptedTerminalState(t *te
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	finalized, err := session.Finalize(ctx, newV7(t), FinalizeShutdown)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Finalize() error = %v, want canceled", err)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrCaptureCleanupPending) {
+		t.Fatalf("Finalize() error = %v, want owned sink cleanup pending cancellation", err)
 	}
-	if finalized.Status != SessionInterrupted || finalized.RecordingStatus != RecordingDisabled {
-		t.Fatalf("cancelled finalization = %+v", finalized)
+	if finalized.Status != SessionFinalizing || finalized.RecordingStatus != RecordingFinalizing {
+		t.Fatalf("cancelled finalization = %+v, want nonterminal owner", finalized)
+	}
+
+	close(release)
+	completed, err := session.Finalize(context.Background(), newV7(t), FinalizeShutdown)
+	if err != nil {
+		t.Fatalf("Finalize() retry error = %v", err)
+	}
+	if completed.Status != SessionCompleted || completed.RecordingStatus != RecordingDisabled {
+		t.Fatalf("completed finalization = %+v", completed)
 	}
 }
 
@@ -1100,7 +1117,7 @@ func TestCoordinatorFinalizeRetryUsesFrozenTerminalTarget(t *testing.T) {
 	}{
 		{name: "disabled", reason: FinalizeShutdown, wantStatus: SessionCompleted, wantRecording: RecordingDisabled},
 		{name: "unavailable", recordEnabled: true, recorderMode: "unavailable", reason: FinalizeShutdown, wantStatus: SessionCompleted, wantRecording: RecordingUnavailable},
-		{name: "timeout", recordEnabled: true, recorderMode: "timeout", reason: FinalizeShutdown, wantStatus: SessionInterrupted, wantRecording: RecordingIncomplete, wantCleanupError: true, wantContextExpiry: true},
+		{name: "cleanup_error", recordEnabled: true, recorderMode: "cleanup_error", reason: FinalizeShutdown, wantStatus: SessionInterrupted, wantRecording: RecordingIncomplete, wantCleanupError: true},
 		{name: "failure_active", recordEnabled: true, recorderMode: "active", reason: FinalizeFailure, wantStatus: SessionFailed, wantRecording: RecordingFailed},
 		{name: "failure_disabled", reason: FinalizeFailure, wantStatus: SessionFailed, wantRecording: RecordingDisabled},
 	}
@@ -1115,10 +1132,9 @@ func TestCoordinatorFinalizeRetryUsesFrozenTerminalTarget(t *testing.T) {
 				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 					return nil, ErrRecordingUnavailable
 				}
-			case "timeout":
+			case "cleanup_error":
 				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
-					return &fakeRecorder{stopFunc: func(ctx context.Context) error {
-						<-ctx.Done()
+					return &fakeRecorder{stopFunc: func(context.Context) error {
 						return errors.New("sensitive recorder timeout detail")
 					}}, nil
 				}
@@ -1408,6 +1424,389 @@ func TestFinalizeWaitsForInflightEventAcceptBeforeSinkClose(t *testing.T) {
 		t.Fatal("message callback did not complete")
 	}
 }
+
+func TestCoordinatorFinalizeTimeoutRetainsRecorderOwnerUntilSharedStopCompletes(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	stopGate := make(chan struct{})
+	stopStarted := make(chan struct{})
+	var startOnce sync.Once
+	recorder := &fakeRecorder{stopFunc: func(ctx context.Context) error {
+		startOnce.Do(func() { close(stopStarted) })
+		select {
+		case <-stopGate:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	sink := &fakeEventSink{}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return sink, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCaptureSource(nil)
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	first, firstErr := session.Finalize(firstCtx, newV7(t), FinalizeOffline)
+	firstCancel()
+	if !errors.Is(firstErr, ErrCaptureCleanupPending) ||
+		first.Status != SessionFinalizing || first.RecordingStatus != RecordingFinalizing {
+		t.Fatalf("first Finalize = %+v, %v; want nonterminal cleanup pending", first, firstErr)
+	}
+	select {
+	case <-stopStarted:
+	default:
+		t.Fatal("recorder Stop was not started")
+	}
+	runtime := session.(*sessionRuntime)
+	runtime.mu.Lock()
+	owned := sameRecorderInstance(runtime.recorder, recorder)
+	runtime.mu.Unlock()
+	coordinator.registryMu.Lock()
+	registered := coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if !owned || !registered || sink.flushes != 0 || source.unsubscribed != 0 {
+		t.Fatalf("pending cleanup owner = owned:%t registered:%t flushes:%d unsubscribed:%d",
+			owned, registered, sink.flushes, source.unsubscribed)
+	}
+
+	close(stopGate)
+	terminal, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatalf("second Finalize after shared stop completion: %v", err)
+	}
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingCompleted {
+		t.Fatalf("terminal session = %+v, want completed recording", terminal)
+	}
+	coordinator.registryMu.Lock()
+	registered = coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if registered {
+		t.Fatal("terminal runtime remained registered")
+	}
+	if recorder.stops != 2 || sink.flushes != 1 || source.unsubscribed != 1 {
+		t.Fatalf("completed cleanup calls = stops:%d flushes:%d unsubscribed:%d",
+			recorder.stops, sink.flushes, source.unsubscribed)
+	}
+}
+
+func TestCoordinatorRecorderExitRetainsCleanupOwnerForLaterFinalize(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	stopGate := make(chan struct{})
+	stopTimedOut := make(chan struct{})
+	var timeoutOnce sync.Once
+	recorder := newFakeEventRecorder("attempt-current")
+	recorder.stopFunc = func(ctx context.Context) error {
+		select {
+		case <-stopGate:
+			return nil
+		case <-ctx.Done():
+			timeoutOnce.Do(func() { close(stopTimedOut) })
+			return ctx.Err()
+		}
+	}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now }, CommitTimeout: 10 * time.Millisecond,
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, newFakeCaptureSource(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder.events <- RecorderEvent{
+		Kind: RecorderEventProcessExited, AttemptID: "attempt-current",
+		ErrorCode: RecorderProcessExitedErrorCode,
+	}
+	unavailable := waitForRecordingStatus(t, session, RecordingUnavailable)
+	if unavailable.Status != SessionRecording {
+		t.Fatalf("recorder exit session = %+v", unavailable)
+	}
+	select {
+	case <-stopTimedOut:
+	case <-time.After(time.Second):
+		t.Fatal("event cleanup Stop did not reach its bounded timeout")
+	}
+	runtime := session.(*sessionRuntime)
+	runtime.mu.Lock()
+	owned := sameRecorderInstance(runtime.recorder, recorder)
+	runtime.mu.Unlock()
+	coordinator.registryMu.Lock()
+	registered := coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if !owned || !registered {
+		t.Fatalf("recorder exit cleanup owner = owned:%t registered:%t", owned, registered)
+	}
+
+	close(stopGate)
+	terminal, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatalf("Finalize after recorder-exit cleanup completion: %v", err)
+	}
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingUnavailable {
+		t.Fatalf("terminal recorder-exit session = %+v", terminal)
+	}
+	if recorder.stops != 2 {
+		t.Fatalf("recorder Stop calls = %d, want event start plus final owner wait", recorder.stops)
+	}
+}
+
+func TestCoordinatorOpenFailureKeepsRegistryOwnerUntilRecorderStopCompletes(t *testing.T) {
+	testCases := []struct {
+		name              string
+		factoryError      bool
+		activationFailure bool
+	}{
+		{name: "recorder_factory_returns_instance_and_error", factoryError: true},
+		{name: "activation_transition_fails", activationFailure: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			repository, store, _, roomID, now := openRepository(t)
+			defer store.Close()
+			var sessionRepository SessionRepository = repository
+			if testCase.activationFailure {
+				sessionRepository = &committedErrorRepository{
+					SessionRepository: repository, failActivation: true,
+				}
+			}
+			stopGate := make(chan struct{})
+			stopStarted := make(chan struct{})
+			var stopOnce sync.Once
+			recorder := &fakeRecorder{stopFunc: func(ctx context.Context) error {
+				stopOnce.Do(func() { close(stopStarted) })
+				select {
+				case <-stopGate:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}}
+			coordinator, err := newTestCoordinator(sessionRepository, CoordinatorOptions{
+				Now: func() time.Time { return now }, CommitTimeout: 50 * time.Millisecond,
+				RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+					if testCase.factoryError {
+						return recorder, errors.New("injected recorder factory failure")
+					}
+					return recorder, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			openCtx, openCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+			defer openCancel()
+			type openResult struct {
+				session Session
+				err     error
+			}
+			result := make(chan openResult, 1)
+			operationID := newV7(t)
+			go func() {
+				session, openErr := coordinator.Open(openCtx, OpenRequest{
+					RoomConfigID: roomID, OperationID: operationID,
+					RecordEnabled: true, StartedAt: now,
+				}, newFakeCaptureSource(nil))
+				result <- openResult{session: session, err: openErr}
+			}()
+			select {
+			case <-stopStarted:
+			case <-time.After(time.Second):
+				t.Fatal("failed Open did not start recorder cleanup")
+			}
+			<-openCtx.Done()
+			select {
+			case got := <-result:
+				t.Fatalf("Open returned before owned recorder cleanup: %+v", got)
+			case <-time.After(25 * time.Millisecond):
+			}
+			coordinator.registryMu.Lock()
+			registered := coordinator.runtimes[roomID] != nil
+			coordinator.registryMu.Unlock()
+			if !registered {
+				t.Fatal("failed Open dropped registry owner while recorder cleanup was pending")
+			}
+			close(stopGate)
+			select {
+			case got := <-result:
+				if got.session != nil || got.err == nil {
+					t.Fatalf("failed Open result = %+v", got)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Open did not return after recorder cleanup completed")
+			}
+			coordinator.registryMu.Lock()
+			registered = coordinator.runtimes[roomID] != nil
+			coordinator.registryMu.Unlock()
+			if registered || recorder.stops != 1 {
+				t.Fatalf("failed Open cleanup = registered:%t stops:%d", registered, recorder.stops)
+			}
+		})
+	}
+}
+
+func TestCoordinatorRebindFailureRetainsStoppingRecorderForFinalize(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	stopGate := make(chan struct{})
+	recorder := &fakeRecorder{
+		rebindFunc: func(context.Context, CaptureSource) error {
+			return errors.New("injected rebind failure")
+		},
+		stopFunc: func(ctx context.Context) error {
+			select {
+			case <-stopGate:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, newFakeCaptureSource(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebindCtx, rebindCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	_, rebindErr := session.Rebind(rebindCtx, newV7(t), newFakeCaptureSource(nil))
+	rebindCancel()
+	if rebindErr == nil {
+		t.Fatal("Rebind error = nil, want bounded transition/cleanup failure")
+	}
+	runtime := session.(*sessionRuntime)
+	runtime.mu.Lock()
+	owned := sameRecorderInstance(runtime.recorder, recorder)
+	runtime.mu.Unlock()
+	coordinator.registryMu.Lock()
+	registered := coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if !owned || !registered || recorder.stops != 1 {
+		t.Fatalf("rebind cleanup owner = owned:%t registered:%t stops:%d", owned, registered, recorder.stops)
+	}
+
+	close(stopGate)
+	terminal, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatalf("Finalize after failed Rebind cleanup: %v", err)
+	}
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingIncomplete {
+		t.Fatalf("terminal session after failed Rebind = %+v", terminal)
+	}
+	if recorder.stops != 2 {
+		t.Fatalf("recorder Stop calls = %d, want failed Rebind plus final owner wait", recorder.stops)
+	}
+}
+
+func TestCoordinatorFinalizeRetainsSinkOwnerAfterRecorderCompletes(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	sinkGate := make(chan struct{})
+	sinkStarted := make(chan struct{})
+	var sinkOnce sync.Once
+	sink := &fakeEventSink{flushFunc: func(ctx context.Context) error {
+		sinkOnce.Do(func() { close(sinkStarted) })
+		select {
+		case <-sinkGate:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	recorder := &fakeRecorder{}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time { return now },
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return recorder, nil
+		},
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return sink, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := newFakeCaptureSource(nil)
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	first, firstErr := session.Finalize(firstCtx, newV7(t), FinalizeOffline)
+	firstCancel()
+	if !errors.Is(firstErr, ErrCaptureCleanupPending) ||
+		first.Status != SessionFinalizing || first.RecordingStatus != RecordingFinalizing {
+		t.Fatalf("first sink-pending Finalize = %+v, %v", first, firstErr)
+	}
+	select {
+	case <-sinkStarted:
+	default:
+		t.Fatal("sink cleanup did not start")
+	}
+	runtime := session.(*sessionRuntime)
+	runtime.mu.Lock()
+	ownedSink := runtime.sink == sink
+	messageOwnerReleased := runtime.source == nil && runtime.subscriptionID == ""
+	runtime.mu.Unlock()
+	coordinator.registryMu.Lock()
+	registered := coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if !ownedSink || !messageOwnerReleased || !registered || recorder.stops != 1 ||
+		sink.flushes != 1 || source.unsubscribed != 1 {
+		t.Fatalf("sink pending owner = sink:%t messageReleased:%t registered:%t stops:%d flushes:%d unsubscribed:%d",
+			ownedSink, messageOwnerReleased, registered, recorder.stops, sink.flushes, source.unsubscribed)
+	}
+
+	close(sinkGate)
+	terminal, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatalf("Finalize after sink completion: %v", err)
+	}
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingCompleted {
+		t.Fatalf("terminal session after sink completion = %+v", terminal)
+	}
+	coordinator.registryMu.Lock()
+	registered = coordinator.runtimes[roomID] != nil
+	coordinator.registryMu.Unlock()
+	if registered || recorder.stops != 2 || sink.flushes != 2 || source.unsubscribed != 1 {
+		t.Fatalf("sink completed owner = registered:%t stops:%d flushes:%d unsubscribed:%d",
+			registered, recorder.stops, sink.flushes, source.unsubscribed)
+	}
+}
+
 func containsOrderedSubsequence(values, wanted []string) bool {
 	if len(wanted) == 0 {
 		return true

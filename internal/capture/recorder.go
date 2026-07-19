@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -25,6 +26,8 @@ var (
 	ErrRecorderStart             = errors.New("RECORDER_START_FAILED")
 	ErrRecorderStopped           = errors.New("RECORDER_STOPPED")
 	ErrRecorderStop              = errors.New("RECORDER_STOP_FAILED")
+	ErrRecorderMediaJournal      = errors.New("RECORDER_MEDIA_JOURNAL_FAILED")
+	ErrRecorderMediaIncomplete   = errors.New("RECORDER_MEDIA_INCOMPLETE")
 	ErrRecorderProcessExited     = errors.New(RecorderProcessExitedErrorCode)
 	ErrRecorderStreamExpired     = errors.New(RecorderStreamExpiredErrorCode)
 	ErrRecorderNetworkFailure    = errors.New(RecorderNetworkFailureErrorCode)
@@ -34,14 +37,18 @@ var (
 )
 
 const (
-	defaultRecorderConcurrency      = 1
-	defaultRecorderResolveSnapshots = 2
-	defaultRecorderSegmentSeconds   = 600
-	defaultRecorderGracefulTimeout  = 5 * time.Second
-	defaultRecorderTerminateTimeout = 3 * time.Second
-	defaultRecorderStartupWindow    = 8 * time.Second
-	defaultRecorderEventBuffer      = 16
-	recorderStderrBufferBytes       = 64 << 10
+	defaultRecorderConcurrency        = 1
+	defaultRecorderResolveSnapshots   = 2
+	defaultRecorderSegmentSeconds     = 600
+	defaultRecorderGracefulTimeout    = 5 * time.Second
+	defaultRecorderTerminateTimeout   = 3 * time.Second
+	defaultRecorderStartupWindow      = 8 * time.Second
+	defaultRecorderEventBuffer        = 16
+	recorderStderrBufferBytes         = 64 << 10
+	defaultRecorderCandidates         = 64
+	maximumRecorderResolveCandidates  = 4096
+	defaultMediaFinalizeTimeout       = 30 * time.Minute
+	defaultMediaAttemptJournalTimeout = 10 * time.Second
 )
 
 type RecorderEventKind string
@@ -76,11 +83,13 @@ type FFmpegDependencyInfo struct {
 
 type FFmpegRecorderFactoryOptions struct {
 	DataRoot                string
+	RecordingRoot           string
 	ExplicitFFmpeg          string
 	ExplicitProbe           string
 	BundledDir              string
 	MaxConcurrentRecordings int
 	Preference              douyinLive.StreamSelectionPreference
+	Repository              *SQLiteRepository
 }
 
 // String deliberately omits dependency and data-root paths as well as raw
@@ -138,6 +147,7 @@ type recorderDependencies struct {
 	newAttemptID   func() (string, error)
 
 	maxResolveSnapshots int
+	maxCandidates       int
 	gracefulTimeout     time.Duration
 	terminateTimeout    time.Duration
 	startupWindow       time.Duration
@@ -160,6 +170,7 @@ func defaultRecorderDependencies() recorderDependencies {
 			return id.String(), err
 		},
 		maxResolveSnapshots: defaultRecorderResolveSnapshots,
+		maxCandidates:       defaultRecorderCandidates,
 		gracefulTimeout:     defaultRecorderGracefulTimeout,
 		terminateTimeout:    defaultRecorderTerminateTimeout,
 		startupWindow:       defaultRecorderStartupWindow,
@@ -184,6 +195,9 @@ func normalizeRecorderDependencies(dependencies recorderDependencies) (recorderD
 	if dependencies.maxResolveSnapshots == 0 {
 		dependencies.maxResolveSnapshots = defaults.maxResolveSnapshots
 	}
+	if dependencies.maxCandidates == 0 {
+		dependencies.maxCandidates = defaults.maxCandidates
+	}
 	if dependencies.gracefulTimeout == 0 {
 		dependencies.gracefulTimeout = defaults.gracefulTimeout
 	}
@@ -197,6 +211,7 @@ func normalizeRecorderDependencies(dependencies recorderDependencies) (recorderD
 		dependencies.eventBuffer = defaults.eventBuffer
 	}
 	if dependencies.maxResolveSnapshots < 1 || dependencies.gracefulTimeout < 0 ||
+		dependencies.maxCandidates < 1 || dependencies.maxCandidates > defaultRecorderCandidates ||
 		dependencies.terminateTimeout < 0 || dependencies.startupWindow < 0 || dependencies.eventBuffer < 1 {
 		return recorderDependencies{}, ErrRecorderConfiguration
 	}
@@ -211,6 +226,7 @@ func validateRecorderFactoryOptions(ctx context.Context, options FFmpegRecorderF
 		return err
 	}
 	if !validRecorderFactoryPath(options.DataRoot, true, true) ||
+		!validRecorderFactoryPath(options.RecordingRoot, false, true) ||
 		!validRecorderFactoryPath(options.ExplicitFFmpeg, false, false) ||
 		!validRecorderFactoryPath(options.ExplicitProbe, false, false) ||
 		!validRecorderFactoryPath(options.BundledDir, false, false) ||
@@ -253,7 +269,12 @@ func newFFmpegRecorderFactoryWithTools(
 		maximum = defaultRecorderConcurrency
 	}
 	dataRoot := filepath.Clean(options.DataRoot)
+	recordingRoot := options.RecordingRoot
+	if recordingRoot == "" {
+		recordingRoot = filepath.Join(dataRoot, "rooms")
+	}
 	capacity := make(chan struct{}, maximum)
+	proxyCapacity := make(chan struct{}, 1)
 	info := FFmpegDependencyInfo{
 		FFmpeg:  safeFFmpegBinaryInfo(tools.FFmpeg),
 		FFprobe: safeFFmpegBinaryInfo(tools.FFprobe),
@@ -268,6 +289,10 @@ func newFFmpegRecorderFactoryWithTools(
 		if ctx == nil || source == nil {
 			return nil, ErrRecorderConfiguration
 		}
+		segmentSeconds, segmentErr := recorderSegmentSeconds(request.Profile.SegmentMinutes)
+		if segmentErr != nil {
+			return nil, segmentErr
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -280,33 +305,106 @@ func newFFmpegRecorderFactoryWithTools(
 		}
 		release := func() { <-capacity }
 
-		mediaDirectory, err := recorderMediaDirectory(dataRoot, session)
-		if err != nil {
-			release()
-			return nil, errors.Join(ErrRecordingUnavailable, err)
+		var mediaFinalizer SessionMediaFinalizer
+		var attemptJournal SessionMediaAttemptJournal
+		var mediaDirectory string
+		var mediaErr error
+		if options.Repository == nil {
+			mediaDirectory, mediaErr = recorderMediaDirectory(dataRoot, session)
+			if mediaErr == nil && request.Profile.SaveDirectory != "" &&
+				!sameRecorderDirectory(request.Profile.SaveDirectory, mediaDirectory) {
+				mediaErr = ErrRecorderConfiguration
+			}
+		} else {
+			mediaDirectory, mediaFinalizer, mediaErr = prepareRecorderSessionMedia(ctx, recorderSessionMediaOptions{
+				Repository: options.Repository, Tools: tools, DataRoot: dataRoot,
+				RecordingRoot: recordingRoot, SaveDirectory: request.Profile.SaveDirectory,
+				Session: session, ProxyCapacity: proxyCapacity,
+			})
+			if mediaErr == nil {
+				var ok bool
+				attemptJournal, ok = mediaFinalizer.(SessionMediaAttemptJournal)
+				if !ok {
+					mediaErr = ErrRecorderConfiguration
+				}
+			}
 		}
-		if request.Profile.SaveDirectory != "" && !sameRecorderDirectory(request.Profile.SaveDirectory, mediaDirectory) {
+		if mediaErr != nil {
 			release()
-			return nil, ErrRecorderConfiguration
-		}
-
-		segmentSeconds, err := recorderSegmentSeconds(request.Profile.SegmentMinutes)
-		if err != nil {
-			release()
-			return nil, err
+			return nil, errors.Join(ErrRecordingUnavailable, mediaErr)
 		}
 		preference := options.Preference
 		preference.QualityKey = request.Profile.Quality
-		recorder, err := newFFmpegRecorder(ctx, source, recorderOptions{
+		recorder, recorderErr := newFFmpegRecorder(ctx, source, recorderOptions{
 			tools: tools, mediaDirectory: mediaDirectory,
 			preference: preference, segmentSeconds: segmentSeconds,
+			mediaFinalizer: mediaFinalizer, attemptJournal: attemptJournal,
 		}, normalizedDependencies, release)
-		if err != nil {
-			return nil, err
+		if recorderErr != nil {
+			return nil, recorderErr
 		}
 		return recorder, nil
 	})
 	return factory, info, nil
+}
+
+type recorderSessionMediaOptions struct {
+	Repository    *SQLiteRepository
+	Tools         ffmpegTools
+	DataRoot      string
+	RecordingRoot string
+	SaveDirectory string
+	Session       LiveSession
+	ProxyCapacity chan struct{}
+}
+
+func prepareRecorderSessionMedia(
+	ctx context.Context,
+	options recorderSessionMediaOptions,
+) (string, SessionMediaFinalizer, error) {
+	if ctx == nil || options.Repository == nil || options.ProxyCapacity == nil ||
+		!validRecorderFactoryPath(options.DataRoot, true, true) ||
+		!validRecorderFactoryPath(options.RecordingRoot, true, true) ||
+		(options.SaveDirectory != "" && !validRecorderFactoryPath(options.SaveDirectory, true, true)) ||
+		validateUUIDv7("recorder media session", options.Session.ID) != nil ||
+		!validMediaRelativePath(options.Session.DataPath) {
+		return "", nil, ErrRecorderConfiguration
+	}
+	effectiveRoot := options.RecordingRoot
+	if options.SaveDirectory != "" {
+		effectiveRoot = options.SaveDirectory
+	}
+	internalRoomsRoot := filepath.Join(filepath.Clean(options.DataRoot), "rooms")
+	logicalRoot := filepath.Clean(options.DataRoot)
+	relativePath := options.Session.DataPath
+	var rootID *string
+	if !sameRecorderDirectory(effectiveRoot, internalRoomsRoot) {
+		registered, err := options.Repository.RegisterRecordingRoot(ctx, effectiveRoot)
+		if err != nil {
+			return "", nil, err
+		}
+		logicalRoot = registered.absolutePath
+		trimmed, ok := strings.CutPrefix(options.Session.DataPath, "rooms/")
+		if !ok || !validMediaRelativePath(trimmed) || pathpkg.Clean(trimmed) != trimmed {
+			return "", nil, ErrRecorderConfiguration
+		}
+		relativePath = trimmed
+		id := registered.ID
+		rootID = &id
+	}
+	finalizer, err := newSQLiteSessionMediaFinalizer(ctx, sessionMediaFinalizerOptions{
+		Repository: options.Repository, Tools: options.Tools, Root: logicalRoot,
+		RootID: rootID, SessionID: options.Session.ID, RelativePath: relativePath,
+		StartedAt: options.Session.StartedAt, ProxyCapacity: options.ProxyCapacity,
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	sessionDirectory, err := secureMediaSessionDirectory(logicalRoot, relativePath)
+	if err != nil {
+		return "", nil, err
+	}
+	return filepath.Join(sessionDirectory, "media"), finalizer, nil
 }
 func sameRecorderDirectory(requested, canonical string) bool {
 	if requested == "" || canonical == "" || !filepath.IsAbs(requested) || !filepath.IsAbs(canonical) {
@@ -373,6 +471,8 @@ type recorderOptions struct {
 	mediaDirectory string
 	preference     douyinLive.StreamSelectionPreference
 	segmentSeconds int
+	mediaFinalizer SessionMediaFinalizer
+	attemptJournal SessionMediaAttemptJournal
 }
 
 func (recorderOptions) String() string {
@@ -397,6 +497,8 @@ type FFmpegRecorder struct {
 	current      *recorderAttempt
 	pending      *recorderAttempt
 	events       chan RecorderEvent
+	attempts     []MediaAttempt
+	nextOrdinal  int
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
@@ -430,6 +532,7 @@ type recorderAttempt struct {
 	drainWG      sync.WaitGroup
 	finished     chan struct{}
 	exitCode     string // protected by FFmpegRecorder.mu
+	mediaIndex   int    // protected by FFmpegRecorder.mu
 }
 
 func newFFmpegRecorder(
@@ -441,7 +544,8 @@ func newFFmpegRecorder(
 ) (*FFmpegRecorder, error) {
 	if ctx == nil || source == nil || options.tools.ffmpegPath == "" ||
 		options.mediaDirectory == "" || !filepath.IsAbs(options.mediaDirectory) ||
-		options.segmentSeconds < 300 || options.segmentSeconds > 1800 {
+		options.segmentSeconds < 300 || options.segmentSeconds > 1800 ||
+		(options.mediaFinalizer == nil) != (options.attemptJournal == nil) {
 		if releaseCapacity != nil {
 			releaseCapacity()
 		}
@@ -478,10 +582,7 @@ func newFFmpegRecorder(
 		recorder.closeEventsLocked()
 		recorder.mu.Unlock()
 		if attempt != nil && !recorderAttemptFinished(attempt) {
-			go func() {
-				<-attempt.finished
-				recorder.release()
-			}()
+			go recorder.completeFailedStart(attempt)
 		} else {
 			recorder.release()
 		}
@@ -560,6 +661,8 @@ func (r *FFmpegRecorder) Rebind(ctx context.Context, source CaptureSource) error
 
 	if previous != nil {
 		graceful, shutdownErr := r.shutdownAttempt(ctx, previous)
+		journalErr := r.markAttemptClean(previous, graceful)
+		shutdownErr = errors.Join(shutdownErr, journalErr)
 		if !graceful {
 			r.mu.Lock()
 			r.hadUncleanExit = true
@@ -617,21 +720,78 @@ func (r *FFmpegRecorder) Stop(ctx context.Context) error {
 	var shutdownErr error
 	if attempt != nil {
 		graceful, shutdownErr = r.shutdownAttempt(ctx, attempt)
+		journalErr := r.markAttemptClean(attempt, graceful)
+		if journalErr != nil {
+			shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, journalErr)
+		}
 	}
 	if !graceful || previouslyUnclean {
 		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop)
 	}
-
-	if attempt == nil || recorderAttemptFinished(attempt) {
-		r.finishStop(shutdownErr)
-	} else {
-		go func() {
-			<-attempt.finished
-			r.finishStop(shutdownErr)
-		}()
+	shutdownContextErr := ctx.Err()
+	if shutdownContextErr != nil {
+		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, shutdownContextErr)
 	}
+
+	go func() {
+		if attempt != nil && !recorderAttemptFinished(attempt) {
+			<-attempt.finished
+		}
+		r.completeStop(shutdownErr)
+	}()
 	r.operationMu.Unlock()
-	return shutdownErr
+	select {
+	case <-r.stopDone:
+		r.mu.Lock()
+		err := r.stopErr
+		r.mu.Unlock()
+		return err
+	case <-ctx.Done():
+		if shutdownContextErr != nil {
+			return shutdownErr
+		}
+		return errors.Join(shutdownErr, ErrRecorderStop, ctx.Err())
+	}
+}
+
+func (r *FFmpegRecorder) completeStop(shutdownErr error) {
+	// Recording capacity covers the FFmpeg process and its drains, not the
+	// potentially long proxy generation phase. Proxy work has its own limit.
+	r.release()
+	finalizeErr := r.finalizeMedia()
+	if finalizeErr != nil {
+		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, finalizeErr)
+	}
+	r.finishStop(shutdownErr)
+}
+
+func (r *FFmpegRecorder) completeFailedStart(attempt *recorderAttempt) {
+	if attempt != nil && !recorderAttemptFinished(attempt) {
+		<-attempt.finished
+	}
+	// A failed constructor has no returned owner that can await database or
+	// proxy work. Leave the durable open attempt for P3-RCV and only converge
+	// the process/capacity lifecycle here.
+	r.release()
+}
+
+func (r *FFmpegRecorder) finalizeMedia() error {
+	if r == nil || r.options.mediaFinalizer == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultMediaFinalizeTimeout)
+	defer cancel()
+	r.mu.Lock()
+	attempts := append([]MediaAttempt(nil), r.attempts...)
+	r.mu.Unlock()
+	result, err := r.options.mediaFinalizer.Finalize(ctx, attempts)
+	if err != nil {
+		return err
+	}
+	if result.Snapshot.Session.State == SessionMediaIncomplete {
+		return ErrRecorderMediaIncomplete
+	}
+	return nil
 }
 
 func (r *FFmpegRecorder) finishStop(err error) {
@@ -704,9 +864,16 @@ func (r *FFmpegRecorder) bindLocked(ctx context.Context, source CaptureSource) e
 			_ = resolveErr
 			continue
 		}
+		if len(candidates) > maximumRecorderResolveCandidates {
+			lastCandidateErr = ErrRecorderStart
+			continue
+		}
 		ranked, rankErr := douyinLive.RankResolvedStreams(candidates, r.options.preference)
 		if rankErr != nil {
 			continue
+		}
+		if len(ranked) > r.dependencies.maxCandidates {
+			ranked = ranked[:r.dependencies.maxCandidates]
 		}
 		for _, candidate := range ranked {
 			urlDigest := sha256.Sum256([]byte(candidate.URL))
@@ -737,6 +904,8 @@ func (r *FFmpegRecorder) bindLocked(ctx context.Context, source CaptureSource) e
 				switch {
 				case errors.Is(startErr, ErrRecorderLocalResource),
 					errors.Is(startErr, ErrRecorderDependencyFailure):
+					return errors.Join(ErrRecordingUnavailable, startErr)
+				case errors.Is(startErr, ErrRecorderMediaJournal):
 					return errors.Join(ErrRecordingUnavailable, startErr)
 				case errors.Is(startErr, ErrRecorderStreamExpired),
 					errors.Is(startErr, ErrRecorderNetworkFailure),
@@ -772,9 +941,22 @@ func (r *FFmpegRecorder) commitCandidate(ctx context.Context, source CaptureSour
 			cause = ErrRecorderStart
 			classifyExit = true
 		default:
-			r.source = source
-			r.lastUnexpectedAttemptID = ""
-			attempt.starting = false
+			if attempt.mediaIndex < 0 || attempt.mediaIndex >= len(r.attempts) {
+				cause = ErrRecorderStart
+			} else {
+				updated := r.attempts[attempt.mediaIndex]
+				updated.Committed = true
+				// Keep the in-memory lifecycle monotonic while the watcher is
+				// blocked on r.mu; a journal failure fails this candidate closed.
+				r.attempts[attempt.mediaIndex] = updated
+				if err := r.updateMediaAttemptLocked(ctx, updated); err != nil {
+					cause = errors.Join(ErrRecorderStart, ErrRecorderMediaJournal, err)
+				} else {
+					r.source = source
+					r.lastUnexpectedAttemptID = ""
+					attempt.starting = false
+				}
+			}
 		}
 	}
 	if cause != nil && r.current == attempt {
@@ -789,15 +971,31 @@ func (r *FFmpegRecorder) commitCandidate(ctx context.Context, source CaptureSour
 }
 
 func (r *FFmpegRecorder) startCandidate(ctx context.Context, candidate douyinLive.ResolvedStream) (*recorderAttempt, error) {
+	startedAt := r.dependencies.now().UTC().Truncate(time.Millisecond)
 	attemptID, err := r.dependencies.newAttemptID()
 	if err != nil || !validRecorderAttemptID(attemptID) {
 		return nil, ErrRecorderStart
+	}
+	r.mu.Lock()
+	if r.nextOrdinal >= maximumMediaAttempts {
+		r.mu.Unlock()
+		return nil, ErrRecorderStart
+	}
+	r.nextOrdinal++
+	ordinal := r.nextOrdinal
+	r.mu.Unlock()
+	mediaAttempt := recorderMediaAttempt(
+		candidate, attemptID, ordinal, startedAt, r.options.segmentSeconds,
+	)
+	mediaIndex, err := r.appendMediaAttempt(ctx, mediaAttempt)
+	if err != nil {
+		return nil, errors.Join(ErrRecorderStart, ErrRecorderMediaJournal, err)
 	}
 	attemptDirectory := filepath.Join(r.options.mediaDirectory, ".attempt-"+attemptID)
 	if err := os.Mkdir(attemptDirectory, 0o700); err != nil {
 		return nil, ErrRecorderOutput
 	}
-	outputPattern, err := newFFmpegOutputPattern(attemptDirectory, r.dependencies.now(), attemptID)
+	outputPattern, err := newFFmpegOutputPattern(attemptDirectory, startedAt, attemptID)
 	if err != nil {
 		return nil, ErrRecorderOutput
 	}
@@ -827,7 +1025,8 @@ func (r *FFmpegRecorder) startCandidate(ctx context.Context, candidate douyinLiv
 	attempt := &recorderAttempt{
 		id: attemptID, process: process, streams: streams,
 		starting: true, stderrBuffer: newBoundedTextBuffer(recorderStderrBufferBytes),
-		progress: make(chan struct{}), startupEnd: make(chan struct{}),
+		mediaIndex: mediaIndex,
+		progress:   make(chan struct{}), startupEnd: make(chan struct{}),
 		finished: make(chan struct{}),
 	}
 	r.startAttemptDrains(attempt)
@@ -908,11 +1107,12 @@ func (r *FFmpegRecorder) failStartupAttempt(ctx context.Context, attempt *record
 	}
 	r.mu.Unlock()
 
-	_, shutdownErr := r.shutdownAttempt(ctx, attempt)
+	graceful, shutdownErr := r.shutdownAttempt(ctx, attempt)
+	journalErr := r.markAttemptClean(attempt, graceful)
 	if !recorderAttemptFinished(attempt) {
 		r.rememberPendingAttempt(attempt)
 	}
-	result := cause
+	result := errors.Join(cause, journalErr)
 	if classifyExit && errors.Is(cause, ErrRecorderStart) && recorderAttemptFinished(attempt) {
 		r.mu.Lock()
 		exitCode := attempt.exitCode
@@ -931,6 +1131,86 @@ func (r *FFmpegRecorder) failStartupAttempt(ctx context.Context, attempt *record
 func validRecorderAttemptID(value string) bool {
 	parsed, err := uuid.Parse(value)
 	return err == nil && parsed.Version() == 7
+}
+
+func recorderMediaAttempt(
+	candidate douyinLive.ResolvedStream,
+	attemptID string,
+	ordinal int,
+	startedAt time.Time,
+	segmentSeconds int,
+) MediaAttempt {
+	protocol := strings.ToLower(strings.TrimSpace(candidate.Protocol))
+	if !validMediaProtocol(protocol) {
+		protocol = "unknown"
+	}
+	codec := strings.ToLower(strings.TrimSpace(candidate.Codec))
+	if !validMediaCodec(codec) {
+		codec = "unknown"
+	}
+	bitrate := candidate.Bitrate
+	if bitrate < 0 {
+		bitrate = 0
+	}
+	return MediaAttempt{
+		ID: attemptID, Ordinal: ordinal, StartedAt: startedAt.UTC().UnixMilli(),
+		SegmentSeconds: segmentSeconds, VariantID: safeMediaAttemptToken(candidate.ID),
+		Protocol: protocol, QualityKey: safeMediaAttemptToken(candidate.QualityKey),
+		Quality: safeMediaAttemptToken(candidate.Quality), Codec: codec, Bitrate: bitrate,
+	}
+}
+
+func safeMediaAttemptToken(value string) string {
+	value = strings.TrimSpace(value)
+	if !validMediaSafeToken(value, true) {
+		return ""
+	}
+	return value
+}
+
+func (r *FFmpegRecorder) appendMediaAttempt(ctx context.Context, attempt MediaAttempt) (int, error) {
+	if r == nil || ctx == nil {
+		return -1, ErrRecorderMediaJournal
+	}
+	if r.options.attemptJournal != nil {
+		if err := r.options.attemptJournal.AppendMediaAttempt(ctx, attempt); err != nil {
+			return -1, err
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	index := len(r.attempts)
+	r.attempts = append(r.attempts, attempt)
+	return index, nil
+}
+
+// updateMediaAttemptLocked serializes the durable transition with watcher
+// state publication. Callers must hold r.mu.
+func (r *FFmpegRecorder) updateMediaAttemptLocked(ctx context.Context, attempt MediaAttempt) error {
+	if r.options.attemptJournal == nil {
+		return nil
+	}
+	return r.options.attemptJournal.UpdateMediaAttempt(ctx, attempt)
+}
+
+func (r *FFmpegRecorder) markAttemptClean(attempt *recorderAttempt, clean bool) error {
+	if r == nil || attempt == nil || !clean {
+		return nil
+	}
+	journalCtx, cancel := context.WithTimeout(context.Background(), defaultMediaAttemptJournalTimeout)
+	defer cancel()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if attempt.mediaIndex >= 0 && attempt.mediaIndex < len(r.attempts) {
+		updated := r.attempts[attempt.mediaIndex]
+		updated.Clean = true
+		r.attempts[attempt.mediaIndex] = updated
+		if err := r.updateMediaAttemptLocked(journalCtx, updated); err != nil {
+			return errors.Join(ErrRecorderMediaJournal, err)
+		}
+		return nil
+	}
+	return ErrRecorderMediaJournal
 }
 
 func (r *FFmpegRecorder) startAttemptDrains(attempt *recorderAttempt) {
@@ -994,8 +1274,8 @@ func (r *FFmpegRecorder) watchAttempt(attempt *recorderAttempt) {
 		}
 		r.enqueueLatestEventLocked(event)
 	}
-	r.mu.Unlock()
 	close(attempt.finished)
+	r.mu.Unlock()
 }
 
 func classifyRecorderExit(summary string) string {

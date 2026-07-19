@@ -2,6 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
+> 实施状态（2026-07-19）：Schema v4 与 P3-MEDIA-001 已完成；PHASE-3 已完成 22/30 点（73%），当前进入 P3-RCV-001。
+> 最近验收：[P3-MEDIA 媒体收尾](validation/2026-07-19-p3-media-finalization.md)
 
 ## 1. 目标与原则
 
@@ -16,7 +18,7 @@
 
 ## 2. 数据根目录
 
-默认根目录使用 Windows 用户本地应用数据目录下的产品子目录；用户可改到其他本地固定磁盘。网络共享、可移动磁盘和云同步目录默认显示风险警告但不硬性禁止。
+默认数据根使用 Windows 用户本地应用数据目录下的产品子目录；数据根承载数据库、配置、日志、事件 spool、报告与默认媒体。数据根迁移仍采用受控整库流程，不能用录制目录设置替代。
 
 ```text
 <data-root>/
@@ -32,7 +34,14 @@
 └── backups/
 ```
 
-- 配置、数据库、媒体和日志分别设置权限；凭据文件不得进入诊断包。
+P3-MEDIA 对 `RecordingDirectory` 采用独立媒体根语义：
+
+- 默认内部媒体根是 `<data-root>/rooms`；`session_media.root_id` 为 NULL，媒体相对路径保留 `rooms/<room-config-id>/sessions/...`。
+- 外部媒体根必须是已存在的绝对目录，先以 `.douyinlive-recording-root.json`、规范路径摘要、卷身份摘要和 SQLite `recording_roots` 行注册；外部场次媒体相对路径为 `<room-config-id>/sessions/...`。
+- 外部根只保存 `media/`、`audio/` 和 `manifests/media.json`。对应数据库、配置、日志、`session.json`、事件 spool 与报告仍在数据根，二者通过稳定 root ID 和场次 ID 关联。
+- 活动场次的媒体位置不可变；设置切换只影响后续场次。网络共享、可移动磁盘和云同步目录仍显示风险提示，身份或可写性漂移时录制 fail closed。
+
+- 配置、数据库、内部/外部媒体根和日志分别设置权限；凭据文件不得进入诊断包，外部 root 的绝对路径也不得跨 DTO、通用格式化或结构化日志表面。
 - 用户选择新目录时先执行可写、原子重命名、空闲空间和路径长度检查。
 - 目录迁移采用“复制 → 校验 → 切换 → 保留旧目录提示”，不边运行边移动活跃场次。
 
@@ -45,6 +54,7 @@
 - `journal_mode=WAL`、`foreign_keys=ON`、`busy_timeout=5000`、`synchronous=NORMAL`。
 - 每次启动执行快速完整性检查；异常时进入只读恢复模式，不自动覆盖数据库。
 - schema 版本保存在 `schema_migrations`，迁移只前进；升级前生成数据库备份。
+- 当前实现为 Schema v4。v3→v4 升级先保留可打开的 v3 备份，再在单一迁移事务中创建媒体对象；任一 DDL/约束失败都回滚表、列和版本。
 
 ### 3.2 标识、时间和枚举
 
@@ -125,24 +135,75 @@
 
 唯一约束：`(session_id, dedupe_key)`；新 source 事件还受 `(session_id, ingest_sequence)` 条件唯一索引保护，aggregate 可与其来源共享序列。索引：`(session_id, ingest_sequence, event_role)`、`(session_id, session_offset_ms)`、`(session_id, kind, session_offset_ms)`、`user_hash`。
 
-### 4.4 `media_segments`
+### 4.4 Schema v4 媒体索引
+
+P3-MEDIA 将录制根、场次媒体快照、原始分片和派生产物拆成四个耐久契约。SQLite 是事实来源；`media.json` 只是不含流 URL、绝对路径和敏感查询参数的可修复投影。
+
+#### 4.4.1 `recording_roots`
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | TEXT PK | 分片 ID |
-| `session_id` | TEXT FK | 所属场次 |
-| `sequence` | INTEGER | 从 1 开始连续序号 |
-| `relative_path` | TEXT | 工作/播放文件路径 |
-| `container` | TEXT | mkv/mp4/ts 等 |
-| `video_codec`/`audio_codec` | TEXT | 探测结果 |
-| `started_at`/`ended_at` | INTEGER | 墙钟范围 |
-| `pts_start_ms`/`pts_end_ms` | INTEGER NULL | 媒体时间戳 |
-| `duration_ms` | INTEGER | 探测时长 |
-| `size_bytes` | INTEGER | 文件大小 |
-| `sha256` | TEXT NULL | 完成后计算 |
-| `status` | TEXT | partial/complete/recovered/corrupt/missing |
+| `id` | TEXT PK | 外部录制根 UUIDv7 |
+| `absolute_path` | TEXT | 仅后端使用的规范绝对路径，不进入 DTO/日志 |
+| `canonical_key` | TEXT UNIQUE | 规范路径的 64 字符小写十六进制 SHA-256 |
+| `volume_identity` | TEXT | 卷名/序列/文件系统组合的 SHA-256 |
+| `status` | TEXT | 当前仅允许 ready |
+| `created_at`/`updated_at`/`last_verified_at` | INTEGER | 注册和最近身份核验时间 |
 
-唯一约束：`(session_id, sequence)`；路径在同场次内唯一。
+目录内 marker 只保存版本、root ID 与卷身份。marker 先原子落盘再提交 SQLite，因此进程在两者之间崩溃可安全重试；marker、数据库行、规范路径或卷身份不一致时拒绝继续。被 `session_media` 引用的 root 受 `ON DELETE RESTRICT` 保护。
+
+#### 4.4.2 `session_media`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `session_id` | TEXT PK/FK | 一场次一份媒体快照，级联引用 `live_sessions` |
+| `root_id` | TEXT NULL FK | NULL 表示内部数据根；非 NULL 引用外部录制根 |
+| `relative_path`/`relative_key` | TEXT | 受限相对路径及其大小写无关唯一键 |
+| `state` | TEXT | open/finalizing/completed/incomplete |
+| `manifest_revision` | INTEGER | 从 0 单调递增的媒体 CAS 版本 |
+| `manifest_dirty` | INTEGER | `media.json` 尚未按本 revision 耐久确认 |
+| `media_epoch_at` | INTEGER NULL | 首个有效媒体墙钟基准 |
+| `attempts_json` | TEXT | 按 ordinal 排序、URL/路径均已剔除的 attempt journal |
+| `created_at`/`updated_at` | INTEGER | 严格非倒退审计时间 |
+
+内部路径全局唯一，外部路径按 `(root_id, relative_key)` 唯一；触发器禁止修改 `root_id` 或 `relative_path`。attempt 只保存 UUIDv7、ordinal、开始时间、分片秒数、committed/clean 及受限协议/质量/编码/码率，最多 128 条。
+
+#### 4.4.3 `media_segments`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | TEXT PK | 分片 UUIDv7 |
+| `session_id` | TEXT FK | 所属场次 |
+| `sequence` | INTEGER | 场次内稳定序号 |
+| `relative_path`/`source_relative_path` | TEXT | 最终 `.mkv` 与 attempt `.mkv.partial` 相对路径 |
+| `container` | TEXT | 当前完成媒体为 mkv |
+| `video_codec`/`audio_codec` | TEXT NULL | ffprobe 探测结果 |
+| `started_at`/`ended_at` | INTEGER | 墙钟范围 |
+| `pts_start_ms`/`pts_end_ms` | INTEGER NULL | 媒体时间戳范围 |
+| `duration_ms`/`size_bytes` | INTEGER | 探测时长与已核验字节数 |
+| `sha256` | TEXT NULL | 已核验内容摘要 |
+| `status` | TEXT | partial/complete/recovered/corrupt/missing |
+| `attempt_id`/`attempt_sequence` | TEXT/INTEGER | 来源 attempt 与其内分片序号 |
+| `probe_version`/`error_code` | TEXT | 探测规则版本与稳定失败码 |
+
+唯一约束覆盖 `(session_id, sequence)`、`(session_id, attempt_id, attempt_sequence)`，最终路径和源路径还使用大小写无关唯一索引。每场次最多 4,096 行；读取使用上限加一，upsert 后在同一事务中核对耐久并集，超限不推进 revision。
+
+#### 4.4.4 `media_artifacts`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | TEXT PK | 派生产物 UUIDv7 |
+| `session_id`/`media_segment_id` | TEXT FK | 同场次原始分片复合外键 |
+| `kind` | TEXT | asr_wav/playback_mp4 |
+| `relative_path` | TEXT | 产物相对媒体根路径 |
+| `container`/`codec` | TEXT | wav/pcm_s16le 或 mp4/h264 |
+| `duration_ms`/`size_bytes` | INTEGER | 预期时长与已核验字节数 |
+| `sample_rate`/`channels` | INTEGER | ASR WAV 固定为 16000/1 |
+| `sha256`/`source_sha256` | TEXT | 产物与来源分片摘要 |
+| `status`/`error_code` | TEXT | pending/pending_transcode/complete/failed/missing/not_applicable 及稳定失败码 |
+| `created_at`/`updated_at` | INTEGER | 创建与最后审计时间 |
+
+每个原始分片和 kind 唯一，路径按场次大小写无关唯一，复合外键禁止跨场次绑定。上限为每分片两个、每场次 8,192 个产物；`pending_transcode` 明确表示保留原始 MKV、后续再转码，不冒充已生成 MP4。
 
 ### 4.5 `transcript_segments`
 
@@ -235,6 +296,14 @@
 - spool 超出 4 GiB 上限、发生中段损坏或无法 Sync 时停止该事件 sink 的接纳并保留严重诊断；不得绕过损坏继续推进 checkpoint，也不得无提示丢弃。
 - 完整性检查失败时复制数据库、进入只读模式并提供“从 session.json/spool 重建索引”工具。
 
+### 5.4 媒体快照与 manifest
+
+- Recorder 在任何 FFmpeg 进程创建媒体前先用 `session_media.manifest_revision` CAS 追加 URL-free/path-free attempt；启动提交和优雅停止只能把 committed/clean 从 false 单调推进为 true。
+- Finalizer 先审计已完成证据，再有界扫描 attempt/final 文件；metadata 与首个目标流 packet 共用一次 10 秒/1 MiB ffprobe 预算。探测前后文件身份、大小、SHA-256 或外部 root 身份变化均 fail closed。
+- 第一笔 CAS 把分片和计划产物写为 finalizing，成功 materialize `media.json` 后生成 WAV/MP4，再次审计原始与产物，第二笔 CAS 才推进 completed/incomplete。首次有效媒体时钟与 `live_sessions.media_epoch_at/clock_source` 在同一数据库事务中推进。
+- 每次媒体 CAS 都先把 `manifest_dirty` 置 1；`media.json` 用临时文件、Sync 和原子替换写入，随后只按同 session/revision 精确清脏。提交结果不明时用独立短 context 重读完整耐久快照，不能让调用方取消逆转已提交 attempt。
+- 已验证文件后续缺失、变更为零字节/目录/符号链接/junction/reparse，或内容摘要变化时，保留原 size/SHA 证据并持久化 missing/changed。失败/缺失代理可重试，发布后提交前崩溃可收养同源合法产物，冲突或变更产物不静默覆盖。
+
 ## 6. 统一时间轴
 
 ### 6.1 时间字段优先级
@@ -254,7 +323,7 @@
 
 - 每个分片维护墙钟范围、PTS 范围和场次偏移范围。
 - 播放器定位事件时先找包含 `adjusted_offset_ms` 的分片，再换算为分片内时间。
-- 分片重叠优先选择状态 `complete` 且校验通过者；分片缺失返回 Gap，不静默跳到错误画面。
+- 分片重叠优先选择状态为 `complete/recovered`、SHA-256 与当前常规文件均通过审计者；`missing/corrupt` 返回 Gap，不静默跳到错误画面。播放 MP4 只有 H.264 + 可选 AAC 且通过目标视频包探测时才可直接使用，`pending_transcode` 必须显式降级到原始 MKV 或后续转码。
 - 首版验收目标：无人工校准时事件与音视频 P95 误差 ≤ 5 秒；完成校准标记后 P95 ≤ 1.5 秒。
 
 ## 7. 基础指标
@@ -343,7 +412,8 @@ type ASRProvider interface {
 ### 10.2 备份
 
 - SQLite 使用在线 backup API/一致性快照，不直接复制活跃 WAL 组合。
-- 场次媒体采用 manifest + SHA-256 校验，可选择只备份数据库和报告。
+- 场次媒体备份以一致 SQLite 快照中的 root ID/revision/相对路径为索引，以同 revision `media.json` 与 SHA-256 校验文件；不能单独信任 manifest 中的路径重新绑定外部根。
+- 外部 root 的 marker 与数据库 `recording_roots` 行必须成对备份和恢复，并在导入前重新验证规范路径、卷身份、regular-file/reparse 边界；不得自动覆盖目标机器已有 root ID。
 - 恢复先导入到临时目录并校验版本、路径穿越和 hash，再合并索引。
 - 外部导入包不得覆盖现有 UUID；冲突时生成新 ID 并维护映射。
 
@@ -362,10 +432,15 @@ type ASRProvider interface {
 ### 12.1 数据与迁移
 
 - 每个 schema 版本升级、失败回滚、旧备份恢复和空数据库初始化；Schema v2→v3 必须保留旧事件和旧缺口，并在失败时完整恢复表名、列和版本。
+- Schema v3→v4 必须先生成可打开的 v3 备份，创建 `recording_roots/session_media/media_artifacts` 和扩展 `media_segments`；注入失败时表、列和 schema version 全部回滚。
 - raw/WAL 崩溃重放、重复事件、CRC/截断错误、Sync 顺序、数据库忙/满/损坏和 spool 总空间边界。
 - checkpoint CAS、事务中途失败、closed checkpoint/combo 不可变、privacy key 不匹配和 source/aggregate 唯一约束。
 - 高基数礼物、长时间数据库降级、连续本地拒绝和重启迟到消息必须验证内存、恢复批次及辅助耐久状态有界。
 - 相对路径、Windows 长路径、非法字符和目录迁移。
+- 外部 root marker-before-DB 重试、并发幂等、规范路径/卷身份漂移、复制 marker、symlink/junction/reparse、保留设备名、大小写与尾随点/空格别名。
+- attempt/segment/artifact 精确上限、最大宽度 `media.json`、读取上限加一、upsert 后耐久并集超限整笔回滚，以及 post-commit 结果重读不受调用方取消影响。
+- 真实 FFmpeg/ffprobe 覆盖 Matroska 与 WAV/MP4 的 metadata + 首个目标媒体包；空壳、零目标包、错误 profile、超时、输出超限和调用方取消都保持非 Complete。
+- finalizer 重复运行、发布冲突、发布后数据库提交前崩溃、代理失败/缺失重试、完成文件删除/替换/非 regular 对象和探测/生成 TOCTOU，均验证状态、证据与文件现场不被静默改写。
 
 ### 12.2 时间轴
 
@@ -382,7 +457,8 @@ type ASRProvider interface {
 
 ## 13. 完成标准
 
-- 崩溃后只从 checkpoint 尾部有界、幂等重放 spool；source、aggregate、礼物折叠和缺口不会出现部分提交，场次和媒体可从 manifest 恢复索引。
+- 崩溃后只从 checkpoint 尾部有界、幂等重放 spool；source、aggregate、礼物折叠和缺口不会出现部分提交。
+- 媒体以 SQLite revision/dirty/CAS 为事实、以同 revision `media.json` 为可修复投影；原始分片只在 packet、身份、内容与根绑定均通过时完成，代理失败显式记录且不伪造原始媒体失败。
 - 所有指标和报告带版本、输入 fingerprint 与完整性信息。
 - 时间轴原始值、估计值和校准值互不覆盖。
 - 基础分析不依赖 ASR 或云服务。

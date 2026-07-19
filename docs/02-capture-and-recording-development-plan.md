@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-17）：P3-CAP-001、P3-EVT-001、P3-REC-001 已完成；PHASE-3 已完成 18/30 点（60%），当前进入 P3-MEDIA-001。
-> 最近验收：[P3-REC FFmpeg 与进程控制](validation/2026-07-17-p3-rec-ffmpeg-process-control.md)
+> 实施状态（2026-07-19）：P3-CAP-001、P3-EVT-001、P3-REC-001、P3-MEDIA-001 已完成；PHASE-3 已完成 22/30 点（73%），当前进入 P3-RCV-001。
+> 最近验收：[P3-MEDIA 媒体收尾](validation/2026-07-19-p3-media-finalization.md)
 
 ## 1. 目标
 
@@ -60,6 +60,15 @@ internal/capture/
   stream_resolver.go         # 选择与刷新
   recorder.go                # FFmpeg 进程
   segment_probe.go           # ffprobe 校验
+  recording_root.go          # 外部录制根、标记和耐久身份
+  media_contracts.go         # attempt/分片/产物快照契约
+  media_repository.go        # Schema v4 媒体 CAS 仓储
+  media_scan.go              # 有界发现 partial/final 分片
+  media_segment_finalize.go  # 探测、哈希、原子转正和审计
+  media_artifact.go          # WAV/MP4 代理生成
+  media_artifact_probe.go    # 代理格式与活动包验收
+  media_finalizer.go         # 场次媒体两阶段收尾
+  media_manifest.go          # media.json 耐久投影
   recovery.go                # 启动恢复
 internal/eventstore/
   contracts.go               # 事件、checkpoint、缺口和礼物折叠契约
@@ -132,6 +141,15 @@ stateDiagram-v2
 - `capture_gaps` 增加 `event_persistence` 类型和场次内唯一 `dedupe_key`，用于幂等记录本地拒绝、spool 或数据库持久化缺口。
 - 事件先完成 raw binpack Sync，再完成引用该 raw 帧的 WAL Sync，最后才允许 SQLite checkpoint 前进。恢复只从 checkpoint 之后按批读取，禁止全场载入内存或 source-only 提前确认。
 
+### 4.5 媒体持久化契约（Schema v4）
+
+- `recording_roots` 把外部绝对目录、规范路径摘要、卷身份摘要和目录内标记绑定为耐久 root ID；标记先于数据库提交，重试可幂等收敛。内部媒体根不建外部 root 行。
+- `session_media` 以场次为主键，保存不可变 `root_id + relative_path`、`open/finalizing/completed/incomplete` 状态、独立 manifest revision/dirty、媒体时钟和 URL/路径均已剔除的 attempt 列表。
+- 每个 attempt 在启动 FFmpeg 前先耐久追加；收到真实启动活动后单调转为 `committed`，优雅停止后单调转为 `clean`。任何 journal 失败都禁止或停止对应进程，不能留下无来源媒体。
+- `media_segments` 保存 attempt 来源、最终/源相对路径、探测版本、SHA-256 和 `partial/complete/recovered/corrupt/missing` 状态；`media_artifacts` 独立保存 ASR WAV 与播放 MP4 的来源哈希、产物哈希和状态。
+- SQLite 是媒体事实来源；`manifests/media.json` 是按 revision 排序、原子替换的可修复投影。只有文件落盘并通过同 revision CAS 后才清除 `manifest_dirty`。
+- 每场次最多 128 个 attempts、4,096 个分片和 8,192 个产物；仓储按最大值加一读取，并在事务内按 upsert 后耐久并集计数，超限时整笔回滚。
+
 ## 5. 流地址解析
 
 ### 5.1 候选字段顺序
@@ -198,10 +216,12 @@ P3-REC 已实现确定性稳定排序、质量词汇归一化、默认 H.264/FLV
 - 默认 `-c copy`，不在录制阶段重新编码。
 - 工作容器为 MKV，默认每 600 秒一个分片；设置允许 300–1800 秒。
 - 文件名包含序号、UTC 纳秒和 attempt 标识，先写入独占 attempt 目录中的 `.mkv.partial`；不得复用目录或覆盖已有分片。
-- P3-REC 只保证安全地产生工作分片；逐片探测、原子改名及 `media.json` 登记由 P3-MEDIA 完成。
-- 场次结束后为 H.264/AAC 等兼容组合无损封装 MP4；不兼容组合保留 MKV 并生成代理 MP4 的待处理任务。
-- 额外生成单声道 16 kHz PCM/WAV 或等价无损音频代理供 ASR；生成失败不判定原始录制失败。
-- 每个分片完成后使用 ffprobe 记录容器、流、时长、首末时间戳和可读性。
+- P3-MEDIA 已实现 metadata + 首个目标媒体包的两阶段 ffprobe；两个阶段共享 10 秒超时与 1 MiB 输出预算，只有 Matroska 中存在音/视频包且有正时长或正时间范围才可读，只有流头的空壳文件不会转正。
+- 可读 partial 在探测前后完成同一文件身份、大小与 SHA-256 校验，随后耐久同步并以不覆盖既有目标的原子操作发布为 `.mkv`。同内容重复发布幂等收敛，异内容冲突持久化为 corrupt 并保留现场。
+- H.264 + 可选 AAC 组合无损封装为 MP4；其他含视频组合保留 MKV 并登记 `pending_transcode`。含音频分片生成单声道 16 kHz `pcm_s16le` WAV 供 ASR；无对应流则登记 `not_applicable`。
+- WAV/MP4 代理先写唯一 partial，再原子发布，并再次用 metadata + 首个目标流媒体包验收；零包空壳、错误编码、发布冲突、生成后替换或删除均不能成为 `complete`。
+- 代理失败不把已验证原始分片降级为失败；错误以稳定状态和 warning 保留，可重试失败/缺失产物，并可收养“文件已发布但数据库提交前崩溃”的同源合法产物。
+- 每个分片记录容器、流、时长、首末时间戳、大小、SHA-256、attempt 来源和探测版本；已完成原始媒体或代理在后续收尾中发现缺失、替换、目录、符号链接、junction/reparse 时持久化为 missing/changed，且保留原证据。
 
 ### 6.4 停止顺序
 
@@ -212,7 +232,7 @@ P3-REC 已实现确定性稳定排序、质量词汇归一化、默认 H.264/FLV
 5. 解除事件订阅并等待在途 `Accept` 返回，关闭有界队列；排空 source、关闭所有 open 礼物折叠，依次提交 `closing` checkpoint、关闭并同步 spool、提交 `closed` checkpoint。
 6. 更新场次完整性、触发基础聚合和 UI 完成事件。
 
-P3-REC 已实现步骤 2–3 的进程边界；步骤 4 和媒体相关收尾属于 P3-MEDIA，异常重启与缺口编排属于 P3-RCV。
+P3-REC 已实现步骤 2–3 的进程边界，P3-MEDIA 已实现步骤 4 的媒体收尾，P3-EVT 已实现步骤 5 的事件耐久关闭。调用方超时只停止等待，Recorder/EventSink 的共享完成仍保有唯一清理 owner；应用在活动清理归零前不会关闭 SQLite。异常重启、缺口编排和旧场次终态推进属于 P3-RCV。
 
 ## 7. 录制恢复策略
 
@@ -264,7 +284,13 @@ data/
 
 `session.json` 只保存非敏感元数据和 schema 版本，可在数据库损坏时重建索引。所有路径在数据库中保存为相对数据根目录的 `/` 分隔路径；操作系统访问时统一由路径服务转换和校验。
 
-当前录制只允许写入数据根下的规范场次媒体目录。外部 `RecordingDirectory` 在 P3-MEDIA 建立耐久路径注册表前以 `RECORDING_ROOT_DEFERRED` 明确停用，不得静默回落到其他目录。
+P3-MEDIA 已启用外部 `RecordingDirectory`，但只把媒体相关目录迁出数据根：
+
+- 内部根使用 `session_media.root_id = NULL`，`relative_path` 保持 `rooms/<room-config-id>/sessions/...`，媒体与 `session.json`、事件 spool 位于同一数据根场次树。
+- 外部根先注册为 `recording_roots`，媒体相对路径为 `<room-config-id>/sessions/...`；数据库、配置、日志、`session.json` 和事件 spool 仍留在数据根，外部根只承载 `.douyinlive-recording-root.json`、`media/`、`audio/` 与 `manifests/media.json`。
+- 注册要求既有绝对目录通过可写、Sync、原子改名、规范路径和卷身份校验。marker 仅含版本、root ID 与卷身份，不含绝对路径；marker、SQLite 行、规范路径或卷身份任一漂移即 fail closed。
+- Windows 路径逐组件拒绝符号链接、junction/reparse、保留设备名、尾随点/空格及大小写别名；验证发生在扫描、探测返回、发布和数据库提交前，非法组件不会先在根外创建目录。
+- 场次位置一经建立不可修改；若需更换录制根，只影响之后创建的新场次，不迁移活动媒体。
 
 ## 9. 事件采集
 
@@ -326,6 +352,9 @@ data/
 - 默认普通接纳为 4,096 条/32 MiB，紧急预留为 512 条/8 MiB；共享总上限为 4,608 条/128 MiB，单 payload 上限 4 MiB。预留只影响接纳，不改变 FIFO 顺序。
 - 每场次 raw+WAL spool 默认总上限 4 GiB，启动时发现的既有分片也计入同一预算；零值配置选择该默认值而不是无限制。
 - 礼物折叠、恢复重放和数据库查询均按批次/页大小限制；不得以 deferred map、全量 replay 或保留全部 closed combo 的方式换取恢复便利。
+- 单个解析快照最多接受 4,096 个候选进入排序，并只尝试排序后的前 64 个；先排序后截断，不能让无效低优先级候选挤掉合法高优先级候选。
+- 每场次媒体上限为 128 attempts、4,096 segments、8,192 artifacts；目录扫描、SQLite 查询、事务 upsert 并集和 manifest 编码都独立实施上限。
+- `media.json` 最大 128 MiB，相对路径最大 2,048 字节；最大合法 cardinality/路径宽度有真实编码测试，超限不写文件、不推进 revision。
 
 ## 12. 测试计划
 
@@ -358,7 +387,14 @@ data/
 - 校验进程参数脱敏、Job Object 清理和 `.partial` 恢复。
 - 10 分钟稳定性测试统计 goroutine、句柄、内存、分片连续性和事件延迟。
 
-P3-REC 已通过本地 HTTP MPEG-TS→FFmpeg segment copy→`.mkv.partial`→ffprobe Matroska 的真实工具验收，并覆盖优雅 `q` 停止、启动早退、Job 树清理、进度解析、候选刷新和隐私表面。分片转正、ffprobe 失败恢复、异常退避及 10 分钟稳定性测试保留给后续任务。
+P3-MEDIA 已在 FFmpeg 8.1.2 真实工具链完成以下链路：
+
+- 生产 RecorderFactory→FFmpeg→Stop→SQLite/`media.json`→最终 MKV→16 kHz 单声道 WAV→H.264/AAC MP4，并分别覆盖内部根与外部注册根。
+- 可读 Matroska、空 Matroska、活跃/空壳 WAV/MP4、声明音轨但目标音频零包等两阶段探测边界；零包产物保持非 Complete。
+- 原始分片与代理的缺失、内容替换、同 stat 替换、探测/生成期间 TOCTOU、目录、符号链接和 Windows junction/reparse；既有证据保留且状态精确降级。
+- manifest CAS、发布后数据库提交前崩溃收养、重复收尾、外部 root 漂移、路径别名、最大 cardinality、最大 manifest 及超限事务回滚。
+
+P3-RCV 仍负责 1/2/5/10 秒异常退避、最多 10 次重启、跨启动 partial/旧场次恢复和 `capture_gaps`；在线 10 分钟、断网、进程崩溃与真实下播收尾由 P3-ACC 统一验收。
 
 ### 12.5 验收
 

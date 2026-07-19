@@ -31,7 +31,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if !bootstrap.Data.Ready || !bootstrap.Data.LoggingReady {
 		t.Fatalf("data status is not ready: %#v", bootstrap.Data)
 	}
-	if bootstrap.Data.SchemaVersion != 3 || bootstrap.Data.Mode != DataModeReadWrite {
+	if bootstrap.Data.SchemaVersion != 4 || bootstrap.Data.Mode != DataModeReadWrite {
 		t.Fatalf("unexpected data status: %#v", bootstrap.Data)
 	}
 	diagnosticsAvailable := false
@@ -72,7 +72,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(log) error = %v", err)
 	}
-	if !strings.Contains(string(logData), `"schema_version":3`) {
+	if !strings.Contains(string(logData), `"schema_version":4`) {
 		t.Fatalf("log does not contain schema version: %s", logData)
 	}
 	if strings.Contains(string(logData), root) {
@@ -114,7 +114,9 @@ func TestInitializeInfrastructureWiresRecorderFactoryWithoutExposingPaths(t *tes
 	if calls != 1 {
 		t.Fatalf("recorder factory builder calls = %d, want 1", calls)
 	}
-	if received.DataRoot != filepath.Clean(root) || received.MaxConcurrentRecordings != 1 {
+	if received.DataRoot != filepath.Clean(root) ||
+		received.RecordingRoot != filepath.Join(filepath.Clean(root), "rooms") ||
+		received.Repository == nil || received.MaxConcurrentRecordings != 1 {
 		t.Fatalf("recorder factory options = %s", received)
 	}
 	if received.BundledDir != "" && !filepath.IsAbs(received.BundledDir) {
@@ -136,7 +138,7 @@ func TestInitializeInfrastructureWiresRecorderFactoryWithoutExposingPaths(t *tes
 	}
 }
 
-func TestInitializeInfrastructureDefersCustomRecordingRootFailClosed(t *testing.T) {
+func TestInitializeInfrastructureWiresCustomRecordingRoot(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "app-data")
 	layout, err := storage.PrepareLayout(root)
@@ -162,26 +164,35 @@ func TestInitializeInfrastructureDefersCustomRecordingRootFailClosed(t *testing.
 		t.Fatal(err)
 	}
 	application := New(Options{Name: "custom-root", Version: "test"})
+	var received capture.FFmpegRecorderFactoryOptions
 	builderCalls := 0
-	application.newRecorderFactory = func(context.Context, capture.FFmpegRecorderFactoryOptions) (
+	application.newRecorderFactory = func(_ context.Context, options capture.FFmpegRecorderFactoryOptions) (
 		capture.RecorderFactory, capture.FFmpegDependencyInfo, error,
 	) {
 		builderCalls++
-		return nil, capture.FFmpegDependencyInfo{}, errors.New("must not discover dependencies")
+		received = options
+		return nil, capture.FFmpegDependencyInfo{}, errors.New("dependency unavailable for test")
 	}
 	if err := application.InitializeInfrastructure(ctx, InfrastructureOptions{DataRoot: root}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
-	if builderCalls != 0 {
-		t.Fatalf("custom root initialized recorder factory %d times", builderCalls)
+	if builderCalls != 1 {
+		t.Fatalf("custom root initialized recorder factory %d times, want 1", builderCalls)
+	}
+	if received.DataRoot != filepath.Clean(root) ||
+		received.RecordingRoot != filepath.Clean(customRoot) ||
+		received.Repository == nil ||
+		received.MaxConcurrentRecordings != current.MaxConcurrentRecordings {
+		t.Fatalf("custom recorder factory options = %s", received)
 	}
 	logData, err := os.ReadFile(filepath.Join(root, "logs", time.Now().Format("app-2006-01-02.jsonl")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(logData), `"error_code":"RECORDING_ROOT_DEFERRED"`) {
-		t.Fatalf("custom root deferral is not observable: %s", logData)
+	if !strings.Contains(string(logData), `"error_code":"RECORDING_DEPENDENCY_UNAVAILABLE"`) ||
+		strings.Contains(string(logData), "RECORDING_ROOT_DEFERRED") {
+		t.Fatalf("custom root dependency state is not observable: %s", logData)
 	}
 	if strings.Contains(string(logData), customRoot) {
 		t.Fatalf("custom recording root leaked to diagnostics: %s", logData)
