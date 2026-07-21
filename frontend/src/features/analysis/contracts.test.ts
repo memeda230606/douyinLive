@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { analysisReportSchema } from './contracts'
+import { analysisReportSchema, asrStatusSchema } from './contracts'
 
 const report = {
   version: 1, id: '019aa000-0000-7000-8000-000000000001', sessionId: '019aa000-0000-7000-8000-000000000002',
@@ -22,5 +22,28 @@ describe('analysisReportSchema', () => {
     expect(analysisReportSchema.safeParse({ ...report, rawContent: 'secret' }).success).toBe(false)
     expect(analysisReportSchema.safeParse({ ...report, summary: { ...report.summary, bucketCount: 2 } }).success).toBe(false)
     expect(analysisReportSchema.safeParse({ ...report, summary: { ...report.summary, warnings: ['UNKNOWN'] } }).success).toBe(false)
+  })
+})
+
+describe('asrStatusSchema', () => {
+  it('accepts disabled and ready states', () => {
+    expect(asrStatusSchema.parse({
+      version: 1, providerId: 'disabled', state: 'disabled', configured: false,
+      available: false, errorCode: 'ASR_NOT_CONFIGURED',
+    }).state).toBe('disabled')
+    expect(asrStatusSchema.parse({
+      version: 1, providerId: 'local-whisper', state: 'ready', configured: true, available: true,
+    }).state).toBe('ready')
+  })
+
+  it('rejects private fields and inconsistent degradation states', () => {
+    expect(asrStatusSchema.safeParse({
+      version: 1, providerId: 'disabled', state: 'disabled', configured: false,
+      available: false, errorCode: 'ASR_NOT_CONFIGURED', endpoint: 'private',
+    }).success).toBe(false)
+    expect(asrStatusSchema.safeParse({
+      version: 1, providerId: 'disabled', state: 'disabled', configured: true,
+      available: false, errorCode: 'ASR_NOT_CONFIGURED',
+    }).success).toBe(false)
   })
 })

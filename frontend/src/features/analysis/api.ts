@@ -1,7 +1,7 @@
-import { AnalyzeSession, GetAnalysisReport } from '../../generated/wailsjs/go/main/DesktopApp'
+import { AnalyzeSession, GetAnalysisReport, GetASRStatus } from '../../generated/wailsjs/go/main/DesktopApp'
 import { analysis } from '../../generated/wailsjs/go/models'
 import { contractError } from '../../lib/contracts'
-import { analysisReportSchema } from './contracts'
+import { analysisReportSchema, asrStatusSchema } from './contracts'
 
 function parseReport(name: string, value: unknown) {
   const result = analysisReportSchema.safeParse(value)
@@ -16,4 +16,11 @@ export async function analyzeSession(sessionId: string) {
 
 export async function getAnalysisReport(sessionId: string) {
   return parseReport('analysis report', await GetAnalysisReport(sessionId))
+}
+
+export async function getASRStatus() {
+  const value = await GetASRStatus()
+  const result = asrStatusSchema.safeParse(value)
+  if (!result.success) throw contractError('ASR status', value)
+  return result.data
 }

@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-21）：P4-ANA-001 已完成版本化 10 秒指标桶、缺口完整度、稳健峰谷/高光候选、严格 React 报告与时间点回放；项目总进度 82%，下一任务为 P4-ASR-001。
+> 实施状态（2026-07-21）：P4-ASR-001 已完成可替换 provider、disabled 默认、脱敏状态合同和未配置/不可用降级；项目总进度 84%，下一任务为 P4-EXP-001。
 > 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
 
 ## 1. 目标与原则
@@ -411,6 +411,13 @@ type ASRProvider interface {
 - 对同一音频 SHA-256、提供器、模型和语言缓存结果。
 - 转写段时间必须是场次偏移，保留提供器原始置信度。
 - 单块失败最多重试三次；部分成功生成 `partial` 报告并显示缺失区间。
+
+### 8.2.1 P4-ASR-001 实施结果（2026-07-21）
+
+- `internal/analysis.ASRProvider` 固定 `ID/Validate/Transcribe` 可取消边界，输入包含场次/分片、内部音频路径与摘要、时间范围和语言；路径与摘要显式禁止 JSON 序列化。`InfrastructureOptions` 可注入后续本地或远程适配器，生产默认使用无 I/O 的 `disabled`。
+- `GetASRStatus` 只返回 version、受限 provider ID、disabled/ready/unavailable、configured/available 和两个稳定错误码；provider 原始错误、端点、模型、路径和凭据全部折叠。动态非法 provider ID 也降级为脱敏 unavailable。
+- disabled 的 Validate/Transcribe 返回 `ErrASRNotConfigured`，不调用进度回调；调用方取消优先返回 context 错误。基础 `AnalyzeSession` 在注入 Validate/Transcribe 调用即 panic 的 provider 时仍完成，证明基础指标没有转写依赖。
+- React 通过 strict Zod v1 状态合同展示未配置/不可用提示并继续渲染基础报告；状态加载中不误报，provider ready 时隐藏降级提示。实际转写任务、缓存命中和 `transcript_segments` 写入仍由未来具体 provider 扩展，不在本任务伪造。
 
 ### 8.3 文本派生
 

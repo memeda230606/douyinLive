@@ -1,5 +1,21 @@
 import { z } from 'zod'
 
+export const asrStatusSchema = z.object({
+  version: z.literal(1), providerId: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
+  state: z.enum(['disabled', 'ready', 'unavailable']), configured: z.boolean(), available: z.boolean(),
+  errorCode: z.enum(['ASR_NOT_CONFIGURED', 'ASR_PROVIDER_UNAVAILABLE']).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.state === 'disabled' && (value.configured || value.available || value.errorCode !== 'ASR_NOT_CONFIGURED')) {
+    context.addIssue({ code: 'custom', message: '未配置转写状态不一致' })
+  }
+  if (value.state === 'ready' && (!value.configured || !value.available || value.errorCode !== undefined)) {
+    context.addIssue({ code: 'custom', message: '可用转写状态不一致' })
+  }
+  if (value.state === 'unavailable' && (!value.configured || value.available || value.errorCode !== 'ASR_PROVIDER_UNAVAILABLE')) {
+    context.addIssue({ code: 'custom', message: '不可用转写状态不一致' })
+  }
+})
+
 const safeInteger = z.number().int().min(Number.MIN_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER)
 const nonnegativeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const finite = z.number().finite()
@@ -57,3 +73,4 @@ export const analysisReportSchema = z.object({
 
 export type AnalysisReport = z.infer<typeof analysisReportSchema>
 export type AnalysisCandidate = z.infer<typeof candidateSchema>
+export type ASRStatus = z.infer<typeof asrStatusSchema>

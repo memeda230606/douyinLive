@@ -321,6 +321,10 @@ button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, 
 .analysis-page { max-width: 1720px; margin-inline: auto; }
 .analysis-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .analysis-heading .session-filter select { max-width: 390px; }
+.analysis-asr-status { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 11px; margin-top: 18px; padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border)); border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+.analysis-asr-status > svg { width: 20px; }
+.analysis-asr-status strong { color: var(--text); font-size: 12px; }
+.analysis-asr-status p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .analysis-state { display: grid; min-height: 360px; place-items: center; align-content: center; gap: 10px; margin-top: 24px; border: 1px dashed var(--border); border-radius: 12px; text-align: center; }
 .analysis-state > svg { width: 34px; color: var(--accent); }.analysis-state h2, .analysis-state p { margin: 0; }.analysis-state p { color: var(--muted); }
 .analysis-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }

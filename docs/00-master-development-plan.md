@@ -21,33 +21,32 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-21T22:08:00+08:00"
+updated_at: "2026-07-21T22:30:00+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "a065af32414557d87f2b8fc30e89f64063e867ab"
+last_verified_head: "a161b8b2f614ddc0f36da3cd3fc22890401b347d"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 82
+overall_completion_percent: 84
 current_phase: "PHASE-4-PLAYBACK-ANALYSIS"
-current_task: "P4-ASR-001"
-next_task: "P4-EXP-001"
+current_task: "P4-EXP-001"
+next_task: "P4-ACC-001"
 expected_dirty_paths:
   - "cmd/desktop/analysis.go"
   - "cmd/desktop/analysis_test.go"
   - "docs/00-master-development-plan.md"
   - "docs/01-desktop-ui-development-plan.md"
   - "docs/03-data-and-analysis-development-plan.md"
-  - "docs/validation/2026-07-21-p4-basic-analysis.md"
-  - "frontend/src/app/AppShell.tsx"
+  - "docs/validation/2026-07-21-p4-asr-provider.md"
   - "frontend/src/features/analysis/"
-  - "frontend/src/features/sessions/"
   - "frontend/src/generated/wailsjs/go/"
   - "frontend/src/styles/index.css"
   - "internal/analysis/"
-  - "internal/app/"
+  - "internal/app/analysis_test.go"
+  - "internal/app/infrastructure.go"
 blockers: []
-last_completed_task: "P4-ANA-001"
-last_completion_evidence: "版本化 basic-analysis/v1 已实现固定 10 秒桶、缺口完整度、点赞累计重置、可靠礼物价值边界、30 秒平滑、2 MAD/双桶持续、60 秒合并、长场次低谷和高光候选；同输入指纹复用且旧版本并存。React 分析报告经严格 v1 allowlist 展示摘要、趋势、质量提示、候选证据和算法版本，并可跳转统一回放。固定事件 golden、分析包 20 轮、前端 10 文件 28 测试、全量 Go test/vet/build、前端/Wails production build 与 diff-check 通过。"
-resume_instruction: "执行 P4-ASR-001：实现可替换 ASRProvider 接口、disabled 提供器和未配置降级，保证基础分析不依赖 ASR。"
+last_completed_task: "P4-ASR-001"
+last_completion_evidence: "实现可替换 ASRProvider、默认 disabled 提供器和严格 v1 ASR 状态 DTO；未知 provider 错误只映射稳定码，路径、摘要、端点和凭据不进入 Wails。分析页在未配置或不可用时明确说明基础指标不受影响，ready 时隐藏降级提示；基础分析在注入调用即 panic 的 ASR 适配器时仍独立完成。分析包 20 轮、应用层适配器 10 轮、前端 10 文件 32 测试、全量 Go test/vet/build、前端/Wails production build 与 diff-check 通过。"
+resume_instruction: "执行 P4-EXP-001：实现版本化 CSV/JSON 报告导出、稳定 manifest、文件安全写入与隐私门禁。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -81,9 +80,9 @@ resume_instruction: "执行 P4-ASR-001：实现可替换 ASRProvider 接口、di
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
 | PHASE-3 采集与录制 MVP | 30% | `DONE` | 100% | 30/30 点完成；稳定窗口、FFmpeg/网络故障恢复和人工停止收尾已按 2026-07-21 项目级豁免记录关闭 | 真实平台或工具链变化时复验；正式控制器合同保持严格 |
-| PHASE-4 回放与基础分析 | 20% | `IN_PROGRESS` | 60% | P4-PLY-001 与 P4-ANA-001 已完成（12/20 点）：安全同步回放、版本化 10 秒桶和可追溯候选可用 | 实现 ASR 插件接口与未配置降级 |
+| PHASE-4 回放与基础分析 | 20% | `IN_PROGRESS` | 70% | P4-PLY-001、P4-ANA-001 与 P4-ASR-001 已完成（14/20 点）：安全同步回放、版本化基础分析和可替换 ASR 降级可用 | 实现 CSV/JSON 导出与隐私门禁 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **82%** | PHASE-0 至 PHASE-3 已关闭；P4 回放与基础分析完成 12/20 点 | 执行 P4-ASR-001 插件接口与未配置降级 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **84%** | PHASE-0 至 PHASE-3 已关闭；P4 回放与基础分析完成 14/20 点 | 执行 P4-EXP-001 报告导出与隐私门禁 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -116,9 +115,9 @@ resume_instruction: "执行 P4-ASR-001：实现可替换 ASRProvider 接口、di
 | P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `DONE` | [关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)：稳定窗口、FFmpeg 崩溃与 relay 网络故障恢复已证明；人工停止与 UI finalizing 为 USER_OBSERVED，自然下播等待和最终机器视觉 ACK 经用户明确豁免为 USER_WAIVED/NOT_RUN；没有伪造 controller PASS/passed=true | PHASE-3 完成；执行 P4-PLY-001 |
 | P4-PLY-001 | 实现历史场次查询、统一时间轴与同步回放基础 | 6 | P3-ACC-001 | `DONE` | [验证记录](validation/2026-07-21-p4-playback-foundation.md)：Schema v6、只读 keyset 查询、隐私 DTO、统一定位、React 历史详情/同步时间线及安全动态 Range 完成；重点 20 轮、前端 23 测试、全量 Go/前端/Wails 门禁通过 | 执行 P4-ANA-001 |
 | P4-ANA-001 | 实现 10 秒指标桶、峰值/低谷与高光候选 | 6 | P4-PLY-001 | `DONE` | [验证记录](validation/2026-07-21-p4-basic-analysis.md)：版本化 10 秒桶、缺口完整度、稳健峰谷/高光、输入指纹复用、严格 React 报告与时间点回放完成；golden、20 轮分析回归和全量门禁通过 | 执行 P4-ASR-001 |
-| P4-ASR-001 | 实现 ASR 插件接口与未配置降级 | 2 | P4-ANA-001 | `READY` | P4-ANA-001 已关闭，基础分析不依赖转写 | 实现 provider 接口、disabled 提供器和降级 UI |
-| P4-EXP-001 | 实现 CSV/JSON 报告导出与隐私门禁 | 4 | P4-ANA-001 | `READY` | P4-ANA-001 已关闭，版本化隐私报告合同可供导出 | P4-ASR-001 后执行导出与隐私门禁 |
-| P4-ACC-001 | 完成回放、分析、ASR 降级与导出验收 | 2 | P4-ASR-001、P4-EXP-001 | `NOT_STARTED` | — | 等待 P4-ASR-001 与 P4-EXP-001 |
+| P4-ASR-001 | 实现 ASR 插件接口与未配置降级 | 2 | P4-ANA-001 | `DONE` | [验证记录](validation/2026-07-21-p4-asr-provider.md)：可替换 provider、disabled 默认、脱敏状态合同和降级 UI 完成；基础分析独立性、专项重复和全量门禁通过 | 执行 P4-EXP-001 |
+| P4-EXP-001 | 实现 CSV/JSON 报告导出与隐私门禁 | 4 | P4-ANA-001 | `READY` | P4-ANA-001 与 P4-ASR-001 已关闭，版本化隐私报告合同可供导出 | 实现导出 manifest、CSV/JSON 与隐私门禁 |
+| P4-ACC-001 | 完成回放、分析、ASR 降级与导出验收 | 2 | P4-ASR-001、P4-EXP-001 | `NOT_STARTED` | — | 等待 P4-EXP-001 |
 
 阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点且已完成；P4 共 20 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
 
@@ -155,6 +154,7 @@ resume_instruction: "执行 P4-ASR-001：实现可替换 ASRProvider 接口、di
 
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
+| 2026-07-21 22:30 | P4-ASR-001 | `DONE` | 新增可替换 ASRProvider、disabled 默认、稳定状态码与严格 Wails/前端 allowlist；未配置/不可用时隐藏转写依赖并明确基础分析继续可用，ready 时移除降级提示；分析 20 轮、适配器 10 轮、前端 32 测试、全量 Go/前端/Wails 门禁通过 | 执行 P4-EXP-001 CSV/JSON 导出与隐私门禁 |
 | 2026-07-21 22:08 | P4-ANA-001 | `DONE` | 完成 basic-analysis/v1 十秒桶、缺口完整度、稳健峰谷/高光、版本并存与输入指纹复用；React 严格报告、质量提示和候选回放跳转完成；golden、分析包 20 轮、前端 28 测试、全量 Go/前端/Wails 门禁通过 | 执行 P4-ASR-001 provider 接口与未配置降级 |
 | 2026-07-16 19:44 | P1-STR-001 | `DONE` | 创建直连 FLV/HLS、SDK 嵌套 JSON、空流三份脱敏 fixture；结构与敏感信息守卫测试通过 | 执行 P1-STR-002 纯函数解析器 |
 | 2026-07-16 19:44 | P1-STR-002 | `DONE` | 实现候选解析、标准化、去重、稳定脱敏 ID 与字段路径/长度错误；`go test ./...`、`go vet ./...`、`go build ./...` 和敏感扫描通过；`-race` 因当前无 CGO/GCC 未启动 | 执行 P1-STR-003 公共解析接口 |
@@ -482,3 +482,4 @@ UI 只能调用应用服务，不直接持有 `DouyinLive`、数据库连接或 
 - 2026-07-19，决策：单房间录制异常、重试和恢复告警统一由带全局严格递增 `revision`、稳定 `errorCode` 与 `retryAt` 的 `room:status` 派生，不再另发 `recording:error`；理由：双事件源无法共享顺序，容易产生重复、倒序或旧操作告警，而房间状态已包含 session/operation fencing 与完整录制状态；替代方案：新增独立 `DiagnosticEvent` 或让前端合并两套时序，均不采用；影响：P3 前端只需单例监听 `room:status`、`live:event`、`recording:progress`，`system:alert` 仅保留给未来非房间级全局告警。
 - 2026-07-21，决策：按用户明确指示以项目级例外关闭 P3-ACC；人工停止和 UI finalizing 记为 `USER_OBSERVED`，自然下播等待与最终机器视觉 ACK 记为 `USER_WAIVED/NOT_RUN`，不得声明控制器 `PASS` 或 `passed=true`；理由：十分钟稳定窗口、FFmpeg 崩溃和隔离 relay 网络故障恢复已取得真实证据，用户选择不再等待不可控的自然下播，并明确豁免最终视觉确认；替代方案：继续等待自然下播或放宽控制器成功合同，均不采用；影响：严格控制器合同和测试保持不变，豁免不形成任何自动成功分支，正式发布前仍可按原合同重新执行完整验收。
 - 2026-07-21，决策：PHASE-4 固定为 P4-PLY-001（6 点）、P4-ANA-001（6 点）、P4-ASR-001（2 点）、P4-EXP-001（4 点）和 P4-ACC-001（2 点）；理由：回放查询与时间轴必须先于指标、ASR 和导出，且阶段权重 20% 与 20 点一一对应；替代方案：新增独立 P4-DATA 任务或把全部功能放入单一任务，均不采用；影响：Schema v6 与只读查询基础并入 P4-PLY-001，后续任务按依赖顺序实施。
+- 2026-07-21，决策：P4-ASR-001 只建立可替换 ASRProvider、默认 disabled 提供器和脱敏能力状态，不绑定任何本地或云端实现，也不把转写加入基础报告生成前置条件；理由：首版必须在无凭据、无网络和无模型时保留完整基础分析，并为后续适配器留下 context 可取消边界；替代方案：内置固定云服务或让报告等待转写，均不采用；影响：Wails 只公开 v1 provider 状态 allowlist，真实转写任务、缓存和 transcript 持久化由后续具体适配器扩展。

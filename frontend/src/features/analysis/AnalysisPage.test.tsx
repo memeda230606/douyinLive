@@ -36,12 +36,15 @@ describe('AnalysisPage', () => {
     vi.mocked(sessionsApi.listPlaybackSessions).mockResolvedValue({ version: 1, items: [{ id: sessionId, roomConfigId: '019aa000-0000-7000-8000-000000000003', roomAlias: '测试直播间', title: '新品场', status: 'completed', recordingStatus: 'completed', startedAt: 1_700_000_000_000, endedAt: 1_700_000_020_000, captureOffsetMs: 0, clockSource: 'media', integrityScore: .9 }] })
     vi.mocked(api.getAnalysisReport).mockResolvedValue(report)
     vi.mocked(api.analyzeSession).mockResolvedValue(report)
+    vi.mocked(api.getASRStatus).mockResolvedValue({ version: 1, providerId: 'disabled', state: 'disabled', configured: false, available: false, errorCode: 'ASR_NOT_CONFIGURED' })
   })
 
   it('renders summary, quality warning, version and jumps a highlight into playback', async () => {
     const user = userEvent.setup()
     const onOpenPlayback = renderPage()
     expect(await screen.findByRole('heading', { name: '十秒指标分桶' })).toBeInTheDocument()
+    expect(screen.getByText('主播话术尚未启用')).toBeInTheDocument()
+    expect(screen.getByText(/基础互动指标、峰值、低谷和高光不受影响/)).toBeInTheDocument()
     expect(screen.getByText('场次存在采集缺口，相关区间已降低完整度。')).toBeInTheDocument()
     expect(screen.getByText('basic-analysis/v1+0123456789abcdef')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /高光片段.*得分 3.00/ }))
@@ -55,5 +58,22 @@ describe('AnalysisPage', () => {
     await user.click(await screen.findByRole('button', { name: '生成分析' }))
     expect(api.analyzeSession).toHaveBeenCalledWith(sessionId)
     expect(await screen.findByRole('heading', { name: '十秒指标分桶' })).toBeInTheDocument()
+  })
+
+  it('keeps the basic report available when provider validation fails', async () => {
+    vi.mocked(api.getASRStatus).mockRejectedValueOnce(new Error('contract failure'))
+    renderPage()
+    expect(await screen.findByRole('heading', { name: '十秒指标分桶' })).toBeInTheDocument()
+    expect(screen.getByText('主播话术暂时不可用')).toBeInTheDocument()
+    expect(screen.getByText(/基础互动指标、峰值、低谷和高光仍可正常生成/)).toBeInTheDocument()
+  })
+
+  it('hides the degradation notice when a provider is ready', async () => {
+    vi.mocked(api.getASRStatus).mockResolvedValueOnce({
+      version: 1, providerId: 'local-test', state: 'ready', configured: true, available: true,
+    })
+    renderPage()
+    expect(await screen.findByRole('heading', { name: '十秒指标分桶' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('转写能力状态')).not.toBeInTheDocument()
   })
 })

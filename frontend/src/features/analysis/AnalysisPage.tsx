@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, BarChart3, Clock3, Play, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, BarChart3, Clock3, MicOff, Play, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { userFacingError } from '../../lib/desktop'
 import { listPlaybackSessions } from '../sessions/api'
-import { analyzeSession, getAnalysisReport } from './api'
+import { analyzeSession, getAnalysisReport, getASRStatus } from './api'
 import type { AnalysisCandidate, AnalysisReport } from './contracts'
 
 const warningLabels: Record<string, string> = {
@@ -38,6 +38,9 @@ function downsample(report: AnalysisReport) {
 export function AnalysisPage({ onOpenPlayback }: { onOpenPlayback: (sessionId: string, offsetMs: number) => void }) {
   const queryClient = useQueryClient()
   const [selectedId, setSelectedId] = useState<string>()
+  const asrQuery = useQuery({
+    queryKey: ['analysis', 'asr-status'], queryFn: getASRStatus, retry: false,
+  })
   const sessionsQuery = useQuery({
     queryKey: ['analysis', 'sessions'],
     queryFn: () => listPlaybackSessions(['completed', 'interrupted', 'failed']),
@@ -67,11 +70,28 @@ export function AnalysisPage({ onOpenPlayback }: { onOpenPlayback: (sessionId: s
       </label>}
     </header>
 
+    <ASRDegradationNotice status={asrQuery.data?.state} statusUnavailable={asrQuery.isError} />
+
     {sessions.length === 0 ? <section className="sessions-empty"><BarChart3 aria-hidden="true" /><h2>还没有可分析场次</h2><p>场次进入终态后即可生成基础分析。</p></section>
       : reportQuery.isLoading ? <section className="analysis-state"><RefreshCw aria-hidden="true" /><h2>正在读取分析报告…</h2></section>
       : reportQuery.data ? <ReportView report={reportQuery.data} onOpenPlayback={onOpenPlayback} onRegenerate={() => analyzeMutation.mutate()} regenerating={analyzeMutation.isPending} />
       : <section className="analysis-state"><BarChart3 aria-hidden="true" /><h2>尚未生成基础分析</h2><p>{reportQuery.isError ? userFacingError(reportQuery.error) : '为当前场次生成版本化分析报告。'}</p><button className="button button--primary" disabled={analyzeMutation.isPending} onClick={() => analyzeMutation.mutate()} type="button">{analyzeMutation.isPending ? '正在分析…' : '生成分析'}</button>{analyzeMutation.isError && <span className="timeline-error"><AlertTriangle aria-hidden="true" />{userFacingError(analyzeMutation.error)}</span>}</section>}
   </main>
+}
+
+function ASRDegradationNotice({ status, statusUnavailable }: { status?: 'disabled' | 'ready' | 'unavailable'; statusUnavailable: boolean }) {
+  if (!status && !statusUnavailable) return null
+  if (status === 'ready') return null
+  const unavailable = status === 'unavailable' || statusUnavailable
+  return <aside className="analysis-asr-status" aria-label="转写能力状态">
+    <MicOff aria-hidden="true" />
+    <div>
+      <strong>{unavailable ? '主播话术暂时不可用' : '主播话术尚未启用'}</strong>
+      <p>{unavailable
+        ? '转写提供器当前不可用；基础互动指标、峰值、低谷和高光仍可正常生成。'
+        : '当前未配置转写提供器；基础互动指标、峰值、低谷和高光不受影响。后续可在分析设置中选择提供器。'}</p>
+    </div>
+  </aside>
 }
 
 function ErrorState({ title, error }: { title: string; error: unknown }) {

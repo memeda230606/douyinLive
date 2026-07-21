@@ -38,6 +38,7 @@ type InfrastructureOptions struct {
 	DataRoot           string
 	Now                time.Time
 	DisableDiagnostics bool
+	ASRProvider        analysis.ASRProvider
 }
 
 // InitializeInfrastructure prepares the local data root, redacted JSONL logs,
@@ -138,7 +139,9 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = logFile.Close()
 		return fmt.Errorf("initialize playback service: %w", err)
 	}
-	analysisService, err := analysis.NewService(store.Writer(), store.Reader())
+	analysisService, err := analysis.NewServiceWithOptions(
+		store.Writer(), store.Reader(), analysis.ServiceOptions{ASRProvider: options.ASRProvider},
+	)
 	if err != nil {
 		_ = store.Close()
 		_ = logFile.Close()

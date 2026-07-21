@@ -25,7 +25,10 @@ func TestServicePersistsVersionedBucketsReusesFingerprintAndKeepsPrivacyBoundary
 	}
 	defer store.Close()
 	fixedNow := time.UnixMilli(9_000).UTC()
-	service, err := NewServiceWithOptions(store.Writer(), store.Reader(), ServiceOptions{Now: func() time.Time { return fixedNow }})
+	service, err := NewServiceWithOptions(store.Writer(), store.Reader(), ServiceOptions{
+		Now:         func() time.Time { return fixedNow },
+		ASRProvider: panicASRProvider{},
+	})
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -136,6 +139,14 @@ func TestServiceRejectsActiveMissingAndMalformedSessions(t *testing.T) {
 	if _, err := service.GetAnalysisReport(ctx, activeID); !errors.Is(err, ErrReportNotFound) {
 		t.Fatalf("missing report error = %v", err)
 	}
+}
+
+type panicASRProvider struct{}
+
+func (panicASRProvider) ID() string                     { return "must-not-run" }
+func (panicASRProvider) Validate(context.Context) error { panic("basic analysis called ASR Validate") }
+func (panicASRProvider) Transcribe(context.Context, AudioInput, ProgressFunc) ([]TranscriptSegment, error) {
+	panic("basic analysis called ASR Transcribe")
 }
 
 func insertAnalysisEvent(t *testing.T, writer interface {

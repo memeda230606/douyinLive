@@ -19,14 +19,16 @@ const (
 )
 
 type ServiceOptions struct {
-	Now func() time.Time
+	Now         func() time.Time
+	ASRProvider ASRProvider
 }
 
 type Service struct {
-	writer *sql.DB
-	reader *sql.DB
-	now    func() time.Time
-	mu     sync.Mutex
+	writer      *sql.DB
+	reader      *sql.DB
+	now         func() time.Time
+	asrProvider ASRProvider
+	mu          sync.Mutex
 }
 
 type persistedCandidates struct {
@@ -46,7 +48,11 @@ func NewServiceWithOptions(writer, reader *sql.DB, options ServiceOptions) (*Ser
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Service{writer: writer, reader: reader, now: options.Now}, nil
+	provider, err := normalizeASRProvider(options.ASRProvider)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{writer: writer, reader: reader, now: options.Now, asrProvider: provider}, nil
 }
 
 func (s *Service) AnalyzeSession(ctx context.Context, request AnalyzeRequest) (ReportDTO, error) {

@@ -1,5 +1,27 @@
 export namespace analysis {
 
+	export class ASRStatusDTO {
+	    version: number;
+	    providerId: string;
+	    state: string;
+	    configured: boolean;
+	    available: boolean;
+	    errorCode?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ASRStatusDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.providerId = source["providerId"];
+	        this.state = source["state"];
+	        this.configured = source["configured"];
+	        this.available = source["available"];
+	        this.errorCode = source["errorCode"];
+	    }
+	}
 	export class AnalyzeRequest {
 	    sessionId: string;
 
