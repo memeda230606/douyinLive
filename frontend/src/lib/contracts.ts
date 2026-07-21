@@ -103,6 +103,7 @@ export const recordingProgressSchema = z.object({
   state: z.enum(['recording', 'reconnecting']),
   elapsedMs: nonnegativeSafeIntegerSchema,
   bytesWritten: nonnegativeSafeIntegerSchema,
+  bytesAvailable: z.boolean(),
   segmentCount: nonnegativeSafeIntegerSchema,
   frame: nonnegativeSafeIntegerSchema,
   restartCount: nonnegativeSafeIntegerSchema,

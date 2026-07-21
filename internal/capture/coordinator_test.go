@@ -619,11 +619,11 @@ func TestCoordinatorRecordDisabledNeverConstructsRecorder(t *testing.T) {
 	}
 }
 
-func TestCoordinatorRecorderRebindFailureDegradesWithoutEndingSession(t *testing.T) {
+func TestCoordinatorPermanentRecorderRebindFailureDegradesWithoutEndingSession(t *testing.T) {
 	repository, store, _, roomID, now := openRepository(t)
 	defer store.Close()
 	recorder := &fakeRecorder{rebindFunc: func(context.Context, CaptureSource) error {
-		return errors.New("injected stream refresh failure")
+		return ErrRecorderLocalResource
 	}}
 	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
 		Now: func() time.Time { return now },
@@ -1118,6 +1118,9 @@ func TestCoordinatorFinalizeRetryUsesFrozenTerminalTarget(t *testing.T) {
 		{name: "disabled", reason: FinalizeShutdown, wantStatus: SessionCompleted, wantRecording: RecordingDisabled},
 		{name: "unavailable", recordEnabled: true, recorderMode: "unavailable", reason: FinalizeShutdown, wantStatus: SessionCompleted, wantRecording: RecordingUnavailable},
 		{name: "cleanup_error", recordEnabled: true, recorderMode: "cleanup_error", reason: FinalizeShutdown, wantStatus: SessionInterrupted, wantRecording: RecordingIncomplete, wantCleanupError: true},
+		{name: "historical_unclean", recordEnabled: true, recorderMode: "historical_unclean", reason: FinalizeOffline, wantStatus: SessionCompleted, wantRecording: RecordingIncomplete},
+		{name: "media_incomplete", recordEnabled: true, recorderMode: "media_incomplete", reason: FinalizeOffline, wantStatus: SessionCompleted, wantRecording: RecordingIncomplete},
+		{name: "quality_and_cleanup", recordEnabled: true, recorderMode: "quality_and_cleanup", reason: FinalizeOffline, wantStatus: SessionInterrupted, wantRecording: RecordingIncomplete, wantCleanupError: true},
 		{name: "failure_active", recordEnabled: true, recorderMode: "active", reason: FinalizeFailure, wantStatus: SessionFailed, wantRecording: RecordingFailed},
 		{name: "failure_disabled", reason: FinalizeFailure, wantStatus: SessionFailed, wantRecording: RecordingDisabled},
 	}
@@ -1136,6 +1139,24 @@ func TestCoordinatorFinalizeRetryUsesFrozenTerminalTarget(t *testing.T) {
 				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
 					return &fakeRecorder{stopFunc: func(context.Context) error {
 						return errors.New("sensitive recorder timeout detail")
+					}}, nil
+				}
+			case "historical_unclean":
+				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+					return &fakeRecorder{stopFunc: func(context.Context) error {
+						return ErrRecorderMediaIncomplete
+					}}, nil
+				}
+			case "media_incomplete":
+				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+					return &fakeRecorder{stopFunc: func(context.Context) error {
+						return ErrRecorderMediaIncomplete
+					}}, nil
+				}
+			case "quality_and_cleanup":
+				options.RecorderFactory = func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+					return &fakeRecorder{stopFunc: func(context.Context) error {
+						return newRecorderStopResultError(ErrRecorderMediaIncomplete, errors.New("sensitive recorder cleanup detail"))
 					}}, nil
 				}
 			case "active":
@@ -1262,6 +1283,53 @@ func TestCoordinatorMasksFinalizeComponentErrors(t *testing.T) {
 	}
 	if finalized.Status != SessionInterrupted || finalized.RecordingStatus != RecordingIncomplete {
 		t.Fatalf("component failure terminal state = %+v", finalized)
+	}
+}
+
+func TestCoordinatorCallerCancellationAfterCleanupDoesNotInterruptSession(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	finalizeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cleanupConverged := make(chan struct{})
+	sink := &fakeEventSink{flushFunc: func(context.Context) error {
+		close(cleanupConverged)
+		return nil
+	}}
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		Now: func() time.Time {
+			select {
+			case <-cleanupConverged:
+				cancel()
+			default:
+			}
+			return now
+		},
+		EventSinkFactory: func(context.Context, LiveSession, OpenRequest) (EventSink, error) {
+			return sink, nil
+		},
+		RecorderFactory: func(context.Context, LiveSession, OpenRequest, CaptureSource) (Recorder, error) {
+			return &fakeRecorder{}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, newFakeCaptureSource(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := session.Finalize(finalizeCtx, newV7(t), FinalizeShutdown)
+	if err != nil {
+		t.Fatalf("Finalize() error = %v, want converged cleanup", err)
+	}
+	if !errors.Is(finalizeCtx.Err(), context.Canceled) {
+		t.Fatalf("Finalize() context error = %v, want cancellation after cleanup", finalizeCtx.Err())
+	}
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingCompleted || terminal.EndedAt == nil {
+		t.Fatalf("post-cleanup cancellation terminal = %+v, want completed/completed", terminal)
 	}
 }
 
@@ -1673,7 +1741,7 @@ func TestCoordinatorRebindFailureRetainsStoppingRecorderForFinalize(t *testing.T
 	stopGate := make(chan struct{})
 	recorder := &fakeRecorder{
 		rebindFunc: func(context.Context, CaptureSource) error {
-			return errors.New("injected rebind failure")
+			return ErrRecorderLocalResource
 		},
 		stopFunc: func(ctx context.Context) error {
 			select {
@@ -1721,7 +1789,7 @@ func TestCoordinatorRebindFailureRetainsStoppingRecorderForFinalize(t *testing.T
 	if err != nil {
 		t.Fatalf("Finalize after failed Rebind cleanup: %v", err)
 	}
-	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingIncomplete {
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingUnavailable {
 		t.Fatalf("terminal session after failed Rebind = %+v", terminal)
 	}
 	if recorder.stops != 2 {
@@ -1821,4 +1889,23 @@ func containsOrderedSubsequence(values, wanted []string) bool {
 		}
 	}
 	return false
+}
+
+func TestNewCoordinatorAutoInjectsMessageJournalIndependently(t *testing.T) {
+	repository, store, _, _, _ := openRepository(t)
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close storage: %v", err)
+		}
+	})
+
+	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+		RecoveryJournal: repository,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coordinator.messageJournal != repository {
+		t.Fatal("message recovery journal was not inferred independently")
+	}
 }

@@ -341,37 +341,42 @@ func (m *MonitorManager) runShutdown(operationsDrain <-chan struct{}) {
 	}
 
 	var shutdownErrors []error
-	for {
-		m.mu.RLock()
-		workers := make([]*monitorWorker, 0, len(m.workers))
-		for _, worker := range m.workers {
-			workers = append(workers, worker)
-		}
-		m.mu.RUnlock()
-		if len(workers) == 0 {
-			m.finishShutdown(errors.Join(shutdownErrors...))
-			return
-		}
-		for _, worker := range workers {
-			worker.stop(capture.FinalizeShutdown)
-		}
-		for _, worker := range workers {
+	m.mu.RLock()
+	workers := make([]*monitorWorker, 0, len(m.workers))
+	for _, worker := range m.workers {
+		workers = append(workers, worker)
+	}
+	m.mu.RUnlock()
+	if len(workers) == 0 {
+		m.finishShutdown(nil)
+		return
+	}
+
+	wasDone := make(map[*monitorWorker]bool, len(workers))
+	for _, worker := range workers {
+		wasDone[worker] = worker.doneClosed()
+		worker.stop(capture.FinalizeShutdown)
+	}
+	for _, worker := range workers {
+		var err error
+		if wasDone[worker] {
+			attempt := m.startDoneFinalization(worker, capture.FinalizeShutdown)
+			<-attempt.done
+			err = attempt.err
+		} else {
 			<-worker.done
-			err := m.retryDoneFinalization(context.Background(), worker, capture.FinalizeShutdown)
-			if !m.workerRegistered(worker) {
-				shutdownErrors = append(shutdownErrors, err)
+			err = worker.result()
+		}
+		if m.workerRegistered(worker) {
+			if err == nil {
+				err = errCaptureFinalizeNonterminal
 			}
 		}
-		m.mu.RLock()
-		remaining := len(m.workers)
-		m.mu.RUnlock()
-		if remaining == 0 {
-			m.finishShutdown(errors.Join(shutdownErrors...))
-			return
+		if err != nil {
+			shutdownErrors = append(shutdownErrors, err)
 		}
-		timer := time.NewTimer(m.options.ReconnectDelay)
-		<-timer.C
 	}
+	m.finishShutdown(errors.Join(shutdownErrors...))
 }
 
 func (m *MonitorManager) workerRegistered(worker *monitorWorker) bool {
@@ -515,10 +520,14 @@ func (m *MonitorManager) detach(ctx context.Context, id string, reason capture.F
 	if worker == nil {
 		return nil
 	}
+	alreadyDone := worker.doneClosed()
 	worker.stop(reason)
+	if alreadyDone {
+		return m.awaitDoneFinalization(ctx, worker, reason)
+	}
 	select {
 	case <-worker.done:
-		return m.retryDoneFinalization(ctx, worker, reason)
+		return worker.result()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -533,17 +542,55 @@ func (m *MonitorManager) removeWorker(worker *monitorWorker) {
 	m.mu.Unlock()
 }
 
+type doneFinalizationAttempt struct {
+	done chan struct{}
+	err  error
+}
+
+func (m *MonitorManager) awaitDoneFinalization(ctx context.Context, worker *monitorWorker, reason capture.FinalizeReason) error {
+	attempt := m.startDoneFinalization(worker, reason)
+	select {
+	case <-attempt.done:
+		return attempt.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *MonitorManager) startDoneFinalization(worker *monitorWorker, reason capture.FinalizeReason) *doneFinalizationAttempt {
+	worker.doneFinalizeMu.Lock()
+	if current := worker.doneFinalize; current != nil {
+		select {
+		case <-current.done:
+			if worker.sessionValue() == nil {
+				worker.doneFinalizeMu.Unlock()
+				return current
+			}
+		default:
+			worker.doneFinalizeMu.Unlock()
+			return current
+		}
+	}
+	attempt := &doneFinalizationAttempt{done: make(chan struct{})}
+	worker.doneFinalize = attempt
+	worker.doneFinalizeMu.Unlock()
+	go func() {
+		attempt.err = m.retryDoneFinalization(context.Background(), worker, reason)
+		close(attempt.done)
+	}()
+	return attempt
+}
+
 func (m *MonitorManager) retryDoneFinalization(ctx context.Context, worker *monitorWorker, reason capture.FinalizeReason) error {
 	if !worker.doneClosed() || worker.sessionValue() == nil {
 		return worker.result()
 	}
-	terminal, err := worker.finalizeActiveWithContext(ctx, reason)
+	terminal, err := worker.finalizeActiveWithRetryContext(ctx, reason)
 	if !terminal {
 		if err == nil {
 			err = errCaptureFinalizeNonterminal
 		}
 		worker.addError(err)
-		worker.markFinalizeFailed()
 		return worker.result()
 	}
 	worker.setError(err)
@@ -560,6 +607,8 @@ type monitorWorker struct {
 	wake                    chan struct{}
 	mu                      sync.RWMutex
 	finalizeMu              sync.Mutex
+	doneFinalizeMu          sync.Mutex
+	doneFinalize            *doneFinalizationAttempt
 	finalizeInProgress      bool
 	status                  RoomRuntimeStatus
 	active                  LiveClient
@@ -584,7 +633,7 @@ func (w *monitorWorker) run() {
 				reason = requestedReason
 			}
 			var finalizeErr error
-			terminal, finalizeErr = w.finalizeActive(reason)
+			terminal, finalizeErr = w.finalizeActiveWithRetryContext(context.Background(), reason)
 			if terminal {
 				w.setError(finalizeErr)
 			} else {
@@ -595,7 +644,6 @@ func (w *monitorWorker) run() {
 			if w.result() == nil {
 				w.addError(errCaptureFinalizeNonterminal)
 			}
-			w.markFinalizeFailed()
 			return
 		}
 		w.transition(RuntimeStopped, w.currentOperation(), "", "已停止监控", 0, 0, nil, nil, true)
@@ -658,6 +706,11 @@ func (w *monitorWorker) run() {
 					return
 				}
 				if terminal {
+					if finalizeErr != nil {
+						w.markTerminalFinalizeFailed(checkedAt, client)
+						delay, automatic = 0, false
+						continue
+					}
 					w.transition(RuntimeError, w.currentOperation(), "ROOM_NOT_FOUND", "直播间不存在，场次已结束", checkedAt, 0, client, nil, true)
 				} else {
 					w.addError(finalizeErr)
@@ -672,6 +725,11 @@ func (w *monitorWorker) run() {
 						return
 					}
 					if terminal {
+						if finalizeErr != nil {
+							w.markTerminalFinalizeFailed(checkedAt, client)
+							delay, automatic = 0, false
+							continue
+						}
 						w.transition(RuntimeWaiting, w.currentOperation(), "ROOM_OFFLINE", "直播间已下播，继续等待", checkedAt, w.retryAt(w.manager.options.PollInterval), client, nil, true)
 					} else {
 						w.addError(finalizeErr)
@@ -752,10 +810,12 @@ func (w *monitorWorker) run() {
 			return
 		}
 		startErr := client.Start()
+		disconnectedAt := w.manager.options.Now().UTC()
 		w.releaseActive(client)
 		if w.ctx.Err() != nil {
 			return
 		}
+		disconnectOperationID, disconnectMarked := w.markMessageDisconnected(session, disconnectedAt)
 		if startErr != nil {
 			w.manager.logger.WarnContext(w.ctx, "直播监听结束，准备重新检查",
 				"component", "room", "error_code", "ROOM_CONNECTION_INTERRUPTED", "room_config_id", config.ID, "err", startErr)
@@ -767,6 +827,11 @@ func (w *monitorWorker) run() {
 					return
 				}
 				if terminal {
+					if finalizeErr != nil {
+						w.markTerminalFinalizeFailed(w.nowMillis(), client)
+						delay, automatic = 0, false
+						continue
+					}
 					w.transition(RuntimeWaiting, w.currentOperation(), "ROOM_OFFLINE", "直播间已下播，继续等待", w.nowMillis(), w.retryAt(w.manager.options.PollInterval), client, nil, true)
 				} else {
 					w.addError(finalizeErr)
@@ -774,12 +839,14 @@ func (w *monitorWorker) run() {
 					continue
 				}
 			} else {
-				w.transitionForOperation(operationID, RuntimeReconnecting, "ROOM_OFFLINE_CONFIRMING", "检测到离线，等待再次确认", w.nowMillis(), w.retryAt(w.manager.options.PollInterval), client, nil)
+				w.transitionForOperation(disconnectOperationID, RuntimeReconnecting, "ROOM_OFFLINE_CONFIRMING", "检测到离线，等待再次确认", w.nowMillis(), w.retryAt(w.manager.options.PollInterval), client, nil)
 			}
 			delay = w.manager.options.PollInterval
 			continue
 		}
-		w.transitionForOperation(operationID, RuntimeReconnecting, "ROOM_CONNECTION_INTERRUPTED", "连接已结束，正在重新检查", w.nowMillis(), w.retryAt(w.manager.options.ReconnectDelay), client, nil)
+		if !disconnectMarked {
+			w.transitionForOperation(disconnectOperationID, RuntimeReconnecting, "ROOM_CONNECTION_INTERRUPTED", "连接已结束，正在重新检查", w.nowMillis(), w.retryAt(w.manager.options.ReconnectDelay), client, nil)
+		}
 		delay = w.manager.options.ReconnectDelay
 	}
 }
@@ -791,15 +858,15 @@ func runtimeForRecording(status capture.RecordingStatus) (RuntimeState, string) 
 	return RuntimeLive, "直播中"
 }
 
-func (w *monitorWorker) finalizeActive(reason capture.FinalizeReason) (bool, error) {
-	return w.finalizeActiveWithContext(context.Background(), reason)
+func (w *monitorWorker) finalizeActiveWithRetry(reason capture.FinalizeReason) (bool, error) {
+	return w.finalizeActiveWithRetryContext(w.ctx, reason)
 }
 
-func (w *monitorWorker) finalizeActiveWithRetry(reason capture.FinalizeReason) (bool, error) {
+func (w *monitorWorker) finalizeActiveWithRetryContext(parent context.Context, reason capture.FinalizeReason) (bool, error) {
 	var finalizeErrors, pendingErr error
 	ordinaryAttempts := 0
 	for {
-		terminal, err := w.finalizeActiveWithContext(w.ctx, reason)
+		terminal, err := w.finalizeActiveWithContext(parent, reason)
 		if terminal {
 			return true, err
 		}
@@ -827,9 +894,9 @@ func (w *monitorWorker) finalizeActiveWithRetry(reason capture.FinalizeReason) (
 		w.markFinalizeRetry(delay)
 		timer := time.NewTimer(delay)
 		select {
-		case <-w.ctx.Done():
+		case <-parent.Done():
 			timer.Stop()
-			return false, errors.Join(finalizeErrors, pendingErr, w.ctx.Err())
+			return false, errors.Join(finalizeErrors, pendingErr, parent.Err())
 		case <-timer.C:
 		}
 	}
@@ -878,6 +945,10 @@ func (w *monitorWorker) finalizeActiveWithContext(parent context.Context, reason
 	}
 	w.mu.Unlock()
 	return terminal, err
+}
+
+func (w *monitorWorker) markTerminalFinalizeFailed(checkedAt int64, client LiveClient) {
+	w.transition(RuntimeFinalizing, w.currentOperation(), "CAPTURE_FINALIZE_FAILED", "场次收尾失败，需要检查", checkedAt, 0, client, nil, false)
 }
 
 func (w *monitorWorker) markFinalizeFailed() {
@@ -968,6 +1039,76 @@ func (w *monitorWorker) beginOperation(state RuntimeState, message string) strin
 	operationID := newOperationID()
 	w.transition(state, operationID, "", message, 0, 0, nil, nil, false)
 	return operationID
+}
+
+func (w *monitorWorker) markMessageDisconnected(session capture.Session, occurredAt time.Time) (string, bool) {
+	w.mu.RLock()
+	expectedOperationID := w.status.OperationID
+	expectedSessionID := w.status.SessionID
+	expectedRecordingStatus := w.status.RecordingStatus
+	w.mu.RUnlock()
+	marker, ok := session.(capture.MessageDisconnectSession)
+	if !ok {
+		return expectedOperationID, false
+	}
+	targetRecordingStatus, validExpectation := messageDisconnectRecordingStatus(expectedRecordingStatus)
+	operationID := newOperationID()
+	snapshot, err := marker.MarkMessageDisconnected(w.ctx, operationID, occurredAt)
+	if err != nil {
+		w.addError(err)
+		return expectedOperationID, false
+	}
+	// A session with no configured message journal may expose the optional
+	// method as a no-op. Only a matching durable operation is a successful mark.
+	if !validExpectation || expectedSessionID == "" ||
+		snapshot.ID != expectedSessionID ||
+		snapshot.OperationID != operationID ||
+		snapshot.Status != capture.SessionRecording ||
+		snapshot.RecordingStatus != targetRecordingStatus {
+		return expectedOperationID, false
+	}
+	w.transitionMarkedDisconnect(expectedOperationID, expectedSessionID, operationID, occurredAt, snapshot)
+	return operationID, true
+}
+
+func (w *monitorWorker) transitionMarkedDisconnect(
+	expectedOperationID string,
+	expectedSessionID string,
+	operationID string,
+	occurredAt time.Time,
+	snapshot capture.LiveSession,
+) bool {
+	w.mu.Lock()
+	if w.stopRequested || w.status.OperationID != expectedOperationID ||
+		w.status.SessionID != expectedSessionID {
+		w.mu.Unlock()
+		return false
+	}
+	status := w.updateStatusLocked(
+		RuntimeReconnecting,
+		operationID,
+		"ROOM_CONNECTION_INTERRUPTED",
+		"连接已结束，正在重新检查",
+		occurredAt.UnixMilli(),
+		w.retryAt(w.manager.options.ReconnectDelay),
+		nil,
+		&snapshot,
+		false,
+	)
+	w.mu.Unlock()
+	w.manager.publish(status)
+	return true
+}
+
+func messageDisconnectRecordingStatus(current capture.RecordingStatus) (capture.RecordingStatus, bool) {
+	switch current {
+	case capture.RecordingActive, capture.RecordingReconnecting:
+		return capture.RecordingReconnecting, true
+	case capture.RecordingDisabled, capture.RecordingUnavailable:
+		return current, true
+	default:
+		return "", false
+	}
 }
 
 func (w *monitorWorker) transitionForOperation(operationID string, state RuntimeState, errorCode, message string, checkedAt, retryAt int64, client LiveClient, session *capture.LiveSession) bool {
@@ -1348,5 +1489,9 @@ func newOperationID() string {
 }
 
 func (s RoomRuntimeStatus) String() string {
-	return fmt.Sprintf("RoomRuntimeStatus{room=%s state=%s code=%s}", s.RoomID, s.State, s.ErrorCode)
+	return fmt.Sprintf("RoomRuntimeStatus{state=%s code=%s}", s.State, s.ErrorCode)
+}
+
+func (s RoomRuntimeStatus) GoString() string {
+	return s.String()
 }

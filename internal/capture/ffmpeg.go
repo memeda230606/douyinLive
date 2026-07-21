@@ -373,12 +373,13 @@ func buildFFmpegRecordingArgs(spec ffmpegRecordingSpec) ([]string, error) {
 }
 
 type FFmpegProgress struct {
-	Frame     int64
-	FPS       float64
-	TotalSize int64
-	OutTime   time.Duration
-	Speed     float64
-	State     string
+	Frame              int64
+	FPS                float64
+	TotalSize          int64
+	TotalSizeAvailable bool
+	OutTime            time.Duration
+	Speed              float64
+	State              string
 }
 
 func readFFmpegProgress(ctx context.Context, reader io.Reader, accept func(FFmpegProgress)) error {
@@ -404,6 +405,7 @@ func readFFmpegProgress(ctx context.Context, reader io.Reader, accept func(FFmpe
 		case "fps":
 			current.FPS, err = parseNonNegativeFloat(value)
 		case "total_size":
+			current.TotalSizeAvailable = strings.TrimSpace(value) != "N/A"
 			current.TotalSize, err = parseNonNegativeInt(value)
 		case "out_time_us", "out_time_ms":
 			var micros int64

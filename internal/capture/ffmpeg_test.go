@@ -301,8 +301,11 @@ func TestReadFFmpegProgressBoundedParser(t *testing.T) {
 	if len(snapshots) != 2 {
 		t.Fatalf("got %d progress snapshots", len(snapshots))
 	}
-	if snapshots[0].Frame != 7 || snapshots[0].FPS != 29.97 || snapshots[0].TotalSize != 1024 || snapshots[0].OutTime != 1500*time.Millisecond || snapshots[0].Speed != 1.25 || snapshots[0].State != "continue" {
+	if snapshots[0].Frame != 7 || snapshots[0].FPS != 29.97 || snapshots[0].TotalSize != 1024 || !snapshots[0].TotalSizeAvailable || snapshots[0].OutTime != 1500*time.Millisecond || snapshots[0].Speed != 1.25 || snapshots[0].State != "continue" {
 		t.Fatal("first progress snapshot mismatch")
+	}
+	if snapshots[1].TotalSizeAvailable {
+		t.Fatal("N/A total size was marked available")
 	}
 	if snapshots[1].OutTime != 2250*time.Millisecond || snapshots[1].State != "end" {
 		t.Fatal("terminal progress snapshot mismatch")
@@ -319,7 +322,7 @@ func TestReadFFmpegProgressAcceptsInitialNAClock(t *testing.T) {
 	if err := readFFmpegProgress(context.Background(), input, func(progress FFmpegProgress) { snapshot = progress }); err != nil {
 		t.Fatalf("parse initial N/A progress: %v", err)
 	}
-	if snapshot.OutTime != 0 || snapshot.State != "end" {
+	if snapshot.TotalSizeAvailable || snapshot.OutTime != 0 || snapshot.State != "end" {
 		t.Fatalf("unexpected initial progress: %#v", snapshot)
 	}
 }

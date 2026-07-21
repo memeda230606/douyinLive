@@ -305,7 +305,7 @@ func p3UIRecordingProgress(
 ) capture.RecordingProgressDTO {
 	return capture.RecordingProgressDTO{
 		RoomID: state.room.ID, SessionID: sessionID, OperationID: operationID,
-		State: recordingState, ElapsedMS: elapsedMS, BytesWritten: bytesWritten,
+		State: recordingState, ElapsedMS: elapsedMS, BytesWritten: bytesWritten, BytesAvailable: true,
 		SegmentCount: segmentCount, Frame: frame, FPS: fps, Speed: speed,
 		RestartCount: restartCount, UpdatedAt: updatedAt,
 	}

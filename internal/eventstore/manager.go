@@ -65,13 +65,15 @@ type Manager struct {
 	options ManagerOptions
 	privacy *PrivacyFilter
 
-	mu           sync.Mutex
-	accepting    bool
-	sessions     map[string]*SessionSink
-	shutdownOnce sync.Once
-	shutdownDone chan struct{}
-	shutdownErr  error
-	liveEvents   *liveEventDispatcher
+	mu                          sync.Mutex
+	accepting                   bool
+	sessions                    map[string]*SessionSink
+	sessionSetGeneration        uint64
+	sessionSetGenerationInvalid bool
+	shutdownOnce                sync.Once
+	shutdownDone                chan struct{}
+	shutdownErr                 error
+	liveEvents                  *liveEventDispatcher
 }
 
 type SessionSink struct {
@@ -182,6 +184,17 @@ func (m *Manager) SetStoreDisplayName(enabled bool) {
 	if m != nil && m.privacy != nil {
 		m.privacy.SetStoreDisplayName(enabled)
 	}
+}
+
+// noteSessionSetChangeLocked advances the ownership generation. The caller
+// must hold m.mu. Saturation permanently makes acceptance aggregation fail
+// closed instead of permitting a theoretical wraparound ABA.
+func (m *Manager) noteSessionSetChangeLocked() {
+	if m.sessionSetGeneration == ^uint64(0) {
+		m.sessionSetGenerationInvalid = true
+		return
+	}
+	m.sessionSetGeneration++
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {

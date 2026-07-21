@@ -495,8 +495,8 @@ func TestSchemaV2UpgradePreservesLegacyEventsAndCaptureGaps(t *testing.T) {
 		t.Fatalf("Open() v3 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 5 {
-		t.Fatalf("SchemaVersion() = %d, want 5", got)
+	if got := store.SchemaVersion(); got != 6 {
+		t.Fatalf("SchemaVersion() = %d, want 6", got)
 	}
 
 	var sequence int64
@@ -775,8 +775,8 @@ func TestSchemaV3UpgradeCreatesV4BackupAndMediaObjects(t *testing.T) {
 		t.Fatalf("Open() schema v4 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 5 {
-		t.Fatalf("SchemaVersion() = %d, want 5", got)
+	if got := store.SchemaVersion(); got != 6 {
+		t.Fatalf("SchemaVersion() = %d, want 6", got)
 	}
 	for _, table := range []string{"recording_roots", "session_media", "media_artifacts"} {
 		assertSQLiteObject(t, store.Reader(), "table", table)
@@ -995,8 +995,8 @@ func TestSchemaV4UpgradeCreatesV5RecoveryIndexesAndBackup(t *testing.T) {
 		t.Fatalf("Open() schema v5 upgrade error = %v", err)
 	}
 	defer store.Close()
-	if got := store.SchemaVersion(); got != 5 {
-		t.Fatalf("SchemaVersion() = %d, want 5", got)
+	if got := store.SchemaVersion(); got != 6 {
+		t.Fatalf("SchemaVersion() = %d, want 6", got)
 	}
 	for _, index := range []string{
 		"idx_live_sessions_recovery_page",

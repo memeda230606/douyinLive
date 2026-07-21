@@ -420,11 +420,12 @@ func TestRecorderUnexpectedExitEmitsSafeUUIDv7AndStopIsIdempotent(t *testing.T) 
 		}
 	}
 	firstErr := recorder.Stop(context.Background())
-	if !errors.Is(firstErr, ErrRecorderStop) {
-		t.Fatalf("stop after unexpected exit = %v, want ErrRecorderStop", firstErr)
+	if !errors.Is(firstErr, ErrRecorderMediaIncomplete) || errors.Is(firstErr, ErrRecorderStop) {
+		t.Fatalf("stop after unexpected exit = %v, want incomplete-only", firstErr)
 	}
 	secondErr := recorder.Stop(context.Background())
-	if !errors.Is(secondErr, ErrRecorderStop) || secondErr.Error() != firstErr.Error() {
+	if !errors.Is(secondErr, ErrRecorderMediaIncomplete) || errors.Is(secondErr, ErrRecorderStop) ||
+		secondErr.Error() != firstErr.Error() {
 		t.Fatalf("idempotent stop error = %v, first = %v", secondErr, firstErr)
 	}
 	if releases.Load() != 1 {
@@ -432,6 +433,77 @@ func TestRecorderUnexpectedExitEmitsSafeUUIDv7AndStopIsIdempotent(t *testing.T) 
 	}
 	if _, open := <-recorder.Events(); open {
 		t.Fatal("event stream remains open after Stop")
+	}
+}
+
+func TestRecorderUnexpectedWindowsRelayResetEmitsNetworkFailure(t *testing.T) {
+	source := &recorderTestSource{snapshots: [][]douyinLive.ResolvedStream{{
+		recorderTestCandidate("one", "flv", "hd", "h264", "https://reset.example.invalid/live.flv", 1),
+	}}}
+	process := newRecorderTestProcess()
+	starter := &recorderTestStarter{results: []recorderTestStartResult{{
+		process: process,
+		stderr:  "[tcp @ 0000000000000000] Error number -10054 occurred",
+	}}}
+	recorder, err := newFFmpegRecorder(
+		context.Background(), source, recorderTestOptions(t), recorderTestDependencies(starter), nil,
+	)
+	if err != nil {
+		t.Fatalf("new recorder: %v", err)
+	}
+	process.signal()
+	select {
+	case event := <-recorder.Events():
+		if event.Kind != RecorderEventProcessExited || event.ErrorCode != RecorderNetworkFailureErrorCode {
+			t.Fatalf("unexpected event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for network exit event")
+	}
+	if stopErr := recorder.Stop(context.Background()); !errors.Is(stopErr, ErrRecorderMediaIncomplete) ||
+		errors.Is(stopErr, ErrRecorderStop) {
+		t.Fatalf("stop after network exit = %v, want incomplete-only", stopErr)
+	}
+}
+
+func TestClassifyRecorderExitWindowsNetworkErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		summary string
+		want    string
+	}{
+		{
+			name:    "winsock_connection_reset",
+			summary: "[tcp @ 0000000000000000] Error number -10054 occurred",
+			want:    RecorderNetworkFailureErrorCode,
+		},
+		{
+			name:    "ffmpeg_windows_connect_timeout",
+			summary: "[tcp @ 0000000000000000] Connection failed: Error number -138 occurred",
+			want:    RecorderNetworkFailureErrorCode,
+		},
+		{
+			name:    "socket_resource_exhaustion_is_not_network_fault",
+			summary: "[tcp @ 0000000000000000] Error number -10055 occurred",
+			want:    RecorderProcessExitedErrorCode,
+		},
+		{
+			name:    "unknown_numeric_error_is_not_network_fault",
+			summary: "Error number -4242 occurred",
+			want:    RecorderProcessExitedErrorCode,
+		},
+		{
+			name:    "http_status_keeps_stream_expired_precedence",
+			summary: "Server returned 403 Forbidden; Error number -10054 occurred",
+			want:    RecorderStreamExpiredErrorCode,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyRecorderExit(test.summary); got != test.want {
+				t.Fatalf("classifyRecorderExit() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -495,8 +567,9 @@ func TestRecorderRebindRefreshesSameSourceAndStaleAttemptCannotWin(t *testing.T)
 	if len(configs) != 3 || !strings.Contains(recorderInputURL(configs[2]), "/latest.flv") {
 		t.Fatalf("latest same-source URL was not resolved: %+v", configs)
 	}
-	if err := recorder.Stop(context.Background()); !errors.Is(err, ErrRecorderStop) {
-		t.Fatalf("stop after historical unexpected exit = %v, want ErrRecorderStop", err)
+	if err := recorder.Stop(context.Background()); !errors.Is(err, ErrRecorderMediaIncomplete) ||
+		errors.Is(err, ErrRecorderStop) || recorderStopCleanupError(err) != nil {
+		t.Fatalf("stop after historical unexpected exit = %v, want incomplete-only", err)
 	}
 	if releases.Load() != 1 {
 		t.Fatalf("capacity releases = %d, want 1", releases.Load())
@@ -520,8 +593,8 @@ func TestRecorderStopEscalatesInOrderAndOnlyOnce(t *testing.T) {
 		t.Fatalf("new recorder: %v", err)
 	}
 	firstErr := recorder.Stop(context.Background())
-	if !errors.Is(firstErr, ErrRecorderStop) {
-		t.Fatalf("forced stop error = %v, want ErrRecorderStop", firstErr)
+	if !errors.Is(firstErr, ErrRecorderMediaIncomplete) || errors.Is(firstErr, ErrRecorderStop) {
+		t.Fatalf("successful forced stop = %v, want incomplete-only", firstErr)
 	}
 	waitForRecorderTest(t, func() bool { return len(process.actionSnapshot()) >= 4 })
 	wantActions := []string{"q", "terminate_tree", "terminate_process", "close"}
@@ -529,7 +602,8 @@ func TestRecorderStopEscalatesInOrderAndOnlyOnce(t *testing.T) {
 		t.Fatalf("stop actions = %v, want %v", got, wantActions)
 	}
 	secondErr := recorder.Stop(context.Background())
-	if !errors.Is(secondErr, ErrRecorderStop) || secondErr.Error() != firstErr.Error() {
+	if !errors.Is(secondErr, ErrRecorderMediaIncomplete) || errors.Is(secondErr, ErrRecorderStop) ||
+		secondErr.Error() != firstErr.Error() {
 		t.Fatalf("second stop = %v, first = %v", secondErr, firstErr)
 	}
 	if got := process.actionSnapshot(); !reflect.DeepEqual(got, wantActions) {
@@ -537,6 +611,35 @@ func TestRecorderStopEscalatesInOrderAndOnlyOnce(t *testing.T) {
 	}
 	if releases.Load() != 1 {
 		t.Fatalf("capacity releases = %d, want 1", releases.Load())
+	}
+}
+
+func TestRecorderStopProcessControlFailureRemainsHard(t *testing.T) {
+	privateErr := errors.New("private process control detail")
+	process := newRecorderTestProcess()
+	process.treeErr = privateErr
+	process.terminateErr = privateErr
+	process.closeErr = privateErr
+	starter := &recorderTestStarter{results: []recorderTestStartResult{{process: process}}}
+	source := &recorderTestSource{snapshots: [][]douyinLive.ResolvedStream{{
+		recorderTestCandidate("one", "flv", "hd", "h264", "https://stop-hard.example.invalid/live.flv", 1),
+	}}}
+	dependencies := recorderTestDependencies(starter)
+	dependencies.gracefulTimeout = 2 * time.Millisecond
+	dependencies.terminateTimeout = 2 * time.Millisecond
+	recorder, err := newFFmpegRecorder(
+		context.Background(), source, recorderTestOptions(t), dependencies, nil,
+	)
+	if err != nil {
+		t.Fatalf("new recorder: %v", err)
+	}
+	stopErr := recorder.Stop(context.Background())
+	if !errors.Is(stopErr, ErrRecorderStop) || !errors.Is(stopErr, ErrRecorderMediaIncomplete) ||
+		recorderStopCleanupError(stopErr) == nil {
+		t.Fatalf("process control failure = %v, want hard quality+cleanup error", stopErr)
+	}
+	if strings.Contains(stopErr.Error(), privateErr.Error()) {
+		t.Fatalf("process control failure leaked private detail: %v", stopErr)
 	}
 }
 
@@ -983,8 +1086,9 @@ func TestRecorderStopTimeoutDefersCapacityReleaseUntilWatcherFinishes(t *testing
 	case <-time.After(20 * time.Millisecond):
 	}
 	process.signal()
-	if err := <-secondResult; err == nil || err.Error() != firstErr.Error() {
-		t.Fatalf("second Stop = %v, want %v", err, firstErr)
+	if err := <-secondResult; !errors.Is(err, ErrRecorderStop) ||
+		!errors.Is(err, context.DeadlineExceeded) || recorderStopCleanupError(err) == nil {
+		t.Fatalf("second Stop = %v, want persistent cleanup timeout", err)
 	}
 	waitForRecorderTest(t, func() bool { return releases.Load() == 1 })
 }
@@ -1002,8 +1106,9 @@ func TestRecorderGracefulQuitWithNonzeroWaitIsUnclean(t *testing.T) {
 		t.Fatalf("new recorder: %v", err)
 	}
 	stopErr := recorder.Stop(context.Background())
-	if !errors.Is(stopErr, ErrRecorderStop) || strings.Contains(stopErr.Error(), "private process") {
-		t.Fatalf("nonzero graceful stop = %v", stopErr)
+	if !errors.Is(stopErr, ErrRecorderMediaIncomplete) || errors.Is(stopErr, ErrRecorderStop) ||
+		recorderStopCleanupError(stopErr) != nil {
+		t.Fatalf("nonzero graceful stop = %v, want incomplete-only", stopErr)
 	}
 	want := []string{"q", "close"}
 	if got := process.actionSnapshot(); !reflect.DeepEqual(got, want) {

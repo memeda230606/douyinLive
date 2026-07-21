@@ -13,20 +13,22 @@ const (
 )
 
 // RecordingProgressDTO is the fixed, privacy-safe desktop progress contract.
-// A zero value is reported when FFmpeg has not made a metric available yet.
+// BytesWritten is meaningful only when BytesAvailable is true; otherwise its
+// zero or retained aggregate value is an internal monotonic placeholder.
 type RecordingProgressDTO struct {
-	RoomID       string          `json:"roomId"`
-	SessionID    string          `json:"sessionId"`
-	OperationID  string          `json:"operationId"`
-	State        RecordingStatus `json:"state"`
-	ElapsedMS    int64           `json:"elapsedMs"`
-	BytesWritten int64           `json:"bytesWritten"`
-	SegmentCount int64           `json:"segmentCount"`
-	Frame        int64           `json:"frame"`
-	FPS          float64         `json:"fps"`
-	Speed        float64         `json:"speed"`
-	RestartCount int             `json:"restartCount"`
-	UpdatedAt    int64           `json:"updatedAt"`
+	RoomID         string          `json:"roomId"`
+	SessionID      string          `json:"sessionId"`
+	OperationID    string          `json:"operationId"`
+	State          RecordingStatus `json:"state"`
+	ElapsedMS      int64           `json:"elapsedMs"`
+	BytesWritten   int64           `json:"bytesWritten"`
+	BytesAvailable bool            `json:"bytesAvailable"`
+	SegmentCount   int64           `json:"segmentCount"`
+	Frame          int64           `json:"frame"`
+	FPS            float64         `json:"fps"`
+	Speed          float64         `json:"speed"`
+	RestartCount   int             `json:"restartCount"`
+	UpdatedAt      int64           `json:"updatedAt"`
 }
 
 type RecordingProgressPublisher func(RecordingProgressDTO)
@@ -35,15 +37,16 @@ type RecordingProgressPublisher func(RecordingProgressDTO)
 // only for stale-attempt fencing and monotonic aggregation and never cross the
 // public DTO boundary.
 type recorderProgressSample struct {
-	attemptID    string
-	ordinal      int
-	elapsedMS    int64
-	bytesWritten int64
-	segmentCount int64
-	frame        int64
-	fps          float64
-	speed        float64
-	updatedAt    int64
+	attemptID      string
+	ordinal        int
+	elapsedMS      int64
+	bytesWritten   int64
+	bytesAvailable bool
+	segmentCount   int64
+	frame          int64
+	fps            float64
+	speed          float64
+	updatedAt      int64
 }
 
 type recorderProgressSource interface {
@@ -198,6 +201,9 @@ func (s *sessionRuntime) handleRecorderProgress(
 		s.progressBytesBase = saturatingProgressAdd(
 			s.progressBytesBase, s.progressAttemptBytes,
 		)
+		if !s.progressAttemptBytesAvailable {
+			s.progressBytesUnavailable = true
+		}
 		s.progressSegmentBase = saturatingProgressAdd(
 			s.progressSegmentBase, s.progressAttemptSegments,
 		)
@@ -206,6 +212,7 @@ func (s *sessionRuntime) handleRecorderProgress(
 		s.progressAttemptOrdinal = progress.ordinal
 		s.progressAttemptElapsed = 0
 		s.progressAttemptBytes = 0
+		s.progressAttemptBytesAvailable = false
 		s.progressAttemptSegments = 0
 	} else if progress.ordinal != s.progressAttemptOrdinal {
 		s.mu.Unlock()
@@ -213,7 +220,10 @@ func (s *sessionRuntime) handleRecorderProgress(
 	}
 
 	s.progressAttemptElapsed = maxProgressInt64(s.progressAttemptElapsed, progress.elapsedMS)
-	s.progressAttemptBytes = maxProgressInt64(s.progressAttemptBytes, progress.bytesWritten)
+	if progress.bytesAvailable {
+		s.progressAttemptBytes = maxProgressInt64(s.progressAttemptBytes, progress.bytesWritten)
+	}
+	s.progressAttemptBytesAvailable = progress.bytesAvailable
 	s.progressAttemptSegments = maxProgressInt64(s.progressAttemptSegments, progress.segmentCount)
 	s.recordProgressRestartCountLocked(s.recoveryAttempts)
 
@@ -232,18 +242,19 @@ func (s *sessionRuntime) handleRecorderProgress(
 	}
 	s.progressLastPublishedAt = now
 	dto := RecordingProgressDTO{
-		RoomID:       current.RoomConfigID,
-		SessionID:    current.ID,
-		OperationID:  current.OperationID,
-		State:        current.RecordingStatus,
-		ElapsedMS:    javascriptSafeProgressInt64(saturatingProgressAdd(s.progressElapsedBase, s.progressAttemptElapsed)),
-		BytesWritten: javascriptSafeProgressInt64(saturatingProgressAdd(s.progressBytesBase, s.progressAttemptBytes)),
-		SegmentCount: javascriptSafeProgressInt64(saturatingProgressAdd(s.progressSegmentBase, s.progressAttemptSegments)),
-		Frame:        javascriptSafeProgressInt64(progress.frame),
-		FPS:          progress.fps,
-		Speed:        progress.speed,
-		RestartCount: javascriptSafeProgressInt(s.progressRestartCount),
-		UpdatedAt:    javascriptSafeProgressInt64(now.UnixMilli()),
+		RoomID:         current.RoomConfigID,
+		SessionID:      current.ID,
+		OperationID:    current.OperationID,
+		State:          current.RecordingStatus,
+		ElapsedMS:      javascriptSafeProgressInt64(saturatingProgressAdd(s.progressElapsedBase, s.progressAttemptElapsed)),
+		BytesWritten:   javascriptSafeProgressInt64(saturatingProgressAdd(s.progressBytesBase, s.progressAttemptBytes)),
+		BytesAvailable: !s.progressBytesUnavailable && s.progressAttemptBytesAvailable,
+		SegmentCount:   javascriptSafeProgressInt64(saturatingProgressAdd(s.progressSegmentBase, s.progressAttemptSegments)),
+		Frame:          javascriptSafeProgressInt64(progress.frame),
+		FPS:            progress.fps,
+		Speed:          progress.speed,
+		RestartCount:   javascriptSafeProgressInt(s.progressRestartCount),
+		UpdatedAt:      javascriptSafeProgressInt64(now.UnixMilli()),
 	}
 	s.mu.Unlock()
 	s.coordinator.progressDispatcher.publish(dto)

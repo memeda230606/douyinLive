@@ -56,12 +56,15 @@ func (a *DesktopApp) startup(ctx context.Context) {
 	}
 	defer a.finishStartup()
 	a.application.SetRoomStatusPublisher(func(status room.RoomRuntimeStatus) {
+		a.observeAcceptanceEvent(room.StatusEventName, status)
 		a.emit(ctx, room.StatusEventName, status)
 	})
 	a.application.SetLiveEventPublisher(func(batch eventstore.LiveEventBatchDTO) {
+		a.observeAcceptanceEvent(eventstore.LiveEventEventName, batch)
 		a.emit(ctx, eventstore.LiveEventEventName, batch)
 	})
 	a.application.SetRecordingProgressPublisher(func(progress capture.RecordingProgressDTO) {
+		a.observeAcceptanceEvent(capture.RecordingProgressEventName, progress)
 		a.emit(ctx, capture.RecordingProgressEventName, progress)
 	})
 	if err := a.application.InitializeInfrastructure(startupCtx, a.infrastructureOptions); err != nil {

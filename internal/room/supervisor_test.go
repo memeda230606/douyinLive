@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -92,8 +93,14 @@ type fakeCaptureCoordinator struct {
 	finalizeFailures                int
 	finalizePending                 int
 	finalizeTerminalErr             error
+	finalizeTerminalStatus          capture.SessionStatus
+	finalizeTerminalRecording       capture.RecordingStatus
 	finalizeCalls                   []fakeFinalizeCall
 	recoveryEvents                  chan capture.SessionRecoveryEvent
+	messageDisconnectMarkers        bool
+	messageMarkStarted              chan struct{}
+	messageMarkRelease              chan struct{}
+	messageMarkOnce                 sync.Once
 }
 
 func newFakeCaptureCoordinator() *fakeCaptureCoordinator { return &fakeCaptureCoordinator{} }
@@ -115,6 +122,9 @@ func (c *fakeCaptureCoordinator) Open(_ context.Context, request capture.OpenReq
 	c.session = session
 	if c.recoveryEvents != nil {
 		return &fakeRecoveryCaptureSession{fakeCaptureSession: session, events: c.recoveryEvents}, nil
+	}
+	if c.messageDisconnectMarkers {
+		return &fakeMessageCaptureSession{fakeCaptureSession: session}, nil
 	}
 	return session, nil
 }
@@ -144,6 +154,15 @@ type fakeRecoveryCaptureSession struct {
 	events <-chan capture.SessionRecoveryEvent
 }
 
+type fakeMessageCaptureSession struct {
+	*fakeCaptureSession
+}
+
+type scriptedMessageDisconnectSession struct {
+	*fakeCaptureSession
+	mark func(string) capture.LiveSession
+}
+
 func (session *fakeRecoveryCaptureSession) RecoveryEvents() <-chan capture.SessionRecoveryEvent {
 	return session.events
 }
@@ -152,6 +171,37 @@ func (s *fakeCaptureSession) Snapshot() capture.LiveSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.current
+}
+
+func (s *fakeMessageCaptureSession) MarkMessageDisconnected(
+	_ context.Context,
+	operationID string,
+	_ time.Time,
+) (capture.LiveSession, error) {
+	s.owner.mu.Lock()
+	started, release := s.owner.messageMarkStarted, s.owner.messageMarkRelease
+	s.owner.mu.Unlock()
+	if started != nil {
+		s.owner.messageMarkOnce.Do(func() { close(started) })
+	}
+	if release != nil {
+		<-release
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.current.OperationID = operationID
+	if s.current.RecordingStatus == capture.RecordingActive {
+		s.current.RecordingStatus = capture.RecordingReconnecting
+	}
+	return s.current, nil
+}
+
+func (s *scriptedMessageDisconnectSession) MarkMessageDisconnected(
+	_ context.Context,
+	operationID string,
+	_ time.Time,
+) (capture.LiveSession, error) {
+	return s.mark(operationID), nil
 }
 
 func (s *fakeCaptureSession) Rebind(_ context.Context, operationID string, _ capture.CaptureSource) (capture.LiveSession, error) {
@@ -210,6 +260,8 @@ func (s *fakeCaptureSession) Finalize(ctx context.Context, operationID string, r
 		nonterminal = true
 	}
 	terminalErr := s.owner.finalizeTerminalErr
+	terminalStatus := s.owner.finalizeTerminalStatus
+	terminalRecording := s.owner.finalizeTerminalRecording
 	s.owner.mu.Unlock()
 	if pending {
 		s.mu.Lock()
@@ -230,9 +282,14 @@ func (s *fakeCaptureSession) Finalize(ctx context.Context, operationID string, r
 		return current, errors.New("injected terminal CAS failure")
 	}
 	s.mu.Lock()
+	if terminalStatus == "" {
+		terminalStatus = capture.SessionCompleted
+	}
 	s.current.OperationID = operationID
-	s.current.Status = capture.SessionCompleted
-	if s.current.RecordingStatus == capture.RecordingActive {
+	s.current.Status = terminalStatus
+	if terminalRecording != "" {
+		s.current.RecordingStatus = terminalRecording
+	} else if s.current.RecordingStatus == capture.RecordingActive {
 		s.current.RecordingStatus = capture.RecordingCompleted
 	}
 	current := s.current
@@ -545,6 +602,210 @@ func TestMonitorManagerRequiresTwoReliableOfflineConfirmations(t *testing.T) {
 	}
 	if err := manager.StopMonitoring(context.Background(), config.ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMonitorManagerPublishesOfflineConfirmationAfterMarkedDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := openTestStore(t)
+	defer store.Close()
+	service, _ := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	config, _ := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID:        "marked-offline-confirm",
+		RecordEnabled: true,
+	})
+	online := newFakeLiveClient()
+	secondOffline := newFakeLiveClient()
+	secondOffline.offline = true
+	factory := &scriptedLiveFactory{clients: []LiveClient{online, secondOffline}}
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.messageDisconnectMarkers = true
+	events := make(chan RoomRuntimeStatus, 64)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator:    coordinator,
+		PollInterval:   5 * time.Millisecond,
+		ReconnectDelay: 5 * time.Millisecond,
+		Factory:        factory.create,
+		Publisher:      func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	recording := waitForRuntimeState(t, events, RuntimeRecording, "")
+	online.offline = true
+	online.Close()
+	confirming := waitForRuntimeState(t, events, RuntimeReconnecting, "ROOM_OFFLINE_CONFIRMING")
+	if confirming.OperationID == recording.OperationID ||
+		confirming.SessionID != recording.SessionID ||
+		confirming.Revision <= recording.Revision {
+		t.Fatalf("marked offline confirmation did not advance operation: recording=%#v confirming=%#v", recording, confirming)
+	}
+	finalizing := waitForRuntimeState(t, events, RuntimeFinalizing, "")
+	waiting := waitForRuntimeState(t, events, RuntimeWaiting, "ROOM_OFFLINE")
+	if finalizing.Revision <= confirming.Revision || waiting.Revision <= finalizing.Revision {
+		t.Fatalf("offline state revisions are not ordered: confirming=%d finalizing=%d waiting=%d",
+			confirming.Revision, finalizing.Revision, waiting.Revision)
+	}
+	_, _, finalizes := coordinator.counts()
+	if finalizes != 1 {
+		t.Fatalf("finalize calls after second confirmation = %d, want 1", finalizes)
+	}
+	if err := manager.StopMonitoring(context.Background(), config.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMonitorManagerStopFencesCommittedMessageDisconnectStatus(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := openTestStore(t)
+	defer store.Close()
+	service, _ := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	config, _ := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID:        "stop-fences-marked-disconnect",
+		RecordEnabled: true,
+	})
+	online := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.messageDisconnectMarkers = true
+	coordinator.messageMarkStarted = make(chan struct{})
+	coordinator.messageMarkRelease = make(chan struct{})
+	events := make(chan RoomRuntimeStatus, 64)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator:    coordinator,
+		PollInterval:   5 * time.Millisecond,
+		ReconnectDelay: 5 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return online, nil
+		},
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+	online.Close()
+	select {
+	case <-coordinator.messageMarkStarted:
+	case <-time.After(time.Second):
+		t.Fatal("message disconnect mark did not start")
+	}
+
+	stopResult := make(chan error, 1)
+	go func() {
+		stopResult <- manager.StopMonitoring(context.Background(), config.ID)
+	}()
+	finalizing := waitForRuntimeState(t, events, RuntimeFinalizing, "")
+	close(coordinator.messageMarkRelease)
+	select {
+	case err := <-stopResult:
+		if err != nil {
+			t.Fatalf("StopMonitoring() error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("StopMonitoring() did not finish")
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case status := <-events:
+			if status.Revision > finalizing.Revision && status.State == RuntimeReconnecting {
+				t.Fatalf("message disconnect overwrote stop status at revision %d", status.Revision)
+			}
+			if status.State == RuntimeStopped {
+				if status.Revision <= finalizing.Revision {
+					t.Fatalf("stopped revision %d did not follow finalizing %d", status.Revision, finalizing.Revision)
+				}
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("stopped status was not published")
+		}
+	}
+}
+
+func TestMonitorWorkerRejectsInvalidMessageDisconnectSnapshot(t *testing.T) {
+	now := time.Date(2026, 7, 20, 2, 0, 0, 0, time.UTC)
+	sessionID := newOperationID()
+	operationID := newOperationID()
+	baseSession := capture.LiveSession{
+		ID:              sessionID,
+		OperationID:     operationID,
+		Status:          capture.SessionRecording,
+		RecordingStatus: capture.RecordingActive,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*capture.LiveSession)
+	}{
+		{
+			name: "cross_session",
+			mutate: func(snapshot *capture.LiveSession) {
+				snapshot.ID = newOperationID()
+			},
+		},
+		{
+			name: "terminal_status",
+			mutate: func(snapshot *capture.LiveSession) {
+				snapshot.Status = capture.SessionCompleted
+			},
+		},
+		{
+			name: "untransitioned_recording",
+			mutate: func(snapshot *capture.LiveSession) {
+				snapshot.RecordingStatus = capture.RecordingActive
+			},
+		},
+		{
+			name: "old_operation",
+			mutate: func(snapshot *capture.LiveSession) {
+				snapshot.OperationID = operationID
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			published := 0
+			manager := &MonitorManager{options: MonitorOptions{
+				Now:       func() time.Time { return now },
+				Publisher: func(RoomRuntimeStatus) { published++ },
+			}}
+			before := RoomRuntimeStatus{
+				State:           RuntimeRecording,
+				OperationID:     operationID,
+				SessionID:       sessionID,
+				RecordingStatus: capture.RecordingActive,
+			}
+			worker := &monitorWorker{
+				ctx:     context.Background(),
+				manager: manager,
+				status:  before,
+			}
+			session := &scriptedMessageDisconnectSession{
+				fakeCaptureSession: &fakeCaptureSession{current: baseSession},
+				mark: func(nextOperationID string) capture.LiveSession {
+					next := baseSession
+					next.OperationID = nextOperationID
+					next.RecordingStatus = capture.RecordingReconnecting
+					test.mutate(&next)
+					return next
+				},
+			}
+			returnedOperationID, marked := worker.markMessageDisconnected(session, now)
+			if marked || returnedOperationID != operationID || worker.snapshot() != before || published != 0 {
+				t.Fatalf("invalid snapshot escaped fence: marked=%t stateChanged=%t published=%d",
+					marked, worker.snapshot() != before, published)
+			}
+		})
 	}
 }
 
@@ -1025,7 +1286,7 @@ func TestMonitorManagerShutdownWaitsForInflightSetMonitorEnabled(t *testing.T) {
 	}
 }
 
-func TestMonitorManagerTerminalFinalizeErrorDoesNotPolluteLaterStop(t *testing.T) {
+func TestMonitorManagerTerminalFinalizeErrorSurfacesStableFailureWithoutPollutingLaterStop(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	defer store.Close()
@@ -1038,6 +1299,8 @@ func TestMonitorManagerTerminalFinalizeErrorDoesNotPolluteLaterStop(t *testing.T
 	secondOffline.offline = true
 	coordinator := newFakeCaptureCoordinator()
 	coordinator.finalizeTerminalErr = errors.New("injected terminal finalize warning")
+	coordinator.finalizeTerminalStatus = capture.SessionInterrupted
+	coordinator.finalizeTerminalRecording = capture.RecordingIncomplete
 	events := make(chan RoomRuntimeStatus, 64)
 	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
 		Coordinator: coordinator, PollInterval: 5 * time.Millisecond, ReconnectDelay: 5 * time.Millisecond,
@@ -1054,9 +1317,76 @@ func TestMonitorManagerTerminalFinalizeErrorDoesNotPolluteLaterStop(t *testing.T
 	online.Close()
 	waitForRuntimeState(t, events, RuntimeReconnecting, "ROOM_CONNECTION_INTERRUPTED")
 	waitForRuntimeState(t, events, RuntimeReconnecting, "ROOM_OFFLINE_CONFIRMING")
-	waitForRuntimeState(t, events, RuntimeWaiting, "ROOM_OFFLINE")
+	failed := waitForRuntimeState(t, events, RuntimeFinalizing, "CAPTURE_FINALIZE_FAILED")
+	if failed.Message != "场次收尾失败，需要检查" || failed.SessionID == "" ||
+		failed.RecordingStatus != capture.RecordingIncomplete || failed.RetryAt != 0 {
+		t.Fatalf("terminal finalize failure status = %#v", failed)
+	}
+	stabilityDeadline := time.NewTimer(50 * time.Millisecond)
+	defer stabilityDeadline.Stop()
+stabilityLoop:
+	for {
+		select {
+		case status := <-events:
+			if status.Revision > failed.Revision &&
+				(status.State != RuntimeFinalizing || status.ErrorCode != "CAPTURE_FINALIZE_FAILED") {
+				t.Fatalf("terminal finalize failure was overwritten: failed=%#v later=%#v", failed, status)
+			}
+		case <-stabilityDeadline.C:
+			break stabilityLoop
+		}
+	}
+	current, err := manager.GetRoomStatus(context.Background(), config.ID)
+	if err != nil || current.Revision != failed.Revision || current.State != RuntimeFinalizing ||
+		current.ErrorCode != "CAPTURE_FINALIZE_FAILED" || current.SessionID != failed.SessionID ||
+		current.RecordingStatus != capture.RecordingIncomplete || current.RetryAt != 0 {
+		t.Fatalf("stable terminal finalize failure = %#v, %v; want retained %#v", current, err, failed)
+	}
 	if err := manager.StopMonitoring(context.Background(), config.ID); err != nil {
 		t.Fatalf("StopMonitoring() inherited terminal finalize error: %v", err)
+	}
+	_, _, finalizes := coordinator.counts()
+	if finalizes != 1 {
+		t.Fatalf("Finalize() calls = %d, want 1", finalizes)
+	}
+}
+
+func TestMonitorManagerCompletedIncompleteOfflinePublishesWaiting(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, _ := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	config, _ := service.CreateRoom(ctx, CreateRoomInput{LiveID: "completed-incomplete-offline", RecordEnabled: true})
+	online := newFakeLiveClient()
+	firstOffline := newFakeLiveClient()
+	firstOffline.offline = true
+	secondOffline := newFakeLiveClient()
+	secondOffline.offline = true
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.finalizeTerminalStatus = capture.SessionCompleted
+	coordinator.finalizeTerminalRecording = capture.RecordingIncomplete
+	events := make(chan RoomRuntimeStatus, 64)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: 5 * time.Millisecond, ReconnectDelay: 5 * time.Millisecond,
+		Factory:   (&scriptedLiveFactory{clients: []LiveClient{online, firstOffline, secondOffline}}).create,
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+	online.Close()
+	waitForRuntimeState(t, events, RuntimeReconnecting, "ROOM_CONNECTION_INTERRUPTED")
+	waitForRuntimeState(t, events, RuntimeReconnecting, "ROOM_OFFLINE_CONFIRMING")
+	waiting := waitForRuntimeState(t, events, RuntimeWaiting, "ROOM_OFFLINE")
+	if waiting.SessionID != "" || waiting.RecordingStatus != "" || waiting.RetryAt == 0 {
+		t.Fatalf("completed/incomplete waiting status = %#v", waiting)
+	}
+	if err := manager.StopMonitoring(context.Background(), config.ID); err != nil {
+		t.Fatal(err)
 	}
 	_, _, finalizes := coordinator.counts()
 	if finalizes != 1 {
@@ -1654,6 +1984,332 @@ func TestMonitorWorkerDetachedSessionWaitsPastTimeoutUntilPendingCleanupComplete
 	}
 }
 
+func TestMonitorManagerManualStopKeepsPendingCleanupOwnedUntilCompletion(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID: "manual-stop-pending-owner", RecordEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.finalizeRelease = make(chan struct{})
+	coordinator.finalizeCancellationPending = true
+	events := make(chan RoomRuntimeStatus, 256)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: time.Hour,
+		ReconnectDelay: time.Millisecond, FinalizeTimeout: 5 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return client, nil
+		},
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+
+	stopResult := make(chan error, 1)
+	go func() {
+		stopResult <- manager.StopMonitoring(context.Background(), config.ID)
+	}()
+	waitForRuntimeStatus(t, events, func(status RoomRuntimeStatus) bool {
+		return status.State == RuntimeFinalizing &&
+			status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt > 0
+	})
+	waitForFinalizeCalls(t, coordinator, maxAutomaticFinalizeAttempts+2, time.Second)
+	select {
+	case err := <-stopResult:
+		t.Fatalf("StopMonitoring() returned while shared cleanup was pending: %v", err)
+	default:
+	}
+	assertNoTerminalPendingFailure := func() {
+		t.Helper()
+		for {
+			select {
+			case status := <-events:
+				if status.State == RuntimeFinalizing &&
+					status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt == 0 {
+					t.Fatalf("pending cleanup exhausted ordinary budget: %#v", status)
+				}
+			default:
+				return
+			}
+		}
+	}
+	assertNoTerminalPendingFailure()
+
+	close(coordinator.finalizeRelease)
+	select {
+	case err := <-stopResult:
+		if err != nil {
+			t.Fatalf("StopMonitoring() after shared cleanup = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("StopMonitoring() did not converge after shared cleanup")
+	}
+	assertNoTerminalPendingFailure()
+	_, _, finalizes := coordinator.counts()
+	if finalizes <= maxAutomaticFinalizeAttempts {
+		t.Fatalf("Finalize() calls = %d, want more than ordinary retry budget", finalizes)
+	}
+	manager.mu.RLock()
+	retained := manager.workers[config.ID]
+	manager.mu.RUnlock()
+	if retained != nil {
+		t.Fatalf("terminal manual stop retained worker: %#v", retained.snapshot())
+	}
+	status, err := manager.GetRoomStatus(context.Background(), config.ID)
+	if err != nil || status.State != RuntimeStopped {
+		t.Fatalf("status after pending cleanup = (%#v, %v)", status, err)
+	}
+}
+
+func TestMonitorManagerManualStopCallerCancellationDoesNotCancelCleanupOwner(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID: "manual-stop-cancelled-wait", RecordEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	release := make(chan struct{})
+	coordinator.finalizeRelease = release
+	coordinator.finalizeCancellationPending = true
+	events := make(chan RoomRuntimeStatus, 256)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: time.Hour,
+		ReconnectDelay: time.Millisecond, FinalizeTimeout: 5 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return client, nil
+		},
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	err = manager.StopMonitoring(stopCtx, config.ID)
+	stopCancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller-bounded StopMonitoring() error = %v, want deadline", err)
+	}
+	_, _, callsAtCancellation := coordinator.counts()
+	waitForFinalizeCalls(t, coordinator, callsAtCancellation+2, time.Second)
+	waitForRuntimeStatus(t, events, func(status RoomRuntimeStatus) bool {
+		return status.State == RuntimeFinalizing &&
+			status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt > 0
+	})
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		manager.mu.RLock()
+		retained := manager.workers[config.ID]
+		manager.mu.RUnlock()
+		if retained == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cancelled caller orphaned cleanup owner: %#v", retained.snapshot())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for {
+		select {
+		case status := <-events:
+			if status.State == RuntimeFinalizing &&
+				status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt == 0 {
+				t.Fatalf("cancelled caller forced terminal pending status: %#v", status)
+			}
+		default:
+			return
+		}
+	}
+}
+
+func TestMonitorManagerHardFinalizeFailureIsFiniteAndDoneRetrySurvivesCallerCancellation(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID: "manual-stop-hard-then-pending", RecordEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.finalizeNonterminal = true
+	events := make(chan RoomRuntimeStatus, 256)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: time.Hour,
+		ReconnectDelay: time.Millisecond, FinalizeTimeout: 5 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return client, nil
+		},
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+	if err := manager.StopMonitoring(context.Background(), config.ID); err == nil {
+		t.Fatal("StopMonitoring() hard failure error = nil")
+	}
+	hardFailure := waitForRuntimeStatus(t, events, func(status RoomRuntimeStatus) bool {
+		return status.State == RuntimeFinalizing &&
+			status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt == 0
+	})
+	_, _, hardCalls := coordinator.counts()
+	if hardCalls != maxAutomaticFinalizeAttempts {
+		t.Fatalf("hard Finalize() calls = %d, want finite budget %d", hardCalls, maxAutomaticFinalizeAttempts)
+	}
+	time.Sleep(20 * time.Millisecond)
+	_, _, stableHardCalls := coordinator.counts()
+	if stableHardCalls != hardCalls {
+		t.Fatalf("hard finalization kept retrying: before=%d after=%d", hardCalls, stableHardCalls)
+	}
+	manager.mu.RLock()
+	placeholder := manager.workers[config.ID]
+	manager.mu.RUnlock()
+	if placeholder == nil || !placeholder.doneClosed() || placeholder.sessionValue() == nil {
+		t.Fatalf("hard failure did not retain a done placeholder: %#v", placeholder)
+	}
+
+	release := make(chan struct{})
+	coordinator.mu.Lock()
+	coordinator.finalizeNonterminal = false
+	coordinator.finalizeCancellationPending = true
+	coordinator.finalizeRelease = release
+	coordinator.mu.Unlock()
+	retryCtx, retryCancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
+	defer retryCancel()
+	if err := manager.StopMonitoring(retryCtx, config.ID); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller-bounded done retry error = %v, want deadline", err)
+	}
+	_, _, callsAtCancellation := coordinator.counts()
+	waitForFinalizeCalls(t, coordinator, callsAtCancellation+2, time.Second)
+	retrying := waitForRuntimeStatus(t, events, func(status RoomRuntimeStatus) bool {
+		return status.Revision > hardFailure.Revision &&
+			status.State == RuntimeFinalizing &&
+			status.ErrorCode == "CAPTURE_FINALIZE_FAILED" && status.RetryAt > 0
+	})
+	if retrying.RetryAt == 0 {
+		t.Fatalf("pending done retry lost retry deadline: %#v", retrying)
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		manager.mu.RLock()
+		retained := manager.workers[config.ID]
+		manager.mu.RUnlock()
+		if retained == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background done retry did not converge: %#v", retained.snapshot())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	status, err := manager.GetRoomStatus(context.Background(), config.ID)
+	if err != nil || status.State != RuntimeStopped {
+		t.Fatalf("status after background done retry = (%#v, %v)", status, err)
+	}
+}
+
+func TestMonitorManagerShutdownHardFinalizeFailureCompletesWithError(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	defer store.Close()
+	service, err := NewService(store.Writer(), store.Reader(), newMemoryCredentialStore())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := service.CreateRoom(ctx, CreateRoomInput{
+		LiveID: "shutdown-hard-finalize", RecordEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newFakeLiveClient()
+	coordinator := newFakeCaptureCoordinator()
+	coordinator.finalizeNonterminal = true
+	events := make(chan RoomRuntimeStatus, 64)
+	manager, err := NewMonitorManager(ctx, service, nil, MonitorOptions{
+		Coordinator: coordinator, PollInterval: time.Hour,
+		ReconnectDelay: time.Millisecond, FinalizeTimeout: 5 * time.Millisecond,
+		Factory: func(context.Context, RoomConfig, string) (LiveClient, error) {
+			return client, nil
+		},
+		Publisher: func(status RoomRuntimeStatus) { events <- status },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartMonitoring(ctx, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuntimeState(t, events, RuntimeRecording, "")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	err = manager.Shutdown(shutdownCtx)
+	shutdownCancel()
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown() hard finalization error = %v", err)
+	}
+	if !manager.ShutdownComplete() {
+		t.Fatal("hard finalization left shared shutdown running")
+	}
+	_, _, calls := coordinator.counts()
+	if calls != maxAutomaticFinalizeAttempts {
+		t.Fatalf("shutdown hard Finalize() calls = %d, want %d", calls, maxAutomaticFinalizeAttempts)
+	}
+	time.Sleep(20 * time.Millisecond)
+	_, _, stableCalls := coordinator.counts()
+	if stableCalls != calls {
+		t.Fatalf("shutdown hard finalization kept retrying: before=%d after=%d", calls, stableCalls)
+	}
+	manager.mu.RLock()
+	placeholder := manager.workers[config.ID]
+	manager.mu.RUnlock()
+	if placeholder == nil || !placeholder.doneClosed() || placeholder.sessionValue() == nil {
+		t.Fatalf("shutdown hard failure did not retain done placeholder: %#v", placeholder)
+	}
+	status := placeholder.snapshot()
+	if status.State != RuntimeFinalizing || status.ErrorCode != "CAPTURE_FINALIZE_FAILED" || status.RetryAt != 0 {
+		t.Fatalf("shutdown hard failure status = %#v", status)
+	}
+}
+
 func waitForFinalizeCalls(t *testing.T, coordinator *fakeCaptureCoordinator, count int, timeout time.Duration) []fakeFinalizeCall {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -1848,5 +2504,28 @@ func TestRoomStatusRevisionOrdersTransitionsWithSameTimestamp(t *testing.T) {
 	}
 	if first.Revision <= 0 || second.Revision != first.Revision+1 {
 		t.Fatalf("revisions are not strictly ordered: first=%d second=%d", first.Revision, second.Revision)
+	}
+}
+
+func TestRoomRuntimeStatusFormattingRedactsRoomID(t *testing.T) {
+	roomID := "private-room-correlation"
+	status := RoomRuntimeStatus{
+		RoomID:    roomID,
+		State:     RuntimeReconnecting,
+		ErrorCode: "ROOM_CONNECTION_INTERRUPTED",
+	}
+	for _, formatted := range []string{
+		status.String(),
+		status.GoString(),
+		fmt.Sprintf("%v", status),
+		fmt.Sprintf("%#v", status),
+	} {
+		if strings.Contains(formatted, roomID) {
+			t.Fatalf("runtime status formatter leaked room correlation: %s", formatted)
+		}
+		if !strings.Contains(formatted, string(status.State)) ||
+			!strings.Contains(formatted, status.ErrorCode) {
+			t.Fatalf("runtime status formatter lost safe state: %s", formatted)
+		}
 	}
 }

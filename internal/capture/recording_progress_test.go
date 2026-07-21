@@ -56,7 +56,7 @@ func TestRecordingProgressDTOJSONWhitelist(t *testing.T) {
 	dto := RecordingProgressDTO{
 		RoomID: "room", SessionID: "session", OperationID: "operation",
 		State: RecordingActive, ElapsedMS: 1234, BytesWritten: 5678,
-		SegmentCount: 2, Frame: 99, FPS: 29.97, Speed: 1.25,
+		BytesAvailable: true, SegmentCount: 2, Frame: 99, FPS: 29.97, Speed: 1.25,
 		RestartCount: 3, UpdatedAt: 4567,
 	}
 	encoded, err := json.Marshal(dto)
@@ -73,7 +73,7 @@ func TestRecordingProgressDTOJSONWhitelist(t *testing.T) {
 	}
 	sort.Strings(gotKeys)
 	wantKeys := []string{
-		"bytesWritten", "elapsedMs", "fps", "frame", "operationId", "restartCount",
+		"bytesAvailable", "bytesWritten", "elapsedMs", "fps", "frame", "operationId", "restartCount",
 		"roomId", "segmentCount", "sessionId", "speed", "state", "updatedAt",
 	}
 	if !reflect.DeepEqual(gotKeys, wantKeys) {
@@ -179,7 +179,8 @@ func TestSessionRuntimeRecordingProgressSaturatesJavaScriptSafeIntegers(t *testi
 	runtime.handleRecorderProgress(0, recorder, recorder, recorderProgressSample{
 		attemptID: attemptID, ordinal: 1,
 		elapsedMS: internalMaximum, bytesWritten: internalMaximum,
-		segmentCount: internalMaximum, frame: internalMaximum,
+		bytesAvailable: true,
+		segmentCount:   internalMaximum, frame: internalMaximum,
 		fps: 1, speed: 1, updatedAt: internalMaximum,
 	})
 	got := waitProgressDTO(t, published)
@@ -308,7 +309,7 @@ func TestSessionRuntimeRecordingProgressFencingRateAndMonotonicity(t *testing.T)
 	recorder.progressEvents <- progressSample(firstAttempt, 1, 1000, 2000, 1, 10)
 	first := waitProgressDTO(t, published)
 	if first.RoomID != roomID || first.SessionID != sessionID || first.OperationID != operationID ||
-		first.State != RecordingActive || first.ElapsedMS != 1000 || first.BytesWritten != 2000 ||
+		first.State != RecordingActive || first.ElapsedMS != 1000 || first.BytesWritten != 2000 || !first.BytesAvailable ||
 		first.SegmentCount != 1 || first.RestartCount != 0 || first.UpdatedAt != start.UnixMilli() {
 		t.Fatalf("first progress = %#v", first)
 	}
@@ -364,17 +365,114 @@ func TestSessionRuntimeRecordingProgressFencingRateAndMonotonicity(t *testing.T)
 	}
 }
 
+func TestSessionRecordingProgressKeepsUnavailableBytesExplicitAcrossAttempts(t *testing.T) {
+	start := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	var nowMS atomic.Int64
+	nowMS.Store(start.UnixMilli())
+	published := make(chan RecordingProgressDTO, 4)
+	coordinator := &Coordinator{
+		now: func() time.Time { return time.UnixMilli(nowMS.Load()).UTC() },
+		progressDispatcher: newRecordingProgressDispatcher(func(progress RecordingProgressDTO) {
+			published <- progress
+		}),
+	}
+	firstAttempt := newProgressTestID(t)
+	recorder := newFakeProgressRecorder(firstAttempt, 1)
+	runtime := &sessionRuntime{
+		coordinator: coordinator,
+		current: LiveSession{
+			ID: newProgressTestID(t), RoomConfigID: newProgressTestID(t), OperationID: newProgressTestID(t),
+			Status: SessionRecording, RecordingStatus: RecordingActive,
+		},
+		recorder: recorder,
+	}
+	unavailable := progressSample(firstAttempt, 1, 1000, 0, 1, 10)
+	unavailable.bytesAvailable = false
+	runtime.handleRecorderProgress(0, recorder, recorder, unavailable)
+	if got := waitProgressDTO(t, published); got.BytesAvailable || got.BytesWritten != 0 {
+		t.Fatalf("unavailable bytes were presented as available: %#v", got)
+	}
+	nowMS.Add(int64(time.Second / time.Millisecond))
+	runtime.handleRecorderProgress(0, recorder, recorder, progressSample(firstAttempt, 1, 2000, 0, 1, 20))
+	if got := waitProgressDTO(t, published); !got.BytesAvailable || got.BytesWritten != 0 {
+		t.Fatalf("numeric zero did not restore current-attempt availability: %#v", got)
+	}
+	nowMS.Add(int64(time.Second / time.Millisecond))
+	laterUnavailable := progressSample(firstAttempt, 1, 3000, 0, 2, 30)
+	laterUnavailable.bytesAvailable = false
+	runtime.handleRecorderProgress(0, recorder, recorder, laterUnavailable)
+	if got := waitProgressDTO(t, published); got.BytesAvailable || got.ElapsedMS != 3000 || got.SegmentCount != 2 || got.Frame != 30 {
+		t.Fatalf("latest N/A sample did not override prior availability while media advanced: %#v", got)
+	}
+	nowMS.Add(int64(time.Second / time.Millisecond))
+	secondAttempt := newProgressTestID(t)
+	recorder.setCurrentProgressAttempt(secondAttempt, 2)
+	runtime.handleRecorderProgress(0, recorder, recorder, progressSample(secondAttempt, 2, 500, 700, 1, 5))
+	if got := waitProgressDTO(t, published); got.BytesAvailable || got.BytesWritten != 700 {
+		t.Fatalf("unknown prior attempt bytes were presented as a complete total: %#v", got)
+	}
+}
+
+func TestSessionRecordingProgressMakesKnownHistoryUnknownAfterUnavailableAttempt(t *testing.T) {
+	start := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	var nowMS atomic.Int64
+	nowMS.Store(start.UnixMilli())
+	published := make(chan RecordingProgressDTO, 4)
+	coordinator := &Coordinator{
+		now: func() time.Time { return time.UnixMilli(nowMS.Load()).UTC() },
+		progressDispatcher: newRecordingProgressDispatcher(func(progress RecordingProgressDTO) {
+			published <- progress
+		}),
+	}
+	firstAttempt := newProgressTestID(t)
+	recorder := newFakeProgressRecorder(firstAttempt, 1)
+	runtime := &sessionRuntime{
+		coordinator: coordinator,
+		current: LiveSession{
+			ID: newProgressTestID(t), RoomConfigID: newProgressTestID(t), OperationID: newProgressTestID(t),
+			Status: SessionRecording, RecordingStatus: RecordingActive,
+		},
+		recorder: recorder,
+	}
+	runtime.handleRecorderProgress(0, recorder, recorder, progressSample(firstAttempt, 1, 1000, 100, 1, 10))
+	if got := waitProgressDTO(t, published); !got.BytesAvailable || got.BytesWritten != 100 {
+		t.Fatalf("known first attempt was not available: %#v", got)
+	}
+	nowMS.Add(int64(time.Second / time.Millisecond))
+	secondAttempt := newProgressTestID(t)
+	recorder.setCurrentProgressAttempt(secondAttempt, 2)
+	unavailable := progressSample(secondAttempt, 2, 500, 0, 1, 5)
+	unavailable.bytesAvailable = false
+	runtime.handleRecorderProgress(0, recorder, recorder, unavailable)
+	if got := waitProgressDTO(t, published); got.BytesAvailable || got.BytesWritten != 100 {
+		t.Fatalf("unknown current attempt did not hide known history: %#v", got)
+	}
+	nowMS.Add(int64(time.Second / time.Millisecond))
+	thirdAttempt := newProgressTestID(t)
+	recorder.setCurrentProgressAttempt(thirdAttempt, 3)
+	runtime.handleRecorderProgress(0, recorder, recorder, progressSample(thirdAttempt, 3, 250, 200, 1, 3))
+	if got := waitProgressDTO(t, published); got.BytesAvailable || got.BytesWritten != 300 {
+		t.Fatalf("unavailable historical attempt was forgotten: %#v", got)
+	}
+}
+
 func TestFFmpegRecorderProgressSourceAndSegmentSemantics(t *testing.T) {
-	zero := recorderProgressFromFFmpeg(t, strings.Join([]string{
+	unavailable := recorderProgressFromFFmpeg(t, strings.Join([]string{
+		"frame=0", "fps=0.00", "total_size=N/A", "out_time_us=0", "speed=0x", "progress=continue",
+	}, "\n")+"\n")
+	if unavailable.bytesAvailable || unavailable.segmentCount != 0 || unavailable.elapsedMS != 0 || unavailable.bytesWritten != 0 {
+		t.Fatalf("unavailable-size progress = %#v", unavailable)
+	}
+	numericZero := recorderProgressFromFFmpeg(t, strings.Join([]string{
 		"frame=0", "fps=0.00", "total_size=0", "out_time_us=0", "speed=0x", "progress=continue",
 	}, "\n")+"\n")
-	if zero.segmentCount != 0 || zero.elapsedMS != 0 || zero.bytesWritten != 0 {
-		t.Fatalf("zero-activity progress = %#v", zero)
+	if !numericZero.bytesAvailable || numericZero.bytesWritten != 0 {
+		t.Fatalf("numeric zero size was not preserved as available: %#v", numericZero)
 	}
 	active := recorderProgressFromFFmpeg(t, strings.Join([]string{
 		"frame=18000", "fps=30.0", "total_size=8192", "out_time_us=600000000", "speed=1.5x", "progress=continue",
 	}, "\n")+"\n")
-	if active.elapsedMS != 600000 || active.bytesWritten != 8192 || active.segmentCount != 3 ||
+	if !active.bytesAvailable || active.elapsedMS != 600000 || active.bytesWritten != 8192 || active.segmentCount != 3 ||
 		active.frame != 18000 || active.fps != 30 || active.speed != 1.5 {
 		t.Fatalf("active progress = %#v", active)
 	}
@@ -558,7 +656,8 @@ func progressSample(
 	return recorderProgressSample{
 		attemptID: attemptID, ordinal: ordinal,
 		elapsedMS: elapsedMS, bytesWritten: bytesWritten, segmentCount: segmentCount,
-		frame: frame, fps: 30, speed: 1, updatedAt: 1,
+		bytesAvailable: true,
+		frame:          frame, fps: 30, speed: 1, updatedAt: 1,
 	}
 }
 

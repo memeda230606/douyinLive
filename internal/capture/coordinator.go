@@ -12,12 +12,13 @@ import (
 )
 
 var (
-	ErrRecordingUnavailable  = errors.New("recording is unavailable")
-	ErrCaptureFinalized      = errors.New("capture session is finalized")
-	ErrCaptureSubscription   = errors.New("capture source subscription failed")
-	ErrCaptureEventSink      = errors.New("capture event sink is unavailable")
-	ErrCaptureCleanup        = errors.New("capture component cleanup failed")
-	ErrCaptureCleanupPending = errors.New("capture component cleanup is still running")
+	ErrRecordingUnavailable   = errors.New("recording is unavailable")
+	ErrCaptureFinalized       = errors.New("capture session is finalized")
+	ErrCaptureSubscription    = errors.New("capture source subscription failed")
+	ErrCaptureEventSink       = errors.New("capture event sink is unavailable")
+	ErrCaptureCleanup         = errors.New("capture component cleanup failed")
+	ErrCaptureCleanupPending  = errors.New("capture component cleanup is still running")
+	ErrCaptureRebindRetryable = errors.New("capture rebind can be retried")
 )
 
 type FinalizeReason string
@@ -88,6 +89,7 @@ type CoordinatorOptions struct {
 	Now               func() time.Time
 	CommitTimeout     time.Duration
 	RecoveryJournal   RecorderRecoveryJournal
+	MessageJournal    MessageRecoveryJournal
 	RecoveryPolicy    RecorderRecoveryPolicy
 	RecoveryScheduler RecorderRecoveryScheduler
 	ProgressPublisher RecordingProgressPublisher
@@ -110,6 +112,7 @@ type Coordinator struct {
 	now                func() time.Time
 	commitTimeout      time.Duration
 	recoveryJournal    RecorderRecoveryJournal
+	messageJournal     MessageRecoveryJournal
 	recoveryPolicy     RecorderRecoveryPolicy
 	recoveryScheduler  RecorderRecoveryScheduler
 	progressDispatcher *recordingProgressDispatcher
@@ -138,6 +141,9 @@ func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*
 	if options.RecoveryJournal == nil {
 		options.RecoveryJournal, _ = repository.(RecorderRecoveryJournal)
 	}
+	if options.MessageJournal == nil {
+		options.MessageJournal, _ = repository.(MessageRecoveryJournal)
+	}
 	if options.RecoveryScheduler == nil {
 		options.RecoveryScheduler = recorderRecoveryTimerScheduler{}
 	}
@@ -148,6 +154,7 @@ func NewCoordinator(repository SessionRepository, options CoordinatorOptions) (*
 		now:                options.Now,
 		commitTimeout:      options.CommitTimeout,
 		recoveryJournal:    options.RecoveryJournal,
+		messageJournal:     options.MessageJournal,
 		recoveryPolicy:     normalizeRecorderRecoveryPolicy(options.RecoveryPolicy),
 		recoveryScheduler:  options.RecoveryScheduler,
 		progressDispatcher: newRecordingProgressDispatcher(options.ProgressPublisher),
@@ -361,52 +368,58 @@ func (c *Coordinator) commitContext(parent context.Context) (context.Context, co
 }
 
 type sessionRuntime struct {
-	coordinator                *Coordinator
-	operationMu                sync.Mutex
-	mu                         sync.Mutex
-	acceptWG                   sync.WaitGroup
-	current                    LiveSession
-	operationID                string
-	source                     CaptureSource
-	subscriptionID             string
-	recorder                   Recorder
-	recorderEventsCancel       context.CancelFunc
-	sink                       EventSink
-	recoveryEvents             chan SessionRecoveryEvent
-	recoveryEventsClosed       bool
-	recorderProgressCancel     context.CancelFunc
-	recorderProgressGeneration uint64
-	progressAttemptID          string
-	progressAttemptOrdinal     int
-	progressElapsedBase        int64
-	progressAttemptElapsed     int64
-	progressBytesBase          int64
-	progressAttemptBytes       int64
-	progressSegmentBase        int64
-	progressAttemptSegments    int64
-	progressRestartCount       int
-	progressLastPublishedAt    time.Time
-	recoveryGeneration         uint64
-	recoveryCancel             context.CancelFunc
-	recoveryRecorder           Recorder
-	recoveryGapID              string
-	recoveryWindowStartedAt    time.Time
-	recoveryAttempts           int
-	recoveryErrorCode          string
-	recoveryCloseAt            time.Time
-	finalizing                 bool
-	finalized                  bool
-	finalizeErr                error
-	cleanupErr                 error
-	cleanupPublicErr           error
-	finalizeOriginalRecording  RecordingStatus
-	finalizeOriginalSet        bool
-	finalizeReason             FinalizeReason
-	finalizeReasonSet          bool
-	terminalStatus             SessionStatus
-	terminalRecordingStatus    RecordingStatus
-	terminalEndedAt            time.Time
-	terminalTargetSet          bool
+	coordinator                   *Coordinator
+	operationMu                   sync.Mutex
+	mu                            sync.Mutex
+	acceptWG                      sync.WaitGroup
+	current                       LiveSession
+	operationID                   string
+	source                        CaptureSource
+	subscriptionID                string
+	recorder                      Recorder
+	recorderEventsCancel          context.CancelFunc
+	sink                          EventSink
+	recoveryEvents                chan SessionRecoveryEvent
+	recoveryEventsClosed          bool
+	recorderProgressCancel        context.CancelFunc
+	recorderProgressGeneration    uint64
+	progressAttemptID             string
+	progressAttemptOrdinal        int
+	progressElapsedBase           int64
+	progressAttemptElapsed        int64
+	progressBytesBase             int64
+	progressAttemptBytes          int64
+	progressBytesUnavailable      bool
+	progressAttemptBytesAvailable bool
+	progressSegmentBase           int64
+	progressAttemptSegments       int64
+	progressRestartCount          int
+	progressLastPublishedAt       time.Time
+	recoveryGeneration            uint64
+	recoveryCancel                context.CancelFunc
+	recoveryRecorder              Recorder
+	recoveryGapID                 string
+	recoveryWindowStartedAt       time.Time
+	recoveryAttempts              int
+	recoveryErrorCode             string
+	recoveryCloseAt               time.Time
+	messageRecoveryGapID          string
+	messageRecoveryErrorCode      string
+	messageRecoveryCloseAt        time.Time
+	finalizing                    bool
+	finalized                     bool
+	finalizeErr                   error
+	cleanupErr                    error
+	cleanupFailureErr             error
+	cleanupPublicErr              error
+	finalizeOriginalRecording     RecordingStatus
+	finalizeOriginalSet           bool
+	finalizeReason                FinalizeReason
+	finalizeReasonSet             bool
+	terminalStatus                SessionStatus
+	terminalRecordingStatus       RecordingStatus
+	terminalEndedAt               time.Time
+	terminalTargetSet             bool
 }
 
 func (s *sessionRuntime) Snapshot() LiveSession {
@@ -582,6 +595,9 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	s.mu.Unlock()
 	s.cancelRecorderRecoveryIntent()
 	s.operationMu.Lock()
+	// Fence a recorder exit that acquired operationMu just before the first
+	// cancellation and started a new generation while this call was waiting.
+	s.cancelRecorderRecoveryIntent()
 	defer s.operationMu.Unlock()
 
 	s.mu.Lock()
@@ -598,6 +614,10 @@ func (s *sessionRuntime) Rebind(ctx context.Context, operationID string, source 
 	current := s.current
 	recorder := s.recorder
 	s.mu.Unlock()
+
+	if s.coordinator.messageJournal != nil {
+		return s.rebindWithMessageRecoveryLocked(ctx, operationID, source, current, recorder)
+	}
 
 	previousRecording := current.RecordingStatus
 	needsRecorderRebind := previousRecording == RecordingActive || previousRecording == RecordingReconnecting
@@ -770,6 +790,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	originalRecording := s.finalizeOriginalRecording
 	effectiveReason := s.finalizeReason
 	componentErr := s.cleanupErr
+	cleanupFailureErr := s.cleanupFailureErr
 	publicComponentErr := s.cleanupPublicErr
 	targetStatus := s.terminalStatus
 	targetRecording := s.terminalRecordingStatus
@@ -811,14 +832,68 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	gapID := s.recoveryGapID
 	recoveryErrorCode := s.recoveryErrorCode
 	recoveryCloseAt := s.recoveryCloseAt
-	if markCommitted && gapID != "" && recoveryCloseAt.IsZero() {
+	recoveryAttempts := s.recoveryAttempts
+	messageGapID := s.messageRecoveryGapID
+	messageCloseAt := s.messageRecoveryCloseAt
+	if markCommitted && messageGapID != "" && messageCloseAt.IsZero() {
+		messageCloseAt = s.coordinator.now().UTC()
+		s.messageRecoveryCloseAt = messageCloseAt
+		if gapID != "" && recoveryCloseAt.IsZero() {
+			recoveryCloseAt = messageCloseAt
+			s.recoveryCloseAt = recoveryCloseAt
+		}
+	}
+	if markCommitted && messageGapID == "" && gapID != "" && recoveryCloseAt.IsZero() {
 		recoveryCloseAt = s.coordinator.now().UTC()
 		s.recoveryCloseAt = recoveryCloseAt
 	}
 	s.mu.Unlock()
 
 	var recoveryCloseErr error
-	if markCommitted && gapID != "" {
+	if markCommitted && messageGapID != "" {
+		if s.coordinator.messageJournal == nil {
+			recoveryCloseErr = ErrRecoveryPersistence
+		} else {
+			recorderError := ""
+			if gapID != "" {
+				recorderError = normalizeRecorderRecoveryErrorCode(recoveryErrorCode)
+			}
+			closeCtx, cancel := s.coordinator.commitContext(ctx)
+			closeErr := s.coordinator.messageJournal.CloseMessageRecovery(
+				closeCtx,
+				CloseMessageRecoveryInput{
+					SessionID:               current.ID,
+					GapID:                   messageGapID,
+					ExpectedStatus:          current.Status,
+					ExpectedRecordingStatus: current.RecordingStatus,
+					ExpectedOperationID:     current.OperationID,
+					ErrorCode:               MessageRecoveryFinalizedErrorCode,
+					ClosedAt:                messageCloseAt,
+					RecorderGapID:           gapID,
+					RecorderRestartAttempts: recoveryAttempts,
+					RecorderErrorCode:       recorderError,
+				},
+			)
+			cancel()
+			if closeErr != nil {
+				recoveryCloseErr = messageRecoveryPublicError(ctx, closeErr)
+			} else {
+				s.mu.Lock()
+				if s.messageRecoveryGapID == messageGapID {
+					s.messageRecoveryGapID = ""
+					s.messageRecoveryErrorCode = ""
+					s.messageRecoveryCloseAt = time.Time{}
+				}
+				if gapID != "" && s.recoveryGapID == gapID {
+					s.recoveryGapID = ""
+					s.recoveryRecorder = nil
+					s.recoveryCloseAt = time.Time{}
+				}
+				s.mu.Unlock()
+			}
+		}
+		materializationErr = errors.Join(materializationErr, recoveryCloseErr)
+	} else if markCommitted && gapID != "" {
 		if s.coordinator.recoveryJournal == nil {
 			recoveryCloseErr = fmt.Errorf(
 				"close recorder recovery gap: journal is nil: %w",
@@ -856,9 +931,10 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 	}
 
 	if !targetSet {
-		var recorderErr, sinkErr error
+		var recorderErr, recorderCleanupErr, sinkErr error
 		if recorder != nil {
 			recorderErr = boundedCall(ctx, recorder.Stop)
+			recorderCleanupErr = recorderStopCleanupError(recorderErr)
 			if recorderErr != nil && ctx.Err() != nil {
 				// Recorder.Stop owns a shared asynchronous completion. A caller
 				// deadline only stops this wait; it must not orphan media proxy/DB
@@ -901,23 +977,26 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 				return result, pendingErr
 			}
 		}
-		componentErr = errors.Join(componentErr, recorderErr, sinkErr, ctx.Err())
-		if recorderErr != nil || sinkErr != nil {
+		// Both shared component completions have now been observed. Caller
+		// cancellation after this point does not describe a cleanup failure and
+		// must not permanently turn a converged session into interrupted.
+		targetEndedAt = s.coordinator.now().UTC()
+		componentErr = errors.Join(componentErr, recorderErr, sinkErr)
+		cleanupFailureErr = errors.Join(cleanupFailureErr, recorderCleanupErr, sinkErr)
+		if recorderCleanupErr != nil || sinkErr != nil {
 			publicComponentErr = errors.Join(publicComponentErr, ErrCaptureCleanup)
 		}
-		publicComponentErr = errors.Join(publicComponentErr, ctx.Err())
 
 		targetStatus = SessionCompleted
 		if effectiveReason == FinalizeFailure {
 			targetStatus = SessionFailed
 			targetRecording = failureRecordingStatus(originalRecording)
 		} else {
-			if componentErr != nil {
+			if cleanupFailureErr != nil {
 				targetStatus = SessionInterrupted
 			}
 			targetRecording = terminalRecordingStatus(originalRecording, componentErr)
 		}
-		targetEndedAt = s.coordinator.now().UTC()
 		targetSet = true
 
 		s.mu.Lock()
@@ -927,6 +1006,7 @@ func (s *sessionRuntime) Finalize(ctx context.Context, operationID string, reaso
 		s.subscriptionID = ""
 		s.sink = nil
 		s.cleanupErr = componentErr
+		s.cleanupFailureErr = cleanupFailureErr
 		s.cleanupPublicErr = publicComponentErr
 		s.terminalStatus = targetStatus
 		s.terminalRecordingStatus = targetRecording

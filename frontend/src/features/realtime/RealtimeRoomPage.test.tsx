@@ -87,7 +87,7 @@ describe('RealtimeRoomPage', () => {
     })
     useRealtimeStore.getState().applyRecordingProgress({
       roomId, sessionId, operationId, state: 'recording', elapsedMs: 65_000,
-      bytesWritten: 2_097_152, segmentCount: 2, frame: 1_625, restartCount: 1,
+      bytesWritten: 2_097_152, bytesAvailable: true, segmentCount: 2, frame: 1_625, restartCount: 1,
       fps: 25, speed: 1.01, updatedAt: 100,
     })
     useRealtimeStore.getState().applyRoomStatus({
@@ -159,7 +159,7 @@ describe('RealtimeRoomPage', () => {
   it('lets the newest status control presentation and requires exact progress fencing', () => {
     useRealtimeStore.getState().applyRecordingProgress({
       roomId, sessionId, operationId, state: 'recording', elapsedMs: 1_000,
-      bytesWritten: 2_048, segmentCount: 1, frame: 25, restartCount: 0,
+      bytesWritten: 2_048, bytesAvailable: true, segmentCount: 1, frame: 25, restartCount: 0,
       fps: 25, speed: 1, updatedAt: 1,
     })
     const reconnectingStatus: RoomRuntimeStatus = {
@@ -168,6 +168,19 @@ describe('RealtimeRoomPage', () => {
     const view = renderPage(reconnectingStatus)
     expect(screen.getByText('正在恢复').closest('.recording-state')).toHaveClass('recording-state--reconnecting')
     expect(screen.getByText('2.0 KiB')).toBeInTheDocument()
+    act(() => useRealtimeStore.getState().applyRecordingProgress({
+      ...useRealtimeStore.getState().progressBySession[sessionId]!,
+      bytesAvailable: false,
+      updatedAt: 2,
+    }))
+    expect(screen.getByText('已写入').closest('div')).toHaveTextContent('—')
+    act(() => useRealtimeStore.getState().applyRecordingProgress({
+      ...useRealtimeStore.getState().progressBySession[sessionId]!,
+      bytesAvailable: true,
+      bytesWritten: 0,
+      updatedAt: 3,
+    }))
+    expect(screen.getByText('0 B')).toBeInTheDocument()
 
     const finalizingStatus: RoomRuntimeStatus = {
       ...recordingStatus, state: 'FINALIZING', recordingStatus: 'finalizing', revision: 202,
@@ -186,7 +199,7 @@ describe('RealtimeRoomPage', () => {
         [sessionId]: { ...useRealtimeStore.getState().progressBySession[sessionId]!, operationId: '019bce70-0c00-7000-8000-000000000004', bytesWritten: 9_999 },
       },
     }))
-    expect(screen.getByText('0 B')).toBeInTheDocument()
+    expect(screen.getByText('已写入').closest('div')).toHaveTextContent('—')
     expect(screen.queryByText('9.8 KiB')).not.toBeInTheDocument()
   })
 

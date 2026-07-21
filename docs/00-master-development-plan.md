@@ -21,31 +21,43 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-19T23:49:00+08:00"
+updated_at: "2026-07-21T18:06:53+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "7700e9f1a522a404fe25aa652b1b88c187dd53d4"
+last_verified_head: "5b642f41660c7e4f6f19a9b0225ae2c0a8870665"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 68
-current_phase: "PHASE-3-CAPTURE-MVP"
-current_task: "P3-ACC-001"
-next_task: "PHASE-4"
+overall_completion_percent: 70
+current_phase: "PHASE-4-PLAYBACK-ANALYSIS"
+current_task: "P4-PLY-001"
+next_task: "P4-ANA-001"
 expected_dirty_paths:
   - "docs/00-master-development-plan.md"
   - "docs/01-desktop-ui-development-plan.md"
   - "docs/02-capture-and-recording-development-plan.md"
+  - "docs/03-data-and-analysis-development-plan.md"
+  - "docs/04-engineering-testing-and-release-plan.md"
   - "docs/development-progress-history.md"
-  - "docs/validation/2026-07-19-p3-ui-realtime-monitoring.md"
+  - "docs/validation/2026-07-21-p3-acceptance-closeout.md"
   - "cmd/desktop/"
+  - "cmd/p3acclauncher/"
+  - "cmd/p3accproxy/"
   - "frontend/"
+  - "http_context.go"
+  - "http_context_test.go"
   - "internal/app/"
   - "internal/capture/"
+  - "internal/diagnostics/"
   - "internal/eventstore/"
+  - "internal/playback/"
   - "internal/room/"
+  - "internal/storage/"
+  - "logging.go"
+  - "logging_privacy_test.go"
+  - "scripts/"
 blockers: []
-last_completed_task: "P3-UI-001"
-last_completion_evidence: "完成 SQLite 提交后的 live:event 白名单批次、最多 1 Hz 的 recording:progress、全局严格递增 revision 的 room:status 单一有序告警来源，以及单例 Wails 事件桥、严格 Zod DTO、2,000 条实时事件/100 条告警上界、虚拟时间线、六类筛选、录制指标、重试倒计时和缺口告警。全量 Go test/vet/build、P2/P3 标签门禁、前端 6 文件 20 项测试/typecheck/build、Wails 生产构建和真实冷启动 GUI 11/11 通过；PrintWindow 截图与结构化 JSON 一致，WM_CLOSE 54 ms 自然退出且零残留，独立终审 P0/P1/P2=0。"
-resume_instruction: "执行 P3-ACC-001：从用户当前授权上下文读取测试直播间地址，不把直播间标识、Cookie 或完整流 URL 写入源码、文档和日志；完成 10 分钟连续录制、真实断网、FFmpeg 崩溃、恢复后新分片与缺口、真实下播收尾、GUI/SQLite/媒体清单一致性和资源趋势验收。若授权房间离线，使用无需付费且公开在线的直播间完成等价测试并继续遵守隐私边界。"
+last_completed_task: "P3-ACC-001"
+last_completion_evidence: "正式在线运行已证明不少于 10 分钟的稳定资源窗口、FFmpeg 崩溃恢复、隔离 relay 网络故障恢复、新 attempt 与 gap 证据；后续修复了收尾所有权、媒体身份/路径 ABA 和日志脱敏问题。2026-07-21 离线控制器 14/14、清理竞态 2/2、显式 Scheduled Task/MIC 正反门禁、default/P2/P3/P3UI/P3ACC Go test-vet-build、前端 6 文件 20 测试/typecheck/build、两项 cmd/main loopback Ping/Pong 和四产物构建均通过。用户明确批准人工停止，并豁免本次自然下播等待和最终机器视觉 ACK；两项记为 USER_WAIVED/NOT_RUN，人工 UI finalizing 记为 USER_OBSERVED，未声明 controller PASS 或 passed=true。"
+resume_instruction: "继续 P4-PLY-001：Schema v6 与内部只读 session/event/gap playback repository 已完成；下一切片实现媒体 segment/artifact 查询、统一时间轴映射和应用服务接入，再进入 Wails 历史页、播放器与动态媒体 Range 服务。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -78,16 +90,16 @@ resume_instruction: "执行 P3-ACC-001：从用户当前授权上下文读取测
 | PHASE-0 文档与决策基线 | 5% | `DONE` | 100% | 五份计划已创建并校验 | 计划变更持续同步 |
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
-| PHASE-3 采集与录制 MVP | 30% | `IN_PROGRESS` | 93% | 28/30 点完成；场次、事件、录制、媒体收尾、异常恢复与实时监控 UI 已完成 | 完成 10 分钟在线稳定性、故障注入与下播收尾验收 |
-| PHASE-4 回放与基础分析 | 20% | `NOT_STARTED` | 0% | — | 回放时间轴、指标、报告和导出验收 |
+| PHASE-3 采集与录制 MVP | 30% | `DONE` | 100% | 30/30 点完成；稳定窗口、FFmpeg/网络故障恢复和人工停止收尾已按 2026-07-21 项目级豁免记录关闭 | 真实平台或工具链变化时复验；正式控制器合同保持严格 |
+| PHASE-4 回放与基础分析 | 20% | `IN_PROGRESS` | 0% | P4-PLY-001 已完成 Schema v6 与内部只读 session/event/gap 查询首个切片 | 继续媒体查询、统一时间轴、应用服务和历史回放 UI |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **68%** | 已完成文档、流解析、桌面房间管理、场次编排、事件耐久链路、录制、媒体收尾、异常恢复与实时监控 UI | 执行 P3-ACC-001 十分钟稳定性、真实故障与下播验收 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **70%** | PHASE-0 至 PHASE-3 已关闭；采集录制闭环及其确定性门禁完成 | 执行 P4-PLY-001 历史回放与统一时间轴基础 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
 ### 0.4 当前任务队列
 
-任务按表格顺序执行；如需拆分新任务，使用同一阶段前缀并更新任务点。当前阶段 PHASE-3 总任务点为 30。
+任务按表格顺序执行；如需拆分新任务，使用同一阶段前缀并更新任务点。当前阶段 PHASE-4 总任务点为 20。
 
 | ID | 任务 | 点数 | 依赖 | 状态 | 完成证据或阻塞 | 下一动作 |
 | --- | --- | ---: | --- | --- | --- | --- |
@@ -111,9 +123,14 @@ resume_instruction: "执行 P3-ACC-001：从用户当前授权上下文读取测
 | P3-MEDIA-001 | 实现分片探测、清单、音频代理与收尾 | 4 | P3-REC-001 | `DONE` | [验收记录](validation/2026-07-19-p3-media-finalization.md)：Schema v4、内外部录制根、URL-free attempt、数据包级探测、MKV 原子定稿、WAV/MP4 代理、`media.json` CAS、完成态篡改审计与持久化上界完成；全量 Go/P3/Wails/真实 FFmpeg E2E 通过，终审无 P0/P1 | 执行 P3-RCV-001 |
 | P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `DONE` | [验收记录](validation/2026-07-19-p3-rcv-recovery.md)：Schema v5、全局实例租约、严格分页、Global Job 证据恢复、媒体/事件恢复、原子缺口与终态推进、运行期有界退避及 fail-closed 启动完成；全量 Go/前端/Wails 与重点 20 轮回归通过，终审 P0/P1/P2=0 | 执行 P3-UI-001 |
 | P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `DONE` | [验收记录](validation/2026-07-19-p3-ui-realtime-monitoring.md)：完成后端有界实时发布、录制进度、状态 revision 与前端单例事件桥、2,000 条虚拟时间线、筛选/指标/倒计时/告警；全量 Go/前端/Wails 和真实冷启动 GUI 11/11 通过，终审 P0/P1/P2=0 | 执行 P3-ACC-001 |
-| P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `READY` | P3-UI-001 已完成并通过真实冷启动 GUI；用户已提供测试直播间授权 | 执行在线连续录制、断网、FFmpeg 崩溃、恢复、真实下播和资源趋势验收 |
+| P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `DONE` | [关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)：稳定窗口、FFmpeg 崩溃与 relay 网络故障恢复已证明；人工停止与 UI finalizing 为 USER_OBSERVED，自然下播等待和最终机器视觉 ACK 经用户明确豁免为 USER_WAIVED/NOT_RUN；没有伪造 controller PASS/passed=true | PHASE-3 完成；执行 P4-PLY-001 |
+| P4-PLY-001 | 实现历史场次查询、统一时间轴与同步回放基础 | 6 | P3-ACC-001 | `IN_PROGRESS` | Schema v6、v5 备份/升级/回滚、版本化只读 session/event/gap repository、稳定 keyset cursor 与隐私 DTO 已完成；目标测试 20 轮、全量 Go test/vet/build 通过 | 实现媒体 segment/artifact 查询、时间轴映射、应用服务和历史回放 UI |
+| P4-ANA-001 | 实现 10 秒指标桶、峰值/低谷与高光候选 | 6 | P4-PLY-001 | `NOT_STARTED` | — | 等待 P4-PLY-001 |
+| P4-ASR-001 | 实现 ASR 插件接口与未配置降级 | 2 | P4-ANA-001 | `NOT_STARTED` | — | 等待 P4-ANA-001 |
+| P4-EXP-001 | 实现 CSV/JSON 报告导出与隐私门禁 | 4 | P4-ANA-001 | `NOT_STARTED` | — | 等待 P4-ANA-001 |
+| P4-ACC-001 | 完成回放、分析、ASR 降级与导出验收 | 2 | P4-ASR-001、P4-EXP-001 | `NOT_STARTED` | — | 等待 P4-ASR-001 与 P4-EXP-001 |
 
-阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
+阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点且已完成；P4 共 20 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
 
 ### 0.5 完成度回写规则
 
@@ -148,8 +165,6 @@ resume_instruction: "执行 P3-ACC-001：从用户当前授权上下文读取测
 
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
-| 2026-07-16 19:00 | P1-ENV-001 | `BLOCKED` | 再次验证 Go、FFmpeg、Wails CLI、WebView2、卸载注册表及现有 Docker 镜像；仅确认 `winget` 可用，未修改系统 | 等待用户授权安装开发前置，再执行 P1-STR-001 |
-| 2026-07-16 19:18 | P1-ENV-001 | `DONE` | 用户授权后完成工具链安装；哈希校验通过；`wails doctor` 就绪；`go test ./...`、`go build ./...` 与 FFmpeg H.264/AAC 冒烟通过 | 执行 P1-STR-001 脱敏流 fixture |
 | 2026-07-16 19:44 | P1-STR-001 | `DONE` | 创建直连 FLV/HLS、SDK 嵌套 JSON、空流三份脱敏 fixture；结构与敏感信息守卫测试通过 | 执行 P1-STR-002 纯函数解析器 |
 | 2026-07-16 19:44 | P1-STR-002 | `DONE` | 实现候选解析、标准化、去重、稳定脱敏 ID 与字段路径/长度错误；`go test ./...`、`go vet ./...`、`go build ./...` 和敏感扫描通过；`-race` 因当前无 CGO/GCC 未启动 | 执行 P1-STR-003 公共解析接口 |
 | 2026-07-16 19:56 | P1-STR-003 | `DONE` | 新增公共 DTO 与解析入口，复用实例缓存和房间状态更新；URL/SourcePath 的 JSON 与字符串脱敏测试、完整测试、vet、build、`cmd/main` 兼容和敏感域扫描通过 | 执行 P1-STR-004 自动选择、降级与错误分类 |
@@ -168,6 +183,8 @@ resume_instruction: "执行 P3-ACC-001：从用户当前授权上下文读取测
 | 2026-07-19 17:51 | P3-MEDIA-001 | `DONE` | 完成 Schema v4、录制根身份与安全路径、URL-free attempt、分片和代理数据包级探测、MKV 原子定稿、WAV/MP4、`media.json` CAS、完成态篡改审计及基数/清单上界；修复后全量 Go/P3/前端/Wails、capture 20 轮、重点高风险回归与真实 FFmpeg 内外部根 E2E 通过，终审无 P0/P1；在线连通性已恢复，10 分钟授权房间验收仍按计划由 P3-ACC 执行 | 执行 P3-RCV-001 异常重试、缺口审计与启动恢复 |
 | 2026-07-19 21:24 | P3-RCV-001 | `DONE` | 完成 Schema v5 恢复索引、数据根全局实例租约、固定截止严格 keyset 扫描、Global Job 进程恢复、媒体/事件耐久恢复、缺口和旧场次原子终态推进，以及 1/2/5/10 秒、最多 10 次或 5 分钟的运行期录制恢复；全量 Go test/vet/build、event source-tail/local-drop-gap 与关键跨进程/恢复测试 20 轮、前端 typecheck/Vitest/build、Wails 生产构建和 diff 门禁通过，终审 P0/P1/P2=0；无需直播间测试，在线 10 分钟与真实故障/下播留 P3-ACC | 执行 P3-UI-001 实时弹幕、录制进度与缺口告警 |
 | 2026-07-19 23:49 | P3-UI-001 | `DONE` | 完成 SQLite 后置白名单事件批次、1 Hz 录制进度、全局状态 revision、前端单例桥、2,000 条虚拟时间线、六类筛选、指标、重试与缺口告警；全量 Go/P2/P3、前端 6 文件 20 项测试、Wails 生产构建及真实冷启动 GUI 11/11 通过，PrintWindow 与 JSON 一致，WM_CLOSE 54 ms 自然退出且零残留，终审 P0/P1/P2=0 | 执行 P3-ACC-001 十分钟在线稳定性、真实故障和下播验收 |
+| 2026-07-21 17:38 | P3-ACC-001 | `DONE` | 正式运行证明十分钟稳定窗口、FFmpeg/relay 故障恢复、新 attempt 与 gap；后续收尾、媒体身份和日志隐私加固完成。用户明确批准人工停止并豁免自然下播等待与最终机器视觉 ACK，分别记录 USER_OBSERVED、USER_WAIVED/NOT_RUN，未声明 controller PASS；离线 14/14、清理竞态 2/2、五组 Go 矩阵、前端、PowerShell、Scheduled Task/MIC、cmd/main 与四产物构建通过 | PHASE-3 关闭；执行 P4-PLY-001 |
+| 2026-07-21 18:06 | P4-PLY-001 | `IN_PROGRESS` | 完成 Schema v6：版本化 metric bucket 复合主键、session/event/gap keyset 索引、v5 一致备份与事务回滚；新增内部只读 playback repository，cursor 严格绑定版本、查询类型和规范化过滤，DTO 排除平台标识、路径、raw/normalized/details 等字段；storage/playback 20 轮、全量 Go test/vet/build 与 diff 门禁通过 | 实现媒体 segment/artifact 查询、统一时间轴映射和应用服务接入 |
 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
@@ -470,3 +487,5 @@ UI 只能调用应用服务，不直接持有 `DouyinLive`、数据库连接或 
 - 2026-07-17，决策：SQLite Schema v3 以场次 `ingest_sequence` 和双位置 checkpoint 为事件提交边界，单 FIFO 同时受条数与字节限制，先 raw binpack Sync、再 WAL Sync，最后在一个 SQLite 事务中提交 source/aggregate、礼物折叠、缺口和 checkpoint；理由：崩溃、数据库降级和高基数礼物下仍需可证明的顺序、幂等和内存上界；替代方案：source-only 推进 checkpoint、普通/紧急双队列、无限 deferred map、零值无限 spool 或只保护 WAL 游标，均不采用；影响：每场次 raw+WAL 默认上限 4 GiB，容量批次先验零写入，致命故障只审计未双 Sync 后缀，恢复只修复 checkpoint 之后可证明的最终崩溃尾，privacy key 不匹配或 WAL/raw 游标不一致时 fail closed。
 - 2026-07-19，决策：SQLite Schema v4 以 `recording_roots`、`session_media`、扩展后的 `media_segments` 和 `media_artifacts` 作为媒体恢复事实源，并把外部根的 marker、卷身份、大小写无关 canonical key、URL-free attempt 日志、清单 revision/dirty CAS 与完成态文件证据持久化；理由：跨盘保存、崩溃重入、文件系统替换和数据库/`media.json` 双写必须可审计且不得覆盖既有媒体；替代方案：仅把绝对路径写入设置、扫描目录推断状态、复用旧 attempt、相信文件名或把完整 URL 写入日志，均不采用；影响：内部根的 `root_id` 为空，外部根每阶段 fail-closed 重验，单场次最多 128 attempts、4096 segments、8192 artifacts 和 128 MiB 清单，P3-RCV 必须基于这些耐久状态协调重试与缺口修复。
 - 2026-07-19，决策：单房间录制异常、重试和恢复告警统一由带全局严格递增 `revision`、稳定 `errorCode` 与 `retryAt` 的 `room:status` 派生，不再另发 `recording:error`；理由：双事件源无法共享顺序，容易产生重复、倒序或旧操作告警，而房间状态已包含 session/operation fencing 与完整录制状态；替代方案：新增独立 `DiagnosticEvent` 或让前端合并两套时序，均不采用；影响：P3 前端只需单例监听 `room:status`、`live:event`、`recording:progress`，`system:alert` 仅保留给未来非房间级全局告警。
+- 2026-07-21，决策：按用户明确指示以项目级例外关闭 P3-ACC；人工停止和 UI finalizing 记为 `USER_OBSERVED`，自然下播等待与最终机器视觉 ACK 记为 `USER_WAIVED/NOT_RUN`，不得声明控制器 `PASS` 或 `passed=true`；理由：十分钟稳定窗口、FFmpeg 崩溃和隔离 relay 网络故障恢复已取得真实证据，用户选择不再等待不可控的自然下播，并明确豁免最终视觉确认；替代方案：继续等待自然下播或放宽控制器成功合同，均不采用；影响：严格控制器合同和测试保持不变，豁免不形成任何自动成功分支，正式发布前仍可按原合同重新执行完整验收。
+- 2026-07-21，决策：PHASE-4 固定为 P4-PLY-001（6 点）、P4-ANA-001（6 点）、P4-ASR-001（2 点）、P4-EXP-001（4 点）和 P4-ACC-001（2 点）；理由：回放查询与时间轴必须先于指标、ASR 和导出，且阶段权重 20% 与 20 点一一对应；替代方案：新增独立 P4-DATA 任务或把全部功能放入单一任务，均不采用；影响：Schema v6 与只读查询基础并入 P4-PLY-001，后续任务按依赖顺序实施。

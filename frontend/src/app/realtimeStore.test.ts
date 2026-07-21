@@ -27,7 +27,7 @@ function batch(events: ReturnType<typeof event>[]): LiveEventBatch {
 function progress(overrides: Partial<RecordingProgress> = {}): RecordingProgress {
   return {
     roomId, sessionId, operationId, state: 'recording', elapsedMs: 1_000,
-    bytesWritten: 2_000, segmentCount: 1, frame: 25, restartCount: 0,
+    bytesWritten: 2_000, bytesAvailable: true, segmentCount: 1, frame: 25, restartCount: 0,
     fps: 25, speed: 1, updatedAt: 2, ...overrides,
   }
 }

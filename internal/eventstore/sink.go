@@ -149,6 +149,7 @@ func (m *Manager) openSession(ctx context.Context, descriptor SessionDescriptor)
 	}
 	sink.runtime = runtime
 	m.sessions[descriptor.SessionID] = sink
+	m.noteSessionSetChangeLocked()
 	go runtime.run()
 	return sink, nil
 }
@@ -744,6 +745,7 @@ func (m *Manager) sessionFinished(sink *SessionSink) {
 	m.mu.Lock()
 	if current := m.sessions[sink.descriptor.SessionID]; current == sink {
 		delete(m.sessions, sink.descriptor.SessionID)
+		m.noteSessionSetChangeLocked()
 	}
 	m.mu.Unlock()
 }

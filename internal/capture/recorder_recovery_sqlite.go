@@ -98,23 +98,44 @@ func (r *SQLiteRepository) BeginRecorderRecovery(
 	if current.Status == input.ExpectedStatus &&
 		current.RecordingStatus == RecordingReconnecting &&
 		current.OperationID == input.ExpectedOperationID {
-		if !found || !recorderRecoveryGapMatchesBegin(gap, current, input, occurredAtMS) {
+		if found && !recorderRecoveryGapMatchesBegin(gap, current, input, occurredAtMS) {
 			return RecorderRecoveryJournalEntry{}, ErrRecoveryGapConflict
 		}
-		if err := requireRecorderRecoverySourceAttemptWithClock(
-			ctx,
-			tx,
-			input.SessionID,
-			input.SourceAttemptID,
-			occurredAtMS,
-			true,
-			input.ClockUncertain,
-		); err != nil {
+		if found {
+			if err := requireRecorderRecoverySourceAttemptWithClock(
+				ctx,
+				tx,
+				input.SessionID,
+				input.SourceAttemptID,
+				occurredAtMS,
+				true,
+				input.ClockUncertain,
+			); err != nil {
+				return RecorderRecoveryJournalEntry{}, err
+			}
+			_ = tx.Rollback()
+			current = r.materializeCommittedLocked(ctx, current)
+			return RecorderRecoveryJournalEntry{Session: current, GapID: gap.ID}, nil
+		}
+		if input.ExpectedRecordingStatus != RecordingReconnecting {
+			return RecorderRecoveryJournalEntry{}, ErrRecoveryGapConflict
+		}
+		if err := requireOpenMessageRecoveryGap(ctx, tx, current); err != nil {
 			return RecorderRecoveryJournalEntry{}, err
 		}
-		_ = tx.Rollback()
-		current = r.materializeCommittedLocked(ctx, current)
-		return RecorderRecoveryJournalEntry{Session: current, GapID: gap.ID}, nil
+		var otherOpen int
+		if err := tx.QueryRowContext(
+			ctx,
+			`SELECT COUNT(*) FROM capture_gaps
+			WHERE session_id = ? AND kind = ? AND ended_at IS NULL`,
+			input.SessionID,
+			recorderRecoveryGapKind,
+		).Scan(&otherOpen); err != nil {
+			return RecorderRecoveryJournalEntry{}, recorderRecoveryPersistenceError(ctx)
+		}
+		if otherOpen != 0 {
+			return RecorderRecoveryJournalEntry{}, ErrRecoveryGapConflict
+		}
 	}
 	if current.RecordingStatus != input.ExpectedRecordingStatus {
 		return RecorderRecoveryJournalEntry{}, ErrStaleRecovery
@@ -594,7 +615,8 @@ func validateBeginRecorderRecoveryInput(
 		validateUUIDv7("expected operation id", input.ExpectedOperationID) != nil ||
 		validateUUIDv7("source attempt id", input.SourceAttemptID) != nil ||
 		!recorderRecoveryActiveSessionStatus(input.ExpectedStatus) ||
-		input.ExpectedRecordingStatus != RecordingActive ||
+		(input.ExpectedRecordingStatus != RecordingActive &&
+			input.ExpectedRecordingStatus != RecordingReconnecting) ||
 		!validRecorderRecoveryErrorCode(input.ErrorCode) {
 		return 0, ErrRecoveryContractInvalid
 	}

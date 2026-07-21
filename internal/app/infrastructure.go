@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,8 +33,9 @@ var (
 )
 
 type InfrastructureOptions struct {
-	DataRoot string
-	Now      time.Time
+	DataRoot           string
+	Now                time.Time
+	DisableDiagnostics bool
 }
 
 // InitializeInfrastructure prepares the local data root, redacted JSONL logs,
@@ -82,7 +84,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		}
 	}()
 
-	logFile, err := diagnostics.OpenFileLogger(layout.LogsDir, diagnostics.FileOptions{Now: options.Now})
+	logFile, err := openInfrastructureLogger(layout.LogsDir, options)
 	if err != nil {
 		return fmt.Errorf("initialize diagnostics logger: %w", err)
 	}
@@ -226,7 +228,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 				attributes := []any{
 					"component", "capture", "error_code", event.ErrorCode,
 					"correlation_id", event.SessionID, "session_id", event.SessionID,
-					"room_config_id", event.RoomConfigID, "warning_codes", event.WarningCodes,
+					"room_config_id", event.RoomConfigID, "warning_codes", strings.Join(event.WarningCodes, ","),
 					"cutoff_at", event.CutoffAtMS,
 				}
 				if event.State == capture.StartupRecoverySessionFailed {
@@ -343,6 +345,13 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		"journal_mode", "WAL",
 	)
 	return nil
+}
+
+func openInfrastructureLogger(logsDir string, options InfrastructureOptions) (*diagnostics.FileLogger, error) {
+	if options.DisableDiagnostics {
+		return diagnostics.NewDiscardFileLogger(), nil
+	}
+	return diagnostics.OpenFileLogger(logsDir, diagnostics.FileOptions{Now: options.Now})
 }
 
 func startupEventRecoveryError(err error) error {

@@ -134,6 +134,7 @@ describe('desktop runtime contracts', () => {
       state: 'recording',
       elapsedMs: 1_000,
       bytesWritten: 2_000,
+      bytesAvailable: true,
       segmentCount: 1,
       frame: 25,
       restartCount: 0,
@@ -143,6 +144,8 @@ describe('desktop runtime contracts', () => {
     }
     expect(recordingProgressSchema.safeParse(progress).success).toBe(true)
     expect(recordingProgressSchema.safeParse({ ...progress, state: 'reconnecting' }).success).toBe(true)
+    expect(recordingProgressSchema.safeParse({ ...progress, bytesAvailable: false }).success).toBe(true)
+    expect(recordingProgressSchema.safeParse({ ...progress, bytesAvailable: undefined }).success).toBe(false)
     expect(recordingProgressSchema.safeParse({ ...progress, speed: Number.POSITIVE_INFINITY }).success).toBe(false)
     expect(recordingProgressSchema.safeParse({ ...progress, frame: -1 }).success).toBe(false)
     expect(recordingProgressSchema.safeParse({ ...progress, attemptId: 'private' }).success).toBe(false)

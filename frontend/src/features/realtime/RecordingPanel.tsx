@@ -94,7 +94,7 @@ export function RecordingPanel({
 
       <dl className="recording-metrics">
         <div><dt>录制时长</dt><dd>{formatDuration(progress?.elapsedMs ?? 0)}</dd></div>
-        <div><dt>已写入</dt><dd>{formatBytes(progress?.bytesWritten ?? 0)}</dd></div>
+        <div><dt>已写入</dt><dd>{progress?.bytesAvailable ? formatBytes(progress.bytesWritten) : '—'}</dd></div>
         <div><dt>分片</dt><dd>{progress?.segmentCount ?? 0}</dd></div>
         <div><dt>速度</dt><dd>{(progress?.speed ?? 0).toFixed(2)}×</dd></div>
         <div><dt>帧率</dt><dd>{(progress?.fps ?? 0).toFixed(1)}</dd></div>

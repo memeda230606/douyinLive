@@ -32,7 +32,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if !bootstrap.Data.Ready || !bootstrap.Data.LoggingReady {
 		t.Fatalf("data status is not ready: %#v", bootstrap.Data)
 	}
-	if bootstrap.Data.SchemaVersion != 5 || bootstrap.Data.Mode != DataModeReadWrite {
+	if bootstrap.Data.SchemaVersion != 6 || bootstrap.Data.Mode != DataModeReadWrite {
 		t.Fatalf("unexpected data status: %#v", bootstrap.Data)
 	}
 	diagnosticsAvailable := false
@@ -73,7 +73,7 @@ func TestInitializeInfrastructureCreatesDataAndClosesCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile(log) error = %v", err)
 	}
-	if !strings.Contains(string(logData), `"schema_version":5`) {
+	if !strings.Contains(string(logData), `"schema_version":6`) {
 		t.Fatalf("log does not contain schema version: %s", logData)
 	}
 	if strings.Contains(string(logData), root) {
@@ -147,9 +147,10 @@ func TestInitializeInfrastructureRecoversDurableAttemptWhenFFmpegDiscoveryFails(
 	) (capture.RecorderFactory, capture.FFmpegDependencyInfo, error) {
 		return nil, capture.FFmpegDependencyInfo{}, errors.New("dependency unavailable for test")
 	}
+	logNow := time.Now().UTC().Add(time.Minute)
 	if err := application.InitializeInfrastructure(ctx, InfrastructureOptions{
 		DataRoot: root,
-		Now:      time.Now().UTC().Add(time.Minute),
+		Now:      logNow,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestInitializeInfrastructureRecoversDurableAttemptWhenFFmpegDiscoveryFails(
 			gapCount, openGapCount, pointGapCount)
 	}
 	logData, err := os.ReadFile(filepath.Join(
-		root, "logs", time.Now().UTC().Add(time.Minute).Format("app-2006-01-02.jsonl"),
+		root, "logs", logNow.Local().Format("app-2006-01-02.jsonl"),
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -689,8 +690,12 @@ func TestInfrastructurePersistsManifestHealthAndClearsItAfterRestart(t *testing.
 	if got := strings.Count(combinedText, `"error_code":"`+capture.ManifestRepairIncompleteErrorCode+`"`); got != 1 {
 		t.Fatalf("incomplete event count = %d, want 1: %s", got, combinedText)
 	}
-	if !strings.Contains(combinedText, `"session_id":"`+sessionID+`"`) {
-		t.Fatalf("health log lacks sanitized session correlation: %s", combinedText)
+	if strings.Contains(combinedText, sessionID) {
+		t.Fatalf("health log leaked durable session correlation: %s", combinedText)
+	}
+	if !strings.Contains(combinedText, `"redacted_field":"[REDACTED]"`) ||
+		!strings.Contains(combinedText, `"correlation_id":"startup"`) {
+		t.Fatalf("health log lacks redacted correlation and symbolic startup marker: %s", combinedText)
 	}
 	if strings.Contains(combinedText, root) {
 		t.Fatalf("combined health log leaked data root: %s", combinedText)

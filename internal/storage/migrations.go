@@ -454,6 +454,52 @@ var schemaMigrations = []migration{
 				"ON session_media(state, session_id) WHERE state IN ('open', 'finalizing')",
 		},
 	},
+	{
+		Version: 6,
+		Name:    "playback_query_foundation",
+		Statements: []string{
+			`ALTER TABLE metric_buckets RENAME TO metric_buckets_v5`,
+			`CREATE TABLE metric_buckets (
+				session_id TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+				bucket_start_ms INTEGER NOT NULL,
+				bucket_size_ms INTEGER NOT NULL CHECK (bucket_size_ms > 0),
+				chat_count INTEGER NOT NULL DEFAULT 0,
+				unique_chatters INTEGER NOT NULL DEFAULT 0,
+				like_delta INTEGER NOT NULL DEFAULT 0,
+				gift_count INTEGER NOT NULL DEFAULT 0,
+				gift_value REAL,
+				follow_count INTEGER NOT NULL DEFAULT 0,
+				enter_count INTEGER NOT NULL DEFAULT 0,
+				active_users INTEGER NOT NULL DEFAULT 0,
+				message_total INTEGER NOT NULL DEFAULT 0,
+				speech_ms INTEGER,
+				silence_ms INTEGER,
+				words_per_minute REAL,
+				sentiment_score REAL,
+				analysis_version TEXT NOT NULL,
+				completeness REAL NOT NULL CHECK (completeness >= 0 AND completeness <= 1),
+				PRIMARY KEY(session_id, analysis_version, bucket_start_ms, bucket_size_ms)
+			)`,
+			`INSERT INTO metric_buckets(
+				session_id, bucket_start_ms, bucket_size_ms, chat_count,
+				unique_chatters, like_delta, gift_count, gift_value, follow_count,
+				enter_count, active_users, message_total, speech_ms, silence_ms,
+				words_per_minute, sentiment_score, analysis_version, completeness
+			)
+			SELECT session_id, bucket_start_ms, bucket_size_ms, chat_count,
+				unique_chatters, like_delta, gift_count, gift_value, follow_count,
+				enter_count, active_users, message_total, speech_ms, silence_ms,
+				words_per_minute, sentiment_score, analysis_version, completeness
+			FROM metric_buckets_v5`,
+			`DROP TABLE metric_buckets_v5`,
+			`CREATE INDEX idx_live_sessions_playback_page
+				ON live_sessions(started_at DESC, id DESC)`,
+			`CREATE INDEX idx_live_events_playback_page
+				ON live_events(session_id, session_offset_ms, id)`,
+			`CREATE INDEX idx_capture_gaps_playback_page
+				ON capture_gaps(session_id, start_offset_ms, id)`,
+		},
+	},
 }
 
 const createMigrationTableSQL = `CREATE TABLE IF NOT EXISTS schema_migrations (

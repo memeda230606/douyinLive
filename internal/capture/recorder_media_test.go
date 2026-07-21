@@ -259,11 +259,41 @@ func TestRecorderMapsIncompleteMediaToStableStopError(t *testing.T) {
 		t.Fatalf("new recorder: %v", err)
 	}
 	stopErr := recorder.Stop(context.Background())
-	if !errors.Is(stopErr, ErrRecorderStop) || !errors.Is(stopErr, ErrRecorderMediaIncomplete) {
-		t.Fatalf("stop error = %v, want stable incomplete media error", stopErr)
+	if !errors.Is(stopErr, ErrRecorderMediaIncomplete) || errors.Is(stopErr, ErrRecorderStop) {
+		t.Fatalf("stop error = %v, want incomplete-only", stopErr)
+	}
+	if recorderStopCleanupError(stopErr) != nil {
+		t.Fatalf("incomplete media was classified as cleanup failure: %v", stopErr)
 	}
 	if got := terminalRecordingStatus(RecordingActive, stopErr); got != RecordingIncomplete {
 		t.Fatalf("terminal recording status = %s, want %s", got, RecordingIncomplete)
+	}
+}
+
+func TestRecorderMapsMediaFinalizeFailureToCleanupError(t *testing.T) {
+	process := newRecorderTestProcess()
+	process.quitExits = true
+	starter := &recorderTestStarter{results: []recorderTestStartResult{{process: process}}}
+	privateErr := errors.New("private media finalize detail")
+	finalizer := &recorderMediaFinalizerStub{err: privateErr}
+	options := recorderTestOptions(t)
+	options.mediaFinalizer = finalizer
+	options.attemptJournal = finalizer
+	source := &recorderTestSource{snapshots: [][]douyinLive.ResolvedStream{{
+		recorderTestCandidate("one", "flv", "hd", "h264", "https://finalize-error.example.invalid/live.flv", 1),
+	}}}
+	recorder, err := newFFmpegRecorder(
+		context.Background(), source, options, recorderTestDependencies(starter), nil,
+	)
+	if err != nil {
+		t.Fatalf("new recorder: %v", err)
+	}
+	stopErr := recorder.Stop(context.Background())
+	if !errors.Is(stopErr, ErrRecorderStop) || recorderStopCleanupError(stopErr) == nil {
+		t.Fatalf("media finalize failure = %v, want cleanup failure", stopErr)
+	}
+	if strings.Contains(stopErr.Error(), privateErr.Error()) {
+		t.Fatalf("media finalize failure leaked private detail: %v", stopErr)
 	}
 }
 

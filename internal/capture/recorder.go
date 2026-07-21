@@ -36,6 +36,55 @@ var (
 	ErrRecorderDependencyFailure = errors.New(RecorderDependencyFailureErrorCode)
 )
 
+// recorderStopResultError separates durable recording-quality loss from a
+// failure to converge the current cleanup owner. A pure quality loss returns
+// ErrRecorderMediaIncomplete; any mixed cleanup failure remains observable as
+// ErrRecorderStop so the coordinator can fail closed.
+type recorderStopResultError struct {
+	qualityErr error
+	cleanupErr error
+}
+
+func (e *recorderStopResultError) Error() string { return ErrRecorderStop.Error() }
+
+func (e *recorderStopResultError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	result := []error{ErrRecorderStop}
+	if e.qualityErr != nil {
+		result = append(result, e.qualityErr)
+	}
+	if e.cleanupErr != nil {
+		result = append(result, e.cleanupErr)
+	}
+	return result
+}
+
+func newRecorderStopResultError(qualityErr, cleanupErr error) error {
+	if cleanupErr == nil {
+		if qualityErr != nil {
+			return ErrRecorderMediaIncomplete
+		}
+		return nil
+	}
+	return &recorderStopResultError{qualityErr: qualityErr, cleanupErr: cleanupErr}
+}
+
+func recorderStopCleanupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if err == ErrRecorderMediaIncomplete {
+		return nil
+	}
+	var result *recorderStopResultError
+	if errors.As(err, &result) {
+		return result.cleanupErr
+	}
+	return err
+}
+
 const (
 	defaultRecorderConcurrency        = 1
 	defaultRecorderResolveSnapshots   = 2
@@ -793,9 +842,7 @@ func (r *FFmpegRecorder) Stop(ctx context.Context) error {
 			shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, journalErr)
 		}
 	}
-	if !graceful || previouslyUnclean {
-		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop)
-	}
+	unclean := !graceful || previouslyUnclean
 	shutdownContextErr := ctx.Err()
 	if shutdownContextErr != nil {
 		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, shutdownContextErr)
@@ -805,7 +852,7 @@ func (r *FFmpegRecorder) Stop(ctx context.Context) error {
 		if attempt != nil && !recorderAttemptFinished(attempt) {
 			<-attempt.finished
 		}
-		r.completeStop(shutdownErr)
+		r.completeStop(shutdownErr, unclean)
 	}()
 	r.operationMu.Unlock()
 	select {
@@ -822,15 +869,21 @@ func (r *FFmpegRecorder) Stop(ctx context.Context) error {
 	}
 }
 
-func (r *FFmpegRecorder) completeStop(shutdownErr error) {
+func (r *FFmpegRecorder) completeStop(shutdownErr error, unclean bool) {
 	// Recording capacity covers the FFmpeg process and its drains, not the
 	// potentially long proxy generation phase. Proxy work has its own limit.
 	r.release()
-	finalizeErr := r.finalizeMedia()
-	if finalizeErr != nil {
-		shutdownErr = errors.Join(shutdownErr, ErrRecorderStop, finalizeErr)
+	var qualityErr error
+	if unclean {
+		qualityErr = ErrRecorderMediaIncomplete
 	}
-	r.finishStop(shutdownErr)
+	finalizeErr := r.finalizeMedia()
+	if finalizeErr == ErrRecorderMediaIncomplete {
+		qualityErr = errors.Join(qualityErr, finalizeErr)
+	} else if finalizeErr != nil {
+		shutdownErr = errors.Join(shutdownErr, finalizeErr)
+	}
+	r.finishStop(newRecorderStopResultError(qualityErr, shutdownErr))
 }
 
 func (r *FFmpegRecorder) completeFailedStart(attempt *recorderAttempt) {
@@ -1306,8 +1359,9 @@ func (r *FFmpegRecorder) startAttemptDrains(attempt *recorderAttempt) {
 					r.enqueueLatestProgress(recorderProgressSample{
 						attemptID: attempt.id, ordinal: attempt.ordinal,
 						elapsedMS: elapsedMS, bytesWritten: ffmpegProgress.TotalSize,
-						segmentCount: segmentCount,
-						frame:        ffmpegProgress.Frame, fps: ffmpegProgress.FPS,
+						bytesAvailable: ffmpegProgress.TotalSizeAvailable,
+						segmentCount:   segmentCount,
+						frame:          ffmpegProgress.Frame, fps: ffmpegProgress.FPS,
 						speed:     ffmpegProgress.Speed,
 						updatedAt: nonNegativeRecorderUnixMilli(r.dependencies.now()),
 					})
@@ -1375,7 +1429,8 @@ func classifyRecorderExit(summary string) string {
 		"end of file"):
 		return RecorderStreamExpiredErrorCode
 	case containsRecorderExitMarker(normalized,
-		"connection reset", "connection timed out", "network timeout", "operation timed out"):
+		"connection reset", "connection timed out", "network timeout", "operation timed out",
+		"error number -10054 occurred", "error number -138 occurred"):
 		return RecorderNetworkFailureErrorCode
 	case containsRecorderExitMarker(normalized, "invalid data", "unsupported"):
 		return RecorderUnsupportedInputErrorCode

@@ -185,9 +185,7 @@ type SessionRecoveryEvent struct {
 
 func (event SessionRecoveryEvent) String() string {
 	return fmt.Sprintf(
-		"session recovery event: session=%s operation=%s state=%s recording=%s code=%s retry_at=%d attempt=%d occurred_at=%d",
-		event.SessionID,
-		event.OperationID,
+		"session recovery event: state=%s recording=%s code=%s retry_at=%d attempt=%d occurred_at=%d",
 		event.State,
 		event.RecordingStatus,
 		event.ErrorCode,
@@ -238,14 +236,31 @@ func (s *sessionRuntime) beginRecorderRecoveryLocked(
 ) bool {
 	journal := s.coordinator.recoveryJournal
 	if journal == nil {
+		s.mu.Lock()
+		hasMessageGap := s.messageRecoveryGapID != ""
+		s.mu.Unlock()
+		if hasMessageGap {
+			return s.exhaustMessageRecoveryForRecorderLocked(
+				recorder,
+				RecorderDependencyFailureErrorCode,
+			)
+		}
 		return s.markRecorderUnavailableWithoutRecoveryLocked(recorder)
 	}
 	errorCode := normalizeRecorderRecoveryErrorCode(event.ErrorCode)
 
 	s.mu.Lock()
 	current := s.current
+	hasMessageGap := s.messageRecoveryGapID != ""
 	if s.recoveryGapID != "" && current.RecordingStatus == RecordingReconnecting {
 		s.recoveryErrorCode = errorCode
+		if hasMessageGap {
+			s.mu.Unlock()
+			if retryableRecorderRecoveryErrorCode(errorCode) {
+				return true
+			}
+			return s.exhaustMessageRecoveryForRecorderLocked(recorder, errorCode)
+		}
 		recoveryCtx, generation := s.startRecorderRecoveryGenerationLocked(recorder)
 		s.mu.Unlock()
 		if retryableRecorderRecoveryErrorCode(errorCode) {
@@ -281,6 +296,12 @@ func (s *sessionRuntime) beginRecorderRecoveryLocked(
 	if beginErr != nil && !confirmed {
 		if errors.Is(beginErr, ErrRecoveryContractInvalid) ||
 			errors.Is(beginErr, ErrRecoveryGapConflict) {
+			if hasMessageGap {
+				return s.exhaustMessageRecoveryForRecorderLocked(
+					recorder,
+					RecorderDependencyFailureErrorCode,
+				)
+			}
 			// Missing/corrupt attempt evidence cannot become valid by retrying.
 			return s.markRecorderUnavailableWithoutRecoveryLocked(recorder)
 		}
@@ -297,6 +318,13 @@ func (s *sessionRuntime) beginRecorderRecoveryLocked(
 	s.recoveryAttempts = 0
 	s.recoveryErrorCode = errorCode
 	s.recoveryCloseAt = time.Time{}
+	if hasMessageGap {
+		s.mu.Unlock()
+		if retryableRecorderRecoveryErrorCode(errorCode) {
+			return true
+		}
+		return s.exhaustMessageRecoveryForRecorderLocked(recorder, errorCode)
+	}
 	recoveryCtx, generation := s.startRecorderRecoveryGenerationLocked(recorder)
 	s.mu.Unlock()
 
@@ -343,6 +371,7 @@ func boundRecorderRecoveryOccurredAt(
 func (s *sessionRuntime) resumeRecorderRecoveryLocked(recorder Recorder) {
 	s.mu.Lock()
 	if s.recoveryGapID == "" ||
+		s.messageRecoveryGapID != "" ||
 		s.finalizing ||
 		s.finalized ||
 		s.current.Status != SessionRecording ||

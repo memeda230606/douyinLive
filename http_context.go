@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -39,12 +40,27 @@ func newHTTPUserAgent() string {
 // 参数/Parameters:
 //   - userAgent: 请求使用的浏览器 User-Agent。 Browser User-Agent used for requests.
 func newHTTPClient(userAgent string) *req.Client {
-	return req.C().
+	client := req.C().
 		ImpersonateChromeWithOS(req.BrowserOSWindows).
-		EnableHTTP3().
-		EnableHTTP3FallbackOnError().
 		SetUserAgent(userAgent).
 		SetTimeout(httpRequestTimeout)
+	client.SetProxy(http.ProxyFromEnvironment)
+	if proxyEnvironmentConfigured() {
+		// req/v3 only applies HTTP proxies to HTTP/1.1 and HTTP/2. Avoid a
+		// direct QUIC attempt that bypasses the caller's explicit proxy.
+		client.DisableHTTP3()
+		return client
+	}
+	return client.EnableHTTP3().EnableHTTP3FallbackOnError()
+}
+
+func proxyEnvironmentConfigured() bool {
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // queryEscapeValue 按查询参数规则转义并保持空格为 %20。

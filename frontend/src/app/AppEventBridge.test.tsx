@@ -56,7 +56,7 @@ describe('AppEventBridge', () => {
       sessionId: '019bce70-0c00-7000-8000-000000000003',
       operationId: '019bce70-0c00-7000-8000-000000000004',
       state: 'recording', elapsedMs: 1_000, bytesWritten: 2_000,
-      segmentCount: 1, frame: 25, restartCount: 0, fps: 25, speed: 1, updatedAt: 4,
+      bytesAvailable: true, segmentCount: 1, frame: 25, restartCount: 0, fps: 25, speed: 1, updatedAt: 4,
     })
     expect(useRealtimeStore.getState().progressBySession['019bce70-0c00-7000-8000-000000000003']?.frame).toBe(25)
 

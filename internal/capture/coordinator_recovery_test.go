@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	douyinLive "github.com/jwwsjlm/douyinLive/v2"
 )
 
 type runtimeRecoveryJournal struct {
@@ -326,7 +328,10 @@ func openRuntimeRecoverySession(
 	clock := &runtimeRecoveryClock{now: now}
 	scheduler.clock = clock
 	journal := newRuntimeRecoveryJournal(repository, newV7(t))
-	coordinator, err := newTestCoordinator(repository, CoordinatorOptions{
+	// This fixture isolates recorder recovery. Do not accidentally advertise
+	// the SQLite message journal through the repository interface.
+	recorderOnlyRepository := struct{ SessionRepository }{SessionRepository: repository}
+	coordinator, err := newTestCoordinator(recorderOnlyRepository, CoordinatorOptions{
 		Now:               clock.Now,
 		RecoveryJournal:   journal,
 		RecoveryPolicy:    policy,
@@ -751,6 +756,92 @@ func TestCoordinatorRecorderRecoveryExhaustionRetryKeepsIdempotenceTime(t *testi
 	}
 	if !firstExhaustedAt.Equal(secondExhaustedAt) {
 		t.Fatalf("exhaustion retry changed idempotence time: %s != %s", firstExhaustedAt, secondExhaustedAt)
+	}
+}
+
+func TestCoordinatorRealRecorderHistoricalExitFinalizesCompletedIncomplete(t *testing.T) {
+	repository, store, _, roomID, now := openRepository(t)
+	defer store.Close()
+	clock := &runtimeRecoveryClock{now: now}
+	recoveryStarted := make(chan time.Duration, 1)
+	recoveryRelease := make(chan struct{})
+	scheduler := &runtimeRecoveryScheduler{
+		clock: clock, advance: true, started: recoveryStarted,
+		wait: func(ctx context.Context, _ time.Duration) error {
+			select {
+			case <-recoveryRelease:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	journal := newRuntimeRecoveryJournal(repository, newV7(t))
+	recorderOnlyRepository := struct{ SessionRepository }{SessionRepository: repository}
+	firstProcess := newRecorderTestProcess()
+	secondProcess := newRecorderTestProcess()
+	secondProcess.quitExits = true
+	starter := &recorderTestStarter{results: []recorderTestStartResult{
+		{process: firstProcess}, {process: secondProcess},
+	}}
+	source := &recorderTestSource{snapshots: [][]douyinLive.ResolvedStream{
+		{recorderTestCandidate("first", "flv", "hd", "h264", "https://recovery.example.invalid/first.flv", 1)},
+		{recorderTestCandidate("second", "flv", "hd", "h264", "https://recovery.example.invalid/second.flv", 1)},
+	}}
+	var recorder *FFmpegRecorder
+	coordinator, err := newTestCoordinator(recorderOnlyRepository, CoordinatorOptions{
+		Now:               clock.Now,
+		RecoveryJournal:   journal,
+		RecoveryScheduler: scheduler,
+		RecorderFactory: func(ctx context.Context, _ LiveSession, _ OpenRequest, _ CaptureSource) (Recorder, error) {
+			built, buildErr := newFFmpegRecorder(
+				ctx, source, recorderTestOptions(t), recorderTestDependencies(starter), nil,
+			)
+			recorder = built
+			return built, buildErr
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := coordinator.Open(context.Background(), OpenRequest{
+		RoomConfigID: roomID, OperationID: newV7(t), RecordEnabled: true, StartedAt: now,
+	}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalized := false
+	t.Cleanup(func() {
+		if finalized {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = session.Finalize(ctx, newV7(t), FinalizeShutdown)
+		cancel()
+	})
+
+	firstProcess.signal()
+	assertRuntimeRecoveryStatus(t, session, RecordingReconnecting)
+	if delay := waitRuntimeRecoveryDelay(t, recoveryStarted, "real recorder recovery"); delay != time.Second {
+		t.Fatalf("first recovery delay = %s, want 1s", delay)
+	}
+	close(recoveryRelease)
+	assertRuntimeRecoveryStatus(t, session, RecordingActive)
+	if recorder == nil || source.resolveCalls() != 2 || len(starter.configSnapshot()) != 2 {
+		t.Fatalf("real recovery topology = recorder:%t resolves:%d starts:%d", recorder != nil, source.resolveCalls(), len(starter.configSnapshot()))
+	}
+
+	terminal, err := session.Finalize(context.Background(), newV7(t), FinalizeOffline)
+	if err != nil {
+		t.Fatalf("FinalizeOffline() error = %v", err)
+	}
+	finalized = true
+	if terminal.Status != SessionCompleted || terminal.RecordingStatus != RecordingIncomplete || terminal.EndedAt == nil {
+		t.Fatalf("historical exit terminal = %+v, want completed/incomplete", terminal)
+	}
+	_, _, complete, exhaust, closeCalls := runtimeRecoveryJournalCounts(journal)
+	if complete != 1 || exhaust != 0 || closeCalls != 0 {
+		t.Fatalf("recovery journal = complete:%d exhaust:%d close:%d", complete, exhaust, closeCalls)
 	}
 }
 

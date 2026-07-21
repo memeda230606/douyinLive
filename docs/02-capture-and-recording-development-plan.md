@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-19）：P3-CAP-001、P3-EVT-001、P3-REC-001、P3-MEDIA-001、P3-RCV-001、P3-UI-001 已完成；PHASE-3 已完成 28/30 点（93%），项目总进度 68%，当前进入 P3-ACC-001。
+> 实施状态（2026-07-21）：P3-CAP-001 至 P3-ACC-001 已完成；PHASE-3 已完成 30/30 点（100%），项目总进度 70%，当前进入 P4-PLY-001。
 > 最近验收：[P3-UI 实时监控界面](validation/2026-07-19-p3-ui-realtime-monitoring.md)
 
 ## 1. 目标
@@ -442,7 +442,7 @@ P3-UI 已完成并自动化覆盖：
 - `recording:progress` 的 1 Hz、跨 attempt 单调、JavaScript 安全整数、Finalize/Stop/Flush 超时和旧 operation/recorder/generation 隔离均有自动化测试；房间 status revision 时序回归 100 轮通过。
 - 前端 6 个文件 20 项测试覆盖严格 DTO、单例事件桥、2,000 条淘汰、六类筛选、虚拟列表、进度与告警 fencing、倒计时、隐私文本和响应式布局。
 - 真实 Wails 无刷新冷启动严格验收 11/11；PrintWindow 截图与结果一致，WM_CLOSE 后进程、任务和隔离数据根 0 残留。生产 EXE 48,097,792 字节，SHA-256 为 `4b0711dbef5778f19ea55975ce99323c4f03830caf19785545d2baaf88fdc4d9`；独立终审 P0/P1/P2=0。
-- 当前 Windows OpenSSH 环境因 `CGO_ENABLED=0` 且无 GCC 不能运行 `go test -race`；这是工具链限制，不是源码测试失败。P3-ACC 的在线 10 分钟、真实断网/FFmpeg 崩溃/下播收尾仍未完成。
+- 当前 Windows OpenSSH 环境因 `CGO_ENABLED=0` 且无 GCC 不能运行 `go test -race`；这是工具链限制，不是源码测试失败。P3-ACC 的实际关闭边界见 12.6。
 
 ### 12.5 验收
 
@@ -452,4 +452,13 @@ P3-UI 已完成并自动化覆盖：
 - 任何失败均不导致 Cookie 或完整流 URL进入日志、UI或诊断包。
 - 原有 Go 单元测试和 `cmd/main` WebSocket 冒烟测试继续通过。
 
-P3-UI-001 已提供本地确定性 UI、真实 Windows WebView2 像素和生命周期证据；本节要求的在线连续录制与真实故障链路仍由当前任务 P3-ACC-001 执行，未在 P3-UI 中冒充完成。
+P3-UI-001 已提供本地确定性 UI、真实 Windows WebView2 像素和生命周期证据；P3-ACC 的真实运行与关闭结论单独记录，未回写或篡改 P3-UI 的历史证据。
+
+### 12.6 P3-ACC 实际关闭边界（2026-07-21）
+
+- 真实运行已通过不少于 10 分钟资源稳定窗口、FFmpeg 崩溃后的新 attempt/缺口/恢复、隔离 relay 断网与恢复；这些证据不依赖 `total_size` 可用。
+- 用户批准人工停止；UI finalizing 为 `USER_OBSERVED`。继续等待自然下播与最终机器视觉 ACK 为 `USER_WAIVED/NOT_RUN`，没有 controller `PASS`/`passed=true`。
+- 后续修复并回归：历史媒体质量故障与当前 cleanup 错误分离、worker-owned finalization retry、严格 completed/incomplete 终态、媒体根/manifest/file 身份与 A→B→A 防护、FFmpeg 数字网络错误分类、资源采样和日志脱敏。
+- 严格控制器合同不增加豁免分支；发布候选仍可按原合同重跑自然下播、独立视觉 ACK、自然退出、SQLite quick-check/unlock 和全量清理。
+- 当前 Windows 上任务、P3ACC 相关进程、交互测试临时目录为 0；正式数据根因未获得约 19 GB 不可恢复删除授权而保留，不声明零数据残留。
+- 关闭证据、离线门禁、构建哈希和未运行项见[2026-07-21 P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)。

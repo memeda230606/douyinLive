@@ -2,6 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
+> 实施状态（2026-07-21）：PHASE-3 已按真实运行证据与用户明确豁免关闭，项目总进度 70%，当前进入 P4-PLY-001。
+> 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
 
 ## 1. 目标
 
@@ -69,7 +71,7 @@ wails doctor
 ```bat
 go test ./...
 pnpm --dir frontend install --frozen-lockfile
-pnpm --dir frontend lint
+pnpm --dir frontend typecheck
 pnpm --dir frontend test
 pnpm --dir frontend build
 wails build -clean
@@ -102,7 +104,7 @@ wails build -clean
 每次提交运行：
 
 - Go 单元测试和 race-sensitive 组件的并发测试。
-- 前端 lint、类型检查、Vitest。
+- 前端类型检查和 Vitest；当前 `package.json` 未定义 lint 脚本，后续引入后再纳入门禁，不能把未运行的 lint 写成通过。
 - 流解析、状态机、数据迁移和指标 golden test。
 - 敏感字符串扫描和 Markdown 链接检查。
 
@@ -132,6 +134,16 @@ wails build -clean
 - 30 分钟单房间监听/周期录制测试作为候选发布门禁。
 - 60 分钟多房间等待与模拟开播测试作为正式版本前稳定性验证。
 - 每 1 分钟采样内存、CPU、goroutine、句柄、数据库 WAL、磁盘吞吐、事件队列和 UI 延迟。
+
+### 7.5 P3-ACC 阶段关闭证据（2026-07-21）
+
+- 真实在线运行证明十分钟稳定资源窗口、FFmpeg 崩溃恢复、隔离 relay 网络故障恢复、新 attempt 与 gap。
+- 人工停止与 UI finalizing 为 `USER_OBSERVED`；自然下播等待和最终机器视觉 ACK 由用户明确豁免，记录为 `USER_WAIVED/NOT_RUN`。
+- 不声明严格控制器 `PASS`/`passed=true`，不把人工观察冒充 `PrintWindow` 或机器视觉结果；严格控制器合同保持不变。
+- default、`p2acceptance`、`p3acceptance`、`p3uiacceptance`、`p3accacceptance` 的 Go test/vet/build，前端 20 项测试/typecheck/build，两套 PowerShell、显式 Scheduled Task/MIC、`cmd/main` loopback 与四产物构建通过。
+- 当前 OpenSSH 为 `CGO_ENABLED=0` 且无 GCC，`go test -race` 未启动；这是工具链限制，不是源码失败。
+- 任务、相关进程、交互式测试临时目录为零；正式数据根保留，因本次没有约 19 GB 不可恢复删除授权，不声明控制器零数据残留。
+- 本次例外只关闭项目阶段，不形成自动验收成功分支；正式发布门禁仍可要求按原合同完整复验。
 
 ## 8. 测试夹具
 

@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/url"
 	"strings"
+
+	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
 )
 
 // logger 定义兼容标准库 log.Logger 的最小日志接口。
@@ -42,10 +44,18 @@ func normalizeLogger(base logger) logSink {
 	if base == nil {
 		base = log.Default()
 	}
+	var sink logSink
 	if sink, ok := base.(logSink); ok {
-		return sink
+		return privacyLogSink{next: sink}
 	}
-	return printLogger{base: base}
+	sink = printLogger{base: base}
+	return privacyLogSink{next: sink}
+}
+
+// privacyLogSink guarantees library-level redaction even when callers supply
+// a custom logger that does not use the desktop diagnostics handler.
+type privacyLogSink struct {
+	next logSink
 }
 
 // Print 输出一条兼容旧接口的日志。
@@ -107,6 +117,34 @@ func (l printLogger) Warn(msg string, args ...interface{}) {
 //   - args: 结构化键值参数。 Structured key-value arguments.
 func (l printLogger) Error(msg string, args ...interface{}) {
 	l.base.Printf("[ERROR] %s", formatLogMessage(msg, args...))
+}
+
+func (l privacyLogSink) Print(v ...interface{}) {
+	l.next.Print(diagnostics.RedactText(fmt.Sprint(v...)))
+}
+
+func (l privacyLogSink) Printf(format string, v ...interface{}) {
+	l.next.Print(diagnostics.RedactText(fmt.Sprintf(format, v...)))
+}
+
+func (l privacyLogSink) Println(v ...interface{}) {
+	l.next.Println(diagnostics.RedactText(strings.TrimSuffix(fmt.Sprintln(v...), "\n")))
+}
+
+func (l privacyLogSink) Debug(msg string, args ...interface{}) {
+	l.next.Debug(diagnostics.RedactText(msg), diagnostics.RedactKeyValueArgs(args)...)
+}
+
+func (l privacyLogSink) Info(msg string, args ...interface{}) {
+	l.next.Info(diagnostics.RedactText(msg), diagnostics.RedactKeyValueArgs(args)...)
+}
+
+func (l privacyLogSink) Warn(msg string, args ...interface{}) {
+	l.next.Warn(diagnostics.RedactText(msg), diagnostics.RedactKeyValueArgs(args)...)
+}
+
+func (l privacyLogSink) Error(msg string, args ...interface{}) {
+	l.next.Error(diagnostics.RedactText(msg), diagnostics.RedactKeyValueArgs(args)...)
 }
 
 // formatLogMessage 将结构化键值参数拼接为传统日志文本。

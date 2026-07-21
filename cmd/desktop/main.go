@@ -14,10 +14,20 @@ var version = "dev"
 
 func main() {
 	core := application.New(application.Options{Name: "抖音直播分析", Version: version})
-	desktop := NewDesktopApp(core)
+	infrastructureOptions, err := desktopInfrastructureOptions()
+	if err != nil {
+		log.Printf("桌面验收配置无效: P3ACC_CONFIG_INVALID")
+		return
+	}
+	windowsOptions, err := desktopWindowsOptions()
+	if err != nil {
+		log.Printf("桌面验收配置无效: P3ACC_CONFIG_INVALID")
+		return
+	}
+	desktop := newDesktopApp(core, infrastructureOptions)
 	desktop.armStartup()
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:             "抖音直播分析",
 		Width:             1440,
 		Height:            900,
@@ -32,6 +42,7 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: frontendassets.Assets,
 		},
+		Windows:    windowsOptions,
 		OnStartup:  desktop.startup,
 		OnShutdown: desktop.shutdown,
 		Bind:       []interface{}{desktop},
