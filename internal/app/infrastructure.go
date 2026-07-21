@@ -129,7 +129,9 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = logFile.Close()
 		return fmt.Errorf("initialize room service: %w", err)
 	}
-	playbackService, err := playback.NewService(store.Reader())
+	playbackService, err := playback.NewServiceWithOptions(
+		store.Reader(), playback.ServiceOptions{DataRoot: layout.Root},
+	)
 	if err != nil {
 		_ = store.Close()
 		_ = logFile.Close()

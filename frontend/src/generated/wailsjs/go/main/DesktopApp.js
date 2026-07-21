@@ -18,6 +18,10 @@ export function GetBootstrap() {
   return window['go']['main']['DesktopApp']['GetBootstrap']();
 }
 
+export function GetPlaybackSession(arg1) {
+  return window['go']['main']['DesktopApp']['GetPlaybackSession'](arg1);
+}
+
 export function GetRoom(arg1) {
   return window['go']['main']['DesktopApp']['GetRoom'](arg1);
 }
@@ -34,8 +38,28 @@ export function GetState() {
   return window['go']['main']['DesktopApp']['GetState']();
 }
 
+export function ListPlaybackEvents(arg1, arg2) {
+  return window['go']['main']['DesktopApp']['ListPlaybackEvents'](arg1, arg2);
+}
+
+export function ListPlaybackGaps(arg1, arg2) {
+  return window['go']['main']['DesktopApp']['ListPlaybackGaps'](arg1, arg2);
+}
+
+export function ListPlaybackMedia(arg1, arg2) {
+  return window['go']['main']['DesktopApp']['ListPlaybackMedia'](arg1, arg2);
+}
+
+export function ListPlaybackSessions(arg1, arg2) {
+  return window['go']['main']['DesktopApp']['ListPlaybackSessions'](arg1, arg2);
+}
+
 export function ListRooms() {
   return window['go']['main']['DesktopApp']['ListRooms']();
+}
+
+export function LocatePlaybackMedia(arg1) {
+  return window['go']['main']['DesktopApp']['LocatePlaybackMedia'](arg1);
 }
 
 export function SetRoomCookie(arg1) {

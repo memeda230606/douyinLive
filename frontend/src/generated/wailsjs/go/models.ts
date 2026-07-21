@@ -78,6 +78,518 @@ export namespace app {
 
 }
 
+export namespace playback {
+
+	export class EventDTO {
+	    id: string;
+	    ingestSequence: number;
+	    role: string;
+	    kind: string;
+	    receivedAt: number;
+	    sessionOffsetMs: number;
+	    clockConfidence: number;
+	    displayName?: string;
+	    content?: string;
+	    numericValue?: number;
+	    parseStatus: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EventDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.ingestSequence = source["ingestSequence"];
+	        this.role = source["role"];
+	        this.kind = source["kind"];
+	        this.receivedAt = source["receivedAt"];
+	        this.sessionOffsetMs = source["sessionOffsetMs"];
+	        this.clockConfidence = source["clockConfidence"];
+	        this.displayName = source["displayName"];
+	        this.content = source["content"];
+	        this.numericValue = source["numericValue"];
+	        this.parseStatus = source["parseStatus"];
+	    }
+	}
+	export class EventFilter {
+	    SessionID: string;
+	    Kinds: string[];
+	    Roles: string[];
+	    OffsetMin?: number;
+	    OffsetMax?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new EventFilter(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.SessionID = source["SessionID"];
+	        this.Kinds = source["Kinds"];
+	        this.Roles = source["Roles"];
+	        this.OffsetMin = source["OffsetMin"];
+	        this.OffsetMax = source["OffsetMax"];
+	    }
+	}
+	export class EventPage {
+	    version: number;
+	    items: EventDTO[];
+	    nextCursor?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new EventPage(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.items = this.convertValues(source["items"], EventDTO);
+	        this.nextCursor = source["nextCursor"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class GapDTO {
+	    id: string;
+	    kind: string;
+	    startedAt: number;
+	    endedAt?: number;
+	    startOffsetMs: number;
+	    endOffsetMs?: number;
+	    severity: string;
+	    recovered: boolean;
+	    reasonCode: string;
+
+	    static createFrom(source: any = {}) {
+	        return new GapDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.startedAt = source["startedAt"];
+	        this.endedAt = source["endedAt"];
+	        this.startOffsetMs = source["startOffsetMs"];
+	        this.endOffsetMs = source["endOffsetMs"];
+	        this.severity = source["severity"];
+	        this.recovered = source["recovered"];
+	        this.reasonCode = source["reasonCode"];
+	    }
+	}
+	export class GapFilter {
+	    SessionID: string;
+	    Kinds: string[];
+	    Recovered?: boolean;
+	    OffsetMin?: number;
+	    OffsetMax?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new GapFilter(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.SessionID = source["SessionID"];
+	        this.Kinds = source["Kinds"];
+	        this.Recovered = source["Recovered"];
+	        this.OffsetMin = source["OffsetMin"];
+	        this.OffsetMax = source["OffsetMax"];
+	    }
+	}
+	export class GapPage {
+	    version: number;
+	    items: GapDTO[];
+	    nextCursor?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new GapPage(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.items = this.convertValues(source["items"], GapDTO);
+	        this.nextCursor = source["nextCursor"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MediaArtifactDTO {
+	    id: string;
+	    mediaSegmentId: string;
+	    kind: string;
+	    container: string;
+	    codec: string;
+	    durationMs: number;
+	    sizeBytes: number;
+	    sampleRate: number;
+	    channels: number;
+	    status: string;
+	    errorCode?: string;
+	    directPlayback: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new MediaArtifactDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.mediaSegmentId = source["mediaSegmentId"];
+	        this.kind = source["kind"];
+	        this.container = source["container"];
+	        this.codec = source["codec"];
+	        this.durationMs = source["durationMs"];
+	        this.sizeBytes = source["sizeBytes"];
+	        this.sampleRate = source["sampleRate"];
+	        this.channels = source["channels"];
+	        this.status = source["status"];
+	        this.errorCode = source["errorCode"];
+	        this.directPlayback = source["directPlayback"];
+	    }
+	}
+	export class MediaFilter {
+	    SessionID: string;
+	    Statuses: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new MediaFilter(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.SessionID = source["SessionID"];
+	        this.Statuses = source["Statuses"];
+	    }
+	}
+	export class MediaLocationRequest {
+	    SessionID: string;
+	    SessionOffsetMS: number;
+
+	    static createFrom(source: any = {}) {
+	        return new MediaLocationRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.SessionID = source["SessionID"];
+	        this.SessionOffsetMS = source["SessionOffsetMS"];
+	    }
+	}
+	export class MediaSegmentDTO {
+	    id: string;
+	    sequence: number;
+	    container: string;
+	    videoCodec?: string;
+	    audioCodec?: string;
+	    startedAt: number;
+	    endedAt: number;
+	    ptsStartMs?: number;
+	    ptsEndMs?: number;
+	    durationMs: number;
+	    sizeBytes: number;
+	    status: string;
+	    errorCode?: string;
+	    timelineStartMs: number;
+	    timelineEndMs: number;
+	    artifacts: MediaArtifactDTO[];
+	    playbackArtifactId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new MediaSegmentDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.sequence = source["sequence"];
+	        this.container = source["container"];
+	        this.videoCodec = source["videoCodec"];
+	        this.audioCodec = source["audioCodec"];
+	        this.startedAt = source["startedAt"];
+	        this.endedAt = source["endedAt"];
+	        this.ptsStartMs = source["ptsStartMs"];
+	        this.ptsEndMs = source["ptsEndMs"];
+	        this.durationMs = source["durationMs"];
+	        this.sizeBytes = source["sizeBytes"];
+	        this.status = source["status"];
+	        this.errorCode = source["errorCode"];
+	        this.timelineStartMs = source["timelineStartMs"];
+	        this.timelineEndMs = source["timelineEndMs"];
+	        this.artifacts = this.convertValues(source["artifacts"], MediaArtifactDTO);
+	        this.playbackArtifactId = source["playbackArtifactId"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MediaLocationResult {
+	    version: number;
+	    sessionId: string;
+	    requestedOffsetMs: number;
+	    adjustedOffsetMs: number;
+	    state: string;
+	    reasonCode?: string;
+	    segment?: MediaSegmentDTO;
+	    segmentPlaybackMs?: number;
+	    playbackArtifactId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new MediaLocationResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.sessionId = source["sessionId"];
+	        this.requestedOffsetMs = source["requestedOffsetMs"];
+	        this.adjustedOffsetMs = source["adjustedOffsetMs"];
+	        this.state = source["state"];
+	        this.reasonCode = source["reasonCode"];
+	        this.segment = this.convertValues(source["segment"], MediaSegmentDTO);
+	        this.segmentPlaybackMs = source["segmentPlaybackMs"];
+	        this.playbackArtifactId = source["playbackArtifactId"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MediaPage {
+	    version: number;
+	    items: MediaSegmentDTO[];
+	    nextCursor?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new MediaPage(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.items = this.convertValues(source["items"], MediaSegmentDTO);
+	        this.nextCursor = source["nextCursor"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+	export class PageRequest {
+	    Limit: number;
+	    Cursor: string;
+
+	    static createFrom(source: any = {}) {
+	        return new PageRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Limit = source["Limit"];
+	        this.Cursor = source["Cursor"];
+	    }
+	}
+	export class SessionDTO {
+	    id: string;
+	    roomConfigId: string;
+	    roomAlias: string;
+	    title: string;
+	    status: string;
+	    recordingStatus: string;
+	    startedAt: number;
+	    endedAt?: number;
+	    mediaEpochAt?: number;
+	    captureOffsetMs: number;
+	    clockSource: string;
+	    integrityScore: number;
+	    sessionMediaState?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.roomConfigId = source["roomConfigId"];
+	        this.roomAlias = source["roomAlias"];
+	        this.title = source["title"];
+	        this.status = source["status"];
+	        this.recordingStatus = source["recordingStatus"];
+	        this.startedAt = source["startedAt"];
+	        this.endedAt = source["endedAt"];
+	        this.mediaEpochAt = source["mediaEpochAt"];
+	        this.captureOffsetMs = source["captureOffsetMs"];
+	        this.clockSource = source["clockSource"];
+	        this.integrityScore = source["integrityScore"];
+	        this.sessionMediaState = source["sessionMediaState"];
+	    }
+	}
+	export class SessionFilter {
+	    RoomConfigID: string;
+	    Statuses: string[];
+	    StartedAtMin?: number;
+	    StartedAtMax?: number;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionFilter(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.RoomConfigID = source["RoomConfigID"];
+	        this.Statuses = source["Statuses"];
+	        this.StartedAtMin = source["StartedAtMin"];
+	        this.StartedAtMax = source["StartedAtMax"];
+	    }
+	}
+	export class SessionPage {
+	    version: number;
+	    items: SessionDTO[];
+	    nextCursor?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionPage(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.items = this.convertValues(source["items"], SessionDTO);
+	        this.nextCursor = source["nextCursor"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class SessionResult {
+	    version: number;
+	    session: SessionDTO;
+
+	    static createFrom(source: any = {}) {
+	        return new SessionResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.session = this.convertValues(source["session"], SessionDTO);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace room {
 
 	export class CookieStatus {

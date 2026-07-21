@@ -10,9 +10,11 @@ const (
 )
 
 var (
-	ErrInvalidArgument = errors.New("playback query argument is invalid")
-	ErrInvalidCursor   = errors.New("playback query cursor is invalid")
-	ErrSessionNotFound = errors.New("playback session not found")
+	ErrInvalidArgument  = errors.New("playback query argument is invalid")
+	ErrInvalidCursor    = errors.New("playback query cursor is invalid")
+	ErrSessionNotFound  = errors.New("playback session not found")
+	ErrMediaNotFound    = errors.New("playback media not found")
+	ErrMediaUnavailable = errors.New("playback media is unavailable")
 )
 
 type PageRequest struct {

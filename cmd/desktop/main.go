@@ -40,7 +40,8 @@ func main() {
 		HideWindowOnClose: false,
 		BackgroundColour:  &options.RGBA{R: 14, G: 20, B: 32, A: 1},
 		AssetServer: &assetserver.Options{
-			Assets: frontendassets.Assets,
+			Assets:     frontendassets.Assets,
+			Middleware: desktop.playbackMediaMiddleware,
 		},
 		Windows:    windowsOptions,
 		OnStartup:  desktop.startup,

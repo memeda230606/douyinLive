@@ -141,6 +141,33 @@ func (r *SQLiteRepository) RegisterRecordingRoot(ctx context.Context, path strin
 	return root, nil
 }
 
+// VerifyRecordingRootReadOnly revalidates an external root without creating
+// files or updating durable state. Playback calls it while holding a root
+// handle that denies rename, so marker, canonical path and volume identity are
+// checked against one stable directory generation.
+func VerifyRecordingRootReadOnly(path, rootID, canonicalKey, volumeIdentity string) error {
+	if validateUUIDv7("recording root binding", rootID) != nil ||
+		!validRecordingRootDigest(canonicalKey) || !validRecordingRootDigest(volumeIdentity) {
+		return ErrRecordingRootConflict
+	}
+	absolutePath, actualKey, actualVolume, err := inspectRecordingRoot(path)
+	if err != nil {
+		return err
+	}
+	marker, err := readRecordingRootMarker(filepath.Join(absolutePath, recordingRootMarkerName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrRecordingRootConflict
+	}
+	if err != nil {
+		return err
+	}
+	if actualKey != canonicalKey || actualVolume != volumeIdentity ||
+		marker.RootID != rootID || marker.VolumeIdentity != volumeIdentity {
+		return ErrRecordingRootConflict
+	}
+	return nil
+}
+
 // verifyRecordingRootBinding validates an existing marker and database row
 // without creating either. Callers that already persist a root ID must fail
 // closed instead of accidentally registering a different supplied directory.

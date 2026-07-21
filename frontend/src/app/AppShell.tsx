@@ -7,6 +7,7 @@ import { OverviewPage } from '../features/overview/OverviewPage'
 import { RealtimeRoomPage } from '../features/realtime/RealtimeRoomPage'
 import { RoomsPage } from '../features/rooms/RoomsPage'
 import { useRoomsDashboard } from '../features/rooms/useRoomsDashboard'
+import { SessionsPage } from '../features/sessions/SessionsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { AppEventBridge } from './AppEventBridge'
 import type { BootstrapDTO } from './bootstrap'
@@ -99,7 +100,7 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
         {activePage === 'realtime' && <RealtimeRoomPage rooms={rooms} statuses={dashboard.statuses} roomId={realtimeRoomId} onRoomChange={setRealtimeRoomId} onBack={() => setActivePage('rooms')} />}
         {activePage === 'settings' && <SettingsPage />}
         {activePage === 'diagnostics' && <DiagnosticsPage bootstrap={bootstrap} />}
-        {activePage === 'sessions' && <UnavailablePage title="历史场次" />}
+        {activePage === 'sessions' && <SessionsPage />}
         {activePage === 'analysis' && <UnavailablePage title="分析" />}
       </section>
     </div>

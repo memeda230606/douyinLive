@@ -3,19 +3,37 @@ package playback
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 )
+
+type ServiceOptions struct {
+	DataRoot string
+}
 
 // Service is the application-facing read-only playback boundary.
 type Service struct {
 	repository *Repository
+	dataRoot   string
 }
 
 func NewService(reader *sql.DB) (*Service, error) {
+	return NewServiceWithOptions(reader, ServiceOptions{})
+}
+
+func NewServiceWithOptions(reader *sql.DB, options ServiceOptions) (*Service, error) {
 	repository, err := NewRepository(reader)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{repository: repository}, nil
+	dataRoot := ""
+	if options.DataRoot != "" {
+		absolute, absoluteErr := filepath.Abs(options.DataRoot)
+		if absoluteErr != nil {
+			return nil, absoluteErr
+		}
+		dataRoot = filepath.Clean(absolute)
+	}
+	return &Service{repository: repository, dataRoot: dataRoot}, nil
 }
 
 func (s *Service) GetSession(ctx context.Context, sessionID string) (SessionResult, error) {

@@ -73,6 +73,22 @@ func TestSQLiteRepositoryRegisterRecordingRootPersistsMarkerAndRow(t *testing.T)
 	if !recordingRootRowMatches(databaseRoot, registered) {
 		t.Fatalf("database row does not match registered identity")
 	}
+	if err := VerifyRecordingRootReadOnly(
+		registered.absolutePath, registered.ID, registered.canonicalKey, registered.volumeIdentity,
+	); err != nil {
+		t.Fatalf("VerifyRecordingRootReadOnly() error = %v", err)
+	}
+	if err := VerifyRecordingRootReadOnly(
+		registered.absolutePath, uuid.Must(uuid.NewV7()).String(),
+		registered.canonicalKey, registered.volumeIdentity,
+	); !errors.Is(err, ErrRecordingRootConflict) {
+		t.Fatalf("wrong marker ID verification error = %v", err)
+	}
+	if err := VerifyRecordingRootReadOnly(
+		registered.absolutePath, registered.ID, strings.Repeat("0", 64), registered.volumeIdentity,
+	); !errors.Is(err, ErrRecordingRootConflict) {
+		t.Fatalf("wrong canonical identity verification error = %v", err)
+	}
 
 	retried, err := repository.RegisterRecordingRoot(context.Background(), rootPath)
 	if err != nil || retried.ID != registered.ID {
