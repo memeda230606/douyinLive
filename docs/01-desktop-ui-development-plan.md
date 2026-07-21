@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-21）：P3-ACC-001 已按项目级用户豁免诚实关闭；PHASE-3 已完成 30/30 点（100%），项目总进度 70%，当前进入 P4-PLY-001。
+> 实施状态（2026-07-21）：P4 后端历史/媒体只读查询、统一时间轴定位和 Wails 门面已完成；项目总进度 70%，P4-PLY-001 下一步实现 React 历史场次/详情、同步时间线与动态媒体 Range。
 > 最近验收：[P3-UI 实时监控界面](validation/2026-07-19-p3-ui-realtime-monitoring.md)
 
 ## 1. 目标与边界

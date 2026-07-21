@@ -12,6 +12,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
 	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
+	"github.com/jwwsjlm/douyinLive/v2/internal/playback"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
@@ -78,6 +79,7 @@ type Application struct {
 	monitor                    *room.MonitorManager
 	coordinator                capture.CaptureCoordinator
 	events                     *eventstore.Manager
+	playback                   *playback.Service
 	roomStatusPublisher        room.StatusPublisher
 	liveEventPublisher         eventstore.LiveEventPublisher
 	recordingProgressPublisher capture.RecordingProgressPublisher
@@ -169,6 +171,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		a.monitor = nil
 		a.coordinator = nil
 		a.events = nil
+		a.playback = nil
 		a.credentials = nil
 		a.logFile = nil
 		a.logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
@@ -254,7 +257,7 @@ func (a *Application) Bootstrap() BootstrapDTO {
 			{ID: "overview", Label: "总览", Available: true},
 			{ID: "rooms", Label: "直播间", Available: a.rooms != nil},
 			{ID: "realtime", Label: "实时监控", Available: a.rooms != nil},
-			{ID: "sessions", Label: "历史场次", Available: false},
+			{ID: "sessions", Label: "历史场次", Available: a.playback != nil},
 			{ID: "analysis", Label: "分析", Available: false},
 			{ID: "diagnostics", Label: "诊断", Available: a.dataStatus.LoggingReady},
 			{ID: "settings", Label: "设置", Available: a.settings != nil},

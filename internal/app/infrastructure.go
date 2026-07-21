@@ -15,6 +15,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
 	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
+	"github.com/jwwsjlm/douyinLive/v2/internal/playback"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinLive/v2/internal/storage"
@@ -127,6 +128,12 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = store.Close()
 		_ = logFile.Close()
 		return fmt.Errorf("initialize room service: %w", err)
+	}
+	playbackService, err := playback.NewService(store.Reader())
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize playback service: %w", err)
 	}
 	captureRepository, err := capture.NewSQLiteRepositoryWithOptions(
 		store.Writer(), store.Reader(), layout.Root,
@@ -325,6 +332,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	a.monitor = monitorManager
 	a.coordinator = captureCoordinator
 	a.events = eventManager
+	a.playback = playbackService
 	a.logFile = logFile
 	a.logger = logger
 	a.dataStatus = DataStatusDTO{

@@ -21,10 +21,10 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-21T18:06:53+08:00"
+updated_at: "2026-07-21T18:32:32+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "5b642f41660c7e4f6f19a9b0225ae2c0a8870665"
+last_verified_head: "a678721960fb1bbb15977f5ad616eaf8710ae79a"
 project_status: "IN_PROGRESS"
 overall_completion_percent: 70
 current_phase: "PHASE-4-PLAYBACK-ANALYSIS"
@@ -57,7 +57,7 @@ expected_dirty_paths:
 blockers: []
 last_completed_task: "P3-ACC-001"
 last_completion_evidence: "正式在线运行已证明不少于 10 分钟的稳定资源窗口、FFmpeg 崩溃恢复、隔离 relay 网络故障恢复、新 attempt 与 gap 证据；后续修复了收尾所有权、媒体身份/路径 ABA 和日志脱敏问题。2026-07-21 离线控制器 14/14、清理竞态 2/2、显式 Scheduled Task/MIC 正反门禁、default/P2/P3/P3UI/P3ACC Go test-vet-build、前端 6 文件 20 测试/typecheck/build、两项 cmd/main loopback Ping/Pong 和四产物构建均通过。用户明确批准人工停止，并豁免本次自然下播等待和最终机器视觉 ACK；两项记为 USER_WAIVED/NOT_RUN，人工 UI finalizing 记为 USER_OBSERVED，未声明 controller PASS 或 passed=true。"
-resume_instruction: "继续 P4-PLY-001：Schema v6 与内部只读 session/event/gap playback repository 已完成；下一切片实现媒体 segment/artifact 查询、统一时间轴映射和应用服务接入，再进入 Wails 历史页、播放器与动态媒体 Range 服务。"
+resume_instruction: "继续 P4-PLY-001：Schema v6、session/event/gap 与媒体 segment/artifact 只读查询、统一时间轴定位、应用服务和 Wails 门面已完成；下一切片实现 React 历史场次/详情/同步时间线和动态媒体 Range 服务。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -91,7 +91,7 @@ resume_instruction: "继续 P4-PLY-001：Schema v6 与内部只读 session/event
 | PHASE-1 直播流解析验证 | 15% | `DONE` | 100% | 12/12 点完成；真实在线房间解析、媒体探测与短时流拷贝通过 | 真实平台字段变化时补充回归 |
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
 | PHASE-3 采集与录制 MVP | 30% | `DONE` | 100% | 30/30 点完成；稳定窗口、FFmpeg/网络故障恢复和人工停止收尾已按 2026-07-21 项目级豁免记录关闭 | 真实平台或工具链变化时复验；正式控制器合同保持严格 |
-| PHASE-4 回放与基础分析 | 20% | `IN_PROGRESS` | 0% | P4-PLY-001 已完成 Schema v6 与内部只读 session/event/gap 查询首个切片 | 继续媒体查询、统一时间轴、应用服务和历史回放 UI |
+| PHASE-4 回放与基础分析 | 20% | `IN_PROGRESS` | 0% | 已完成 Schema v6、历史/媒体只读查询、统一时间轴定位及应用/Wails 接入 | 实现历史回放 UI、同步事件交互和动态媒体 Range 服务 |
 | PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
 | **总体** | **100%** | **`IN_PROGRESS`** | **70%** | PHASE-0 至 PHASE-3 已关闭；采集录制闭环及其确定性门禁完成 | 执行 P4-PLY-001 历史回放与统一时间轴基础 |
 
@@ -124,7 +124,7 @@ resume_instruction: "继续 P4-PLY-001：Schema v6 与内部只读 session/event
 | P3-RCV-001 | 实现异常重试、缺口审计与启动恢复 | 4 | P3-MEDIA-001 | `DONE` | [验收记录](validation/2026-07-19-p3-rcv-recovery.md)：Schema v5、全局实例租约、严格分页、Global Job 证据恢复、媒体/事件恢复、原子缺口与终态推进、运行期有界退避及 fail-closed 启动完成；全量 Go/前端/Wails 与重点 20 轮回归通过，终审 P0/P1/P2=0 | 执行 P3-UI-001 |
 | P3-UI-001 | 实现实时弹幕、录制进度与缺口告警 | 2 | P3-RCV-001 | `DONE` | [验收记录](validation/2026-07-19-p3-ui-realtime-monitoring.md)：完成后端有界实时发布、录制进度、状态 revision 与前端单例事件桥、2,000 条虚拟时间线、筛选/指标/倒计时/告警；全量 Go/前端/Wails 和真实冷启动 GUI 11/11 通过，终审 P0/P1/P2=0 | 执行 P3-ACC-001 |
 | P3-ACC-001 | 完成 10 分钟稳定性、故障注入与真实 GUI 验收 | 2 | P3-UI-001 | `DONE` | [关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)：稳定窗口、FFmpeg 崩溃与 relay 网络故障恢复已证明；人工停止与 UI finalizing 为 USER_OBSERVED，自然下播等待和最终机器视觉 ACK 经用户明确豁免为 USER_WAIVED/NOT_RUN；没有伪造 controller PASS/passed=true | PHASE-3 完成；执行 P4-PLY-001 |
-| P4-PLY-001 | 实现历史场次查询、统一时间轴与同步回放基础 | 6 | P3-ACC-001 | `IN_PROGRESS` | Schema v6、v5 备份/升级/回滚、版本化只读 session/event/gap repository、稳定 keyset cursor 与隐私 DTO 已完成；目标测试 20 轮、全量 Go test/vet/build 通过 | 实现媒体 segment/artifact 查询、时间轴映射、应用服务和历史回放 UI |
+| P4-PLY-001 | 实现历史场次查询、统一时间轴与同步回放基础 | 6 | P3-ACC-001 | `IN_PROGRESS` | Schema v6、v5 备份/升级/回滚、session/event/gap/media 只读 keyset 查询、隐私 DTO、统一时间轴定位、应用服务及 Wails 门面已完成；playback 20 轮、全量 Go test/vet/build 通过 | 实现 React 历史场次/详情/同步时间线和动态媒体 Range 服务 |
 | P4-ANA-001 | 实现 10 秒指标桶、峰值/低谷与高光候选 | 6 | P4-PLY-001 | `NOT_STARTED` | — | 等待 P4-PLY-001 |
 | P4-ASR-001 | 实现 ASR 插件接口与未配置降级 | 2 | P4-ANA-001 | `NOT_STARTED` | — | 等待 P4-ANA-001 |
 | P4-EXP-001 | 实现 CSV/JSON 报告导出与隐私门禁 | 4 | P4-ANA-001 | `NOT_STARTED` | — | 等待 P4-ANA-001 |
@@ -185,6 +185,7 @@ resume_instruction: "继续 P4-PLY-001：Schema v6 与内部只读 session/event
 | 2026-07-19 23:49 | P3-UI-001 | `DONE` | 完成 SQLite 后置白名单事件批次、1 Hz 录制进度、全局状态 revision、前端单例桥、2,000 条虚拟时间线、六类筛选、指标、重试与缺口告警；全量 Go/P2/P3、前端 6 文件 20 项测试、Wails 生产构建及真实冷启动 GUI 11/11 通过，PrintWindow 与 JSON 一致，WM_CLOSE 54 ms 自然退出且零残留，终审 P0/P1/P2=0 | 执行 P3-ACC-001 十分钟在线稳定性、真实故障和下播验收 |
 | 2026-07-21 17:38 | P3-ACC-001 | `DONE` | 正式运行证明十分钟稳定窗口、FFmpeg/relay 故障恢复、新 attempt 与 gap；后续收尾、媒体身份和日志隐私加固完成。用户明确批准人工停止并豁免自然下播等待与最终机器视觉 ACK，分别记录 USER_OBSERVED、USER_WAIVED/NOT_RUN，未声明 controller PASS；离线 14/14、清理竞态 2/2、五组 Go 矩阵、前端、PowerShell、Scheduled Task/MIC、cmd/main 与四产物构建通过 | PHASE-3 关闭；执行 P4-PLY-001 |
 | 2026-07-21 18:06 | P4-PLY-001 | `IN_PROGRESS` | 完成 Schema v6：版本化 metric bucket 复合主键、session/event/gap keyset 索引、v5 一致备份与事务回滚；新增内部只读 playback repository，cursor 严格绑定版本、查询类型和规范化过滤，DTO 排除平台标识、路径、raw/normalized/details 等字段；storage/playback 20 轮、全量 Go test/vet/build 与 diff 门禁通过 | 实现媒体 segment/artifact 查询、统一时间轴映射和应用服务接入 |
+| 2026-07-21 18:32 | P4-PLY-001 | `IN_PROGRESS` | 新增 path/root/attempt/SHA-free 媒体 segment+artifact keyset DTO，按 media epoch/PTS 生成统一时间轴，定位时应用 capture offset 并对重叠分片优先已审计 complete/recovered；仅来源摘要一致的 H.264 MP4 标记直放，否则明确降级 MKV/Gap。装配只读 PlaybackService 与 Wails 门面；目标包、playback 20 轮及全量 Go test/vet/build 通过 | 实现 React 历史场次列表/详情/同步时间线及动态媒体 Range 服务 |
 
 日志保留最近 20 条；更早记录移入单独的历史文档时，主文档保留链接和最后一条阶段总结。
 
