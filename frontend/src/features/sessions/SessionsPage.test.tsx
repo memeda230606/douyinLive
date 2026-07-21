@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,6 +61,12 @@ describe('SessionsPage', () => {
     vi.mocked(api.playbackMediaURL).mockImplementation((id) => `/playback/media/${id}`)
   })
 
+  it('opens an analysis candidate at its requested timeline offset', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<QueryClientProvider client={client}><SessionsPage initialSessionId={sessionId} initialOffsetMs={12_000} /></QueryClientProvider>)
+    await screen.findByRole('heading', { name: '夏季新品场' })
+    await waitFor(() => expect(api.locatePlaybackMedia).toHaveBeenCalledWith(sessionId, 12_000))
+  })
   it('renders historical detail and seeks an event into a verified media URL', async () => {
     const user = userEvent.setup()
     renderPage()

@@ -1,3 +1,253 @@
+export namespace analysis {
+
+	export class AnalyzeRequest {
+	    sessionId: string;
+
+	    static createFrom(source: any = {}) {
+	        return new AnalyzeRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	    }
+	}
+	export class MetricContributionDTO {
+	    metric: string;
+	    weight: number;
+	    score: number;
+
+	    static createFrom(source: any = {}) {
+	        return new MetricContributionDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.metric = source["metric"];
+	        this.weight = source["weight"];
+	        this.score = source["score"];
+	    }
+	}
+	export class CandidateDTO {
+	    id: string;
+	    kind: string;
+	    startMs: number;
+	    endMs: number;
+	    score: number;
+	    threshold: number;
+	    baselineMedian: number;
+	    baselineMad: number;
+	    completeness: number;
+	    contributions: MetricContributionDTO[];
+	    evidenceBucketMs: number[];
+	    algorithmVersion: string;
+	    sourceCandidateId?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new CandidateDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.kind = source["kind"];
+	        this.startMs = source["startMs"];
+	        this.endMs = source["endMs"];
+	        this.score = source["score"];
+	        this.threshold = source["threshold"];
+	        this.baselineMedian = source["baselineMedian"];
+	        this.baselineMad = source["baselineMad"];
+	        this.completeness = source["completeness"];
+	        this.contributions = this.convertValues(source["contributions"], MetricContributionDTO);
+	        this.evidenceBucketMs = source["evidenceBucketMs"];
+	        this.algorithmVersion = source["algorithmVersion"];
+	        this.sourceCandidateId = source["sourceCandidateId"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class MetricBucketDTO {
+	    bucketStartMs: number;
+	    bucketSizeMs: number;
+	    chatCount: number;
+	    uniqueChatters: number;
+	    likeDelta: number;
+	    giftCount: number;
+	    giftValue?: number;
+	    followCount: number;
+	    enterCount: number;
+	    activeUsers: number;
+	    messageTotal: number;
+	    completeness: number;
+
+	    static createFrom(source: any = {}) {
+	        return new MetricBucketDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.bucketStartMs = source["bucketStartMs"];
+	        this.bucketSizeMs = source["bucketSizeMs"];
+	        this.chatCount = source["chatCount"];
+	        this.uniqueChatters = source["uniqueChatters"];
+	        this.likeDelta = source["likeDelta"];
+	        this.giftCount = source["giftCount"];
+	        this.giftValue = source["giftValue"];
+	        this.followCount = source["followCount"];
+	        this.enterCount = source["enterCount"];
+	        this.activeUsers = source["activeUsers"];
+	        this.messageTotal = source["messageTotal"];
+	        this.completeness = source["completeness"];
+	    }
+	}
+
+	export class MetricTotalsDTO {
+	    chatCount: number;
+	    uniqueChatters: number;
+	    likeDelta: number;
+	    giftCount: number;
+	    giftValue?: number;
+	    followCount: number;
+	    enterCount: number;
+	    activeUsers: number;
+	    messageTotal: number;
+
+	    static createFrom(source: any = {}) {
+	        return new MetricTotalsDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chatCount = source["chatCount"];
+	        this.uniqueChatters = source["uniqueChatters"];
+	        this.likeDelta = source["likeDelta"];
+	        this.giftCount = source["giftCount"];
+	        this.giftValue = source["giftValue"];
+	        this.followCount = source["followCount"];
+	        this.enterCount = source["enterCount"];
+	        this.activeUsers = source["activeUsers"];
+	        this.messageTotal = source["messageTotal"];
+	    }
+	}
+	export class SummaryDTO {
+	    durationMs: number;
+	    bucketSizeMs: number;
+	    bucketCount: number;
+	    completeness: number;
+	    totals: MetricTotalsDTO;
+	    peakCount: number;
+	    troughCount: number;
+	    highlightCount: number;
+	    warnings: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new SummaryDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.durationMs = source["durationMs"];
+	        this.bucketSizeMs = source["bucketSizeMs"];
+	        this.bucketCount = source["bucketCount"];
+	        this.completeness = source["completeness"];
+	        this.totals = this.convertValues(source["totals"], MetricTotalsDTO);
+	        this.peakCount = source["peakCount"];
+	        this.troughCount = source["troughCount"];
+	        this.highlightCount = source["highlightCount"];
+	        this.warnings = source["warnings"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class ReportDTO {
+	    version: number;
+	    id: string;
+	    sessionId: string;
+	    status: string;
+	    analysisVersion: string;
+	    algorithmVersion: string;
+	    startedAt: number;
+	    completedAt: number;
+	    summary: SummaryDTO;
+	    buckets: MetricBucketDTO[];
+	    peaks: CandidateDTO[];
+	    troughs: CandidateDTO[];
+	    highlights: CandidateDTO[];
+
+	    static createFrom(source: any = {}) {
+	        return new ReportDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.id = source["id"];
+	        this.sessionId = source["sessionId"];
+	        this.status = source["status"];
+	        this.analysisVersion = source["analysisVersion"];
+	        this.algorithmVersion = source["algorithmVersion"];
+	        this.startedAt = source["startedAt"];
+	        this.completedAt = source["completedAt"];
+	        this.summary = this.convertValues(source["summary"], SummaryDTO);
+	        this.buckets = this.convertValues(source["buckets"], MetricBucketDTO);
+	        this.peaks = this.convertValues(source["peaks"], CandidateDTO);
+	        this.troughs = this.convertValues(source["troughs"], CandidateDTO);
+	        this.highlights = this.convertValues(source["highlights"], CandidateDTO);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace app {
 
 	export class CapabilityDTO {

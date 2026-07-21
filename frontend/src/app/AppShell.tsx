@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, BarChart3, Bug, History, Home, Moon, Radio, Settings, Sun } from 'lucide-react'
 import { useState } from 'react'
 
-import { UnavailablePage } from '../features/common/UnavailablePage'
+import { AnalysisPage } from '../features/analysis/AnalysisPage'
 import { DiagnosticsPage } from '../features/diagnostics/DiagnosticsPage'
 import { OverviewPage } from '../features/overview/OverviewPage'
 import { RealtimeRoomPage } from '../features/realtime/RealtimeRoomPage'
@@ -30,6 +30,7 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   const [activePage, setActivePage] = useState<PageID>('overview')
   const [openRoomEditor, setOpenRoomEditor] = useState(false)
   const [realtimeRoomId, setRealtimeRoomId] = useState<string>()
+  const [playbackTarget, setPlaybackTarget] = useState<{ sessionId: string; offsetMs: number; key: number }>()
   const dashboard = useRoomsDashboard()
   const rooms = dashboard.roomsQuery.data ?? []
   const statusValues = Object.values(dashboard.statuses)
@@ -45,6 +46,11 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   function openRealtime(roomId?: string) {
     setRealtimeRoomId(roomId ?? rooms[0]?.id)
     setActivePage('realtime')
+  }
+
+  function openPlayback(sessionId: string, offsetMs: number) {
+    setPlaybackTarget({ sessionId, offsetMs, key: Date.now() })
+    setActivePage('sessions')
   }
 
   return (
@@ -100,8 +106,8 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
         {activePage === 'realtime' && <RealtimeRoomPage rooms={rooms} statuses={dashboard.statuses} roomId={realtimeRoomId} onRoomChange={setRealtimeRoomId} onBack={() => setActivePage('rooms')} />}
         {activePage === 'settings' && <SettingsPage />}
         {activePage === 'diagnostics' && <DiagnosticsPage bootstrap={bootstrap} />}
-        {activePage === 'sessions' && <SessionsPage />}
-        {activePage === 'analysis' && <UnavailablePage title="分析" />}
+        {activePage === 'sessions' && <SessionsPage initialSessionId={playbackTarget?.sessionId} initialOffsetMs={playbackTarget?.offsetMs} key={playbackTarget?.key} />}
+        {activePage === 'analysis' && <AnalysisPage onOpenPlayback={openPlayback} />}
       </section>
     </div>
   )

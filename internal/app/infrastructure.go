@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jwwsjlm/douyinLive/v2/internal/analysis"
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
@@ -136,6 +137,12 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		_ = store.Close()
 		_ = logFile.Close()
 		return fmt.Errorf("initialize playback service: %w", err)
+	}
+	analysisService, err := analysis.NewService(store.Writer(), store.Reader())
+	if err != nil {
+		_ = store.Close()
+		_ = logFile.Close()
+		return fmt.Errorf("initialize analysis service: %w", err)
 	}
 	captureRepository, err := capture.NewSQLiteRepositoryWithOptions(
 		store.Writer(), store.Reader(), layout.Root,
@@ -335,6 +342,7 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	a.coordinator = captureCoordinator
 	a.events = eventManager
 	a.playback = playbackService
+	a.analysis = analysisService
 	a.logFile = logFile
 	a.logger = logger
 	a.dataStatus = DataStatusDTO{

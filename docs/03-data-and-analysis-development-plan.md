@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-21）：P4-PLY-001 已完成 Schema v6、历史/媒体只读查询、统一时间轴、React 同步回放和安全动态 Range；项目总进度 76%，下一任务为 P4-ANA-001。
+> 实施状态（2026-07-21）：P4-ANA-001 已完成版本化 10 秒指标桶、缺口完整度、稳健峰谷/高光候选、严格 React 报告与时间点回放；项目总进度 82%，下一任务为 P4-ASR-001。
 > 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
 
 ## 1. 目标与原则
@@ -382,6 +382,14 @@ effect_score =
 ```
 
 当某指标不可用时按剩余权重归一化，并在报告中标明缺失项。分数只用于同一场次内排序；跨场次比较必须先按场次规模归一化。
+
+### 7.4 P4-ANA-001 实施结果（2026-07-21）
+
+- `internal/analysis` 以终态场次、source 事件和缺口为只读输入，在单事务中写入不可覆盖的 `metric_buckets` 与 completed `analysis_reports`；`analysis_version=basic-analysis/v1+<input_fingerprint 前 16 位>`，相同输入复用，输入或算法变化时旧版并存。
+- 固定 10 秒桶覆盖弹幕、独立用户、点赞 delta/累计重置、礼物折叠与可靠价值、关注、进房、活跃用户、消息总量和缺口区间并集完整度；缺失礼物价值不猜金额，数值与数量保持分离。
+- 30 秒平滑后以本场中位数与 MAD 生成候选，要求至少 2 MAD、连续两个桶并合并 60 秒内相邻区间；低谷仅对超过 10 分钟且完整度不少于 0.8 的场次开放，高光只从包含聊天证据的峰值派生。
+- 报告 DTO 只包含聚合桶、候选贡献、证据桶、质量 warning 和版本，不包含 user hash、原始内容、raw 引用、媒体路径或本地根；React 再以 strict Zod v1 allowlist 拒绝未知字段。
+- 固定事件集 golden 覆盖点赞累计重置、礼物回退、缺口和未知解析提示；服务集成覆盖版本并存、同指纹复用、终态门禁、畸形持久化和隐私字段白名单。
 
 ## 8. ASR 与文本分析
 

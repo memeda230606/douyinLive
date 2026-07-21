@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, Clock3, Film, MessageSquareText, Play, ShieldCheck } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { userFacingError } from '../../lib/desktop'
 import {
@@ -48,12 +48,13 @@ function usePagedQuery<T extends { nextCursor?: string }>(
   })
 }
 
-export function SessionsPage() {
+export function SessionsPage({ initialSessionId, initialOffsetMs = 0 }: { initialSessionId?: string; initialOffsetMs?: number } = {}) {
   const [status, setStatus] = useState('all')
-  const [selectedId, setSelectedId] = useState<string>()
+  const [selectedId, setSelectedId] = useState<string | undefined>(initialSessionId)
   const [location, setLocation] = useState<MediaLocation>()
   const [currentOffset, setCurrentOffset] = useState(0)
   const playerRef = useRef<HTMLVideoElement>(null)
+  const initialSeekDone = useRef(false)
   const statuses = status === 'all' ? [] : [status]
   const sessionsQuery = usePagedQuery(['playback', 'sessions', status], true, (cursor) => listPlaybackSessions(statuses, cursor))
   const sessions = sessionsQuery.data?.pages.flatMap((page) => page.items) ?? []
@@ -84,6 +85,13 @@ export function SessionsPage() {
       setCurrentOffset(next.requestedOffsetMs)
     },
   })
+
+  useEffect(() => {
+    if (!initialSeekDone.current && initialSessionId && activeId === initialSessionId) {
+      initialSeekDone.current = true
+      locateMutation.mutate(Math.max(0, initialOffsetMs))
+    }
+  }, [activeId, initialOffsetMs, initialSessionId, locateMutation])
 
   function selectSession(id: string) {
     setSelectedId(id)
