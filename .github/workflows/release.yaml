@@ -246,6 +246,40 @@ jobs:
           $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
           ./scripts/test-windows-installer.ps1 -ReleaseDirectory "release/v$version" -CurrentVersion $version
 
+      - name: Refuse unsigned desktop publication
+        shell: pwsh
+        run: |
+          $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
+          $directory = "release/v$version"
+          $executables = @(
+            "douyin-live-desktop-$version-windows-amd64.exe",
+            "douyin-live-dbrollback-$version-windows-amd64.exe",
+            "douyin-live-desktop-$version-windows-amd64-installer.exe"
+          )
+          foreach ($name in $executables) {
+            $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $directory $name)
+            if ($signature.Status -ne 'Valid' -or $null -eq $signature.TimeStamperCertificate) {
+              throw "$name is not validly Authenticode-signed and timestamped. Configure the controlled signing stage before publication."
+            }
+          }
+
+      - name: Scan signed desktop release with Microsoft Defender
+        shell: pwsh
+        run: |
+          $status = Get-MpComputerStatus
+          if (-not $status.AMServiceEnabled -or -not $status.AntivirusEnabled) {
+            throw 'Microsoft Defender is not active; formal release scanning fails closed.'
+          }
+          $scanner = Get-ChildItem -LiteralPath "$env:ProgramData\Microsoft\Windows Defender\Platform" -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName 'MpCmdRun.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($scanner)) { throw 'MpCmdRun.exe is unavailable.' }
+          $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
+          & $scanner -Scan -ScanType 3 -File "release/v$version" -DisableRemediation -ReturnHR
+          if ($LASTEXITCODE -ne 0) { throw "Microsoft Defender scan failed with exit code $LASTEXITCODE." }
+
       - name: Upload desktop release evidence
         uses: actions/upload-artifact@v7.0.1
         with:

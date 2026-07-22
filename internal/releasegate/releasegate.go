@@ -700,6 +700,16 @@ func writeReleaseDocuments(root, outDir string, options BuildOptions, metadata G
 	if err := copyFile(filepath.Join(root, "docs", "windows-installation-and-rollback.md"), filepath.Join(outDir, "INSTALLATION.md")); err != nil {
 		return err
 	}
+	for source, target := range map[string]string{
+		"user-guide.md":        "USER-GUIDE.md",
+		"privacy.md":           "PRIVACY.md",
+		"known-limitations.md": "KNOWN-LIMITATIONS.md",
+		"release-checklist.md": "RELEASE-CHECKLIST.md",
+	} {
+		if err := copyFile(filepath.Join(root, "docs", source), filepath.Join(outDir, target)); err != nil {
+			return err
+		}
+	}
 	publicComponents := make([]Component, len(components))
 	copy(publicComponents, components)
 	for index := range publicComponents {

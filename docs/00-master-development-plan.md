@@ -21,20 +21,37 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-22T22:06:42+08:00"
+updated_at: "2026-07-22T22:38:35+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "dc32909e4ec825ecd712adbd3f7cf49cd1a94252"
-project_status: "IN_PROGRESS"
+last_verified_head: "5a8867fd6b78add39b15a29d46d1947f9ec98f76"
+project_status: "BLOCKED"
 overall_completion_percent: 98
 current_phase: "PHASE-5-RELEASE"
 current_task: "P5-ACC-001"
 next_task: ""
-expected_dirty_paths: []
-blockers: []
+expected_dirty_paths:
+  - ".github/workflows/release.yaml"
+  - "cmd/desktop/build/windows/installer/project.nsi"
+  - "docs/00-master-development-plan.md"
+  - "docs/04-engineering-testing-and-release-plan.md"
+  - "docs/known-limitations.md"
+  - "docs/privacy.md"
+  - "docs/release-checklist.md"
+  - "docs/user-guide.md"
+  - "docs/validation/2026-07-22-p5-final-release-acceptance.md"
+  - "internal/releasegate/releasegate.go"
+  - "internal/releasegate/releasegate_test.go"
+  - "internal/releasegate/windows_installer.go"
+  - "scripts/test-p5-release-acceptance.ps1"
+  - "scripts/test-windows-installer.ps1"
+blockers:
+  - "缺少受控 Windows 代码签名证书与 signtool，三个候选 EXE 均为 NotSigned。"
+  - "Microsoft Defender 被第三方杀毒接管且命令行扫描返回 0x80004005，没有绑定最终 manifest 的双引擎病毒扫描报告。"
+  - "没有 Windows 10 x64 实机或 VM 的最终签名安装包矩阵证据。"
 last_completed_task: "P5-STB-001"
 last_completion_evidence: "严格 P5-STB-001/v1 门禁真实运行 3600 秒并原子生成 61 个分钟样本：4 房间、13 场次、18984 事件；CPU 平均 0.235%，工作集峰值 67682304 字节，句柄峰值 224，goroutine 峰值 15，WAL 峰值 4255992 字节；数据库忙队列峰值 26 后恢复，网络中断/恢复、退出码 93 强制退出启动恢复及 Windows 磁盘满分类通过。"
-resume_instruction: "执行 P5-ACC-001：汇总最终发布清单、签名就绪状态、病毒扫描、产物校验和、已知限制、隐私说明和人工验收；没有外部签名证书或 Windows 10/杀毒矩阵证据时如实记录，不冒充完成。"
+resume_instruction: "P5-ACC-001 已完成可在当前主机取得的候选构建、文档、安装矩阵与失败关闭审计；取得受控代码签名证书/signtool、绑定最终 manifest 的双引擎病毒扫描报告和 Windows 10 x64 最终签名包矩阵后，重新执行 scripts/test-p5-release-acceptance.ps1 与人工发布清单，全部通过才能更新为 DONE/100%。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -69,8 +86,8 @@ resume_instruction: "执行 P5-ACC-001：汇总最终发布清单、签名就绪
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
 | PHASE-3 采集与录制 MVP | 30% | `DONE` | 100% | 30/30 点完成；稳定窗口、FFmpeg/网络故障恢复和人工停止收尾已按 2026-07-21 项目级豁免记录关闭 | 真实平台或工具链变化时复验；正式控制器合同保持严格 |
 | PHASE-4 回放与基础分析 | 20% | `DONE` | 100% | 20/20 点完成；跨段同步回放、版本化分析、ASR 降级、隐私导出及真实 GUI 一体化验收通过 | 平台、WebView2 或媒体工具链变化时复验 |
-| PHASE-5 发布与稳定性 | 10% | `IN_PROGRESS` | 80% | 8/10 点完成；发布工程、Windows 安装升级及 60 分钟资源/故障稳定性门禁通过 | 最终发布验收与发布清单通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **98%** | PHASE-0 至 PHASE-4 已关闭；P5 发布工程、Windows 安装升级和稳定性门禁完成 | 执行 P5-ACC-001 最终发布验收 |
+| PHASE-5 发布与稳定性 | 10% | `BLOCKED` | 80% | 8/10 点完成；发布工程、Windows 安装升级、60 分钟门禁以及最终候选失败关闭审计完成 | 提供签名、双引擎扫描和 Windows 10 最终包证据 |
+| **总体** | **100%** | **`BLOCKED`** | **98%** | PHASE-0 至 PHASE-4 已关闭；P5-ACC 当前主机内工作已完成，外部发布门禁缺失 | 解阻后执行最终签名包审计与人工发布清单 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -109,7 +126,7 @@ resume_instruction: "执行 P5-ACC-001：汇总最终发布清单、签名就绪
 | P5-ENG-001 | 建立可复现发布构建、版本元数据与供应链扫描 | 3 | P4-ACC-001 | `DONE` | [验证记录](validation/2026-07-22-p5-release-engineering.md)：双次 production EXE hash/size 一致；版本/commit/工具链/schema 诊断身份、250 组件 SBOM/许可证、锁定 FFmpeg、最终暂存快照 389 文件零命中扫描、CSP 与 tag 发布作业完成 | 执行 P5-WIN-001 |
 | P5-WIN-001 | 完成安装、升级、卸载与数据库回滚矩阵 | 3 | P5-ENG-001 | `DONE` | [验证记录](validation/2026-07-22-p5-windows-installation.md)：独立 NSIS 安装器与离线回滚工具完成；隔离 fresh/upgrade/preserve/confirm-purge/WebView2 6/6、数据库 v5→v6→v5 与严格反例、全量 Go/前端/构建门禁通过 | 执行 P5-STB-001 |
 | P5-STB-001 | 完成 60 分钟稳定性与发布故障门禁 | 2 | P5-WIN-001 | `DONE` | [验证记录](validation/2026-07-22-p5-stability.md)：严格 3600 秒、61 个分钟样本、4 房间、13 场次、18984 事件；资源阈值与数据库忙、网络、磁盘满、强制退出恢复通过 | 执行 P5-ACC-001 |
-| P5-ACC-001 | 完成最终发布验收与发布清单 | 2 | P5-STB-001 | `READY` | 发布工程、安装升级及 60 分钟稳定性门禁均已完成 | 汇总签名就绪、病毒扫描、校验和、已知限制与人工验收 |
+| P5-ACC-001 | 完成最终发布验收与发布清单 | 2 | P5-STB-001 | `BLOCKED` | [验收记录](validation/2026-07-22-p5-final-release-acceptance.md)：用户/隐私/限制/发布清单、15 文件候选、安装矩阵 6/6 与机器失败关闭审计完成；缺少签名、双引擎扫描和 Windows 10 最终包证据 | 提供三个外部证据后运行最终签名包审计与人工验收 |
 
 阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点且已完成；P4 共 20 点且已完成；P5 共 10 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
 
@@ -146,6 +163,7 @@ resume_instruction: "执行 P5-ACC-001：汇总最终发布清单、签名就绪
 
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
+| 2026-07-22 22:38 | P5-ACC-001 | `BLOCKED` | 新增用户指南、隐私、已知限制、正式发布清单和 `P5-ACC-001/v1` 机器审计；四文档进入 release manifest/NSIS，最终暂存快照 dirty 候选构建通过（250 组件、406 文件零敏感命中），安装矩阵 6/6；审计精确拒绝 dirty/未签名/无双引擎扫描/无 Windows 10 证据，当前主机无 signtool/证书且 Defender 扫描返回 0x80004005，没有冒充完成 | 提供受控签名、最终 manifest 双引擎扫描和 Windows 10 x64 最终签名包证据后复验 |
 | 2026-07-22 22:06 | P5-STB-001 | `DONE` | 新增严格 `p5stbacceptance` 夹具和可复用 PowerShell 控制器；真实运行 3600 秒、61 个分钟样本、4 房间、13 场次、18984 事件，CPU 0.235%、工作集峰值 67682304 字节、句柄峰值 224、goroutine 峰值 15、WAL 峰值 4255992 字节；数据库忙队列峰值 26 后恢复，网络中断/恢复、退出码 93 强制退出恢复与 Windows 磁盘满分类通过；结果 SHA-256 `b0edc69d6f6b46d16afa7b1da24adaba344ccd02753ac7a4709dc0d4c0cbd5d9` | 执行 P5-ACC-001 最终发布验收与发布清单 |
 | 2026-07-22 18:25 | P5-WIN-001 | `DONE` | 新增当前用户范围 Windows x64 NSIS 安装器、锁定 FFmpeg/ffprobe、离线数据库回滚工具和安装回滚说明；隔离矩阵 fresh install、覆盖升级、默认卸载保留数据、单确认拒绝、双确认清理、WebView2 缺失 6/6 通过，数据库 v5→v6→v5 及外部路径、活动 sidecar、损坏备份反例通过；全量 Go test/vet/build、前端 36 项测试/typecheck/build 与最终发布构建通过，race 因 CGO/GCC 不可用未启动 | 执行 P5-STB-001 60 分钟多房间稳定性与发布故障门禁 |
 | 2026-07-22 15:10 | P5-ENG-001 | `DONE` | 建立严格版本注入、FFmpeg 8.1.2 来源/归档/二进制 hash 锁、双构建可复现断言、产物 manifest、SPDX 2.3 SBOM、许可证与 notices、跟踪文件敏感扫描、CSP 安全头和 GitHub Windows tag 发布作业；移除无许可证 Tikhub 客户端依赖并保留协议回归。双次 EXE 48,669,184 字节且 SHA-256 完全一致，250 组件、最终暂存快照 389 文件、0 命中；Go 全量 test/vet/build 与前端 36 测试/typecheck/build 通过，race 因 CGO/GCC 不可用未启动 | 执行 P5-WIN-001 Windows x64 安装、升级、卸载、WebView2 与数据库回滚矩阵 |

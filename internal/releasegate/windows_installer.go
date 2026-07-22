@@ -61,6 +61,10 @@ func buildWindowsInstaller(root, outDir, installer, desktop, rollback, version s
 		"ARG_SBOM_FILE":          filepath.Join(outDir, "sbom.spdx.json"),
 		"ARG_FFMPEG_LOCK":        filepath.Join(outDir, "ffmpeg-windows-amd64.lock.json"),
 		"ARG_INSTALLATION_GUIDE": filepath.Join(outDir, "INSTALLATION.md"),
+		"ARG_USER_GUIDE":         filepath.Join(outDir, "USER-GUIDE.md"),
+		"ARG_PRIVACY_GUIDE":      filepath.Join(outDir, "PRIVACY.md"),
+		"ARG_LIMITATIONS_GUIDE":  filepath.Join(outDir, "KNOWN-LIMITATIONS.md"),
+		"ARG_RELEASE_CHECKLIST":  filepath.Join(outDir, "RELEASE-CHECKLIST.md"),
 		"ARG_INSTALLER_OUTPUT":   installer,
 		"INFO_PRODUCTVERSION":    version,
 	})
@@ -100,6 +104,8 @@ func installerArguments(defines map[string]string) []string {
 		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT",
+		"ARG_USER_GUIDE", "ARG_PRIVACY_GUIDE", "ARG_LIMITATIONS_GUIDE",
+		"ARG_RELEASE_CHECKLIST",
 	}
 	arguments := []string{"/WX", "/INPUTCHARSET", "UTF8"}
 	for _, name := range order {

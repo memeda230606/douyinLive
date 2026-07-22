@@ -111,6 +111,10 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 		"ARG_SBOM_FILE":          `D:\out\sbom.spdx.json`,
 		"ARG_FFMPEG_LOCK":        `D:\out\ffmpeg.lock.json`,
 		"ARG_INSTALLATION_GUIDE": `D:\out\INSTALLATION.md`,
+		"ARG_USER_GUIDE":         `D:\out\USER-GUIDE.md`,
+		"ARG_PRIVACY_GUIDE":      `D:\out\PRIVACY.md`,
+		"ARG_LIMITATIONS_GUIDE":  `D:\out\KNOWN-LIMITATIONS.md`,
+		"ARG_RELEASE_CHECKLIST":  `D:\out\RELEASE-CHECKLIST.md`,
 		"ARG_INSTALLER_OUTPUT":   `D:\out\installer.exe`,
 		"INFO_PRODUCTVERSION":    "0.1.0",
 	}
@@ -124,6 +128,8 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT", "INFO_PRODUCTVERSION",
+		"ARG_USER_GUIDE", "ARG_PRIVACY_GUIDE", "ARG_LIMITATIONS_GUIDE",
+		"ARG_RELEASE_CHECKLIST",
 	} {
 		if !strings.Contains(strings.Join(first, "\n"), "-D"+required+"=") {
 			t.Fatalf("installer arguments are missing %s", required)

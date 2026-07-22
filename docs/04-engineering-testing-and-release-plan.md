@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：P5-STB-001 60 分钟资源与故障稳定性门禁已关闭，项目总进度 98%，当前进入 P5-ACC-001 最终发布验收。
-> 最近验收：[P5 稳定性与发布故障验证](validation/2026-07-22-p5-stability.md)
+> 实施状态（2026-07-22）：P5-ACC-001 已完成当前主机内候选构建、用户文档、安装矩阵和失败关闭审计；项目保持 98% `BLOCKED`，等待代码签名、双引擎病毒扫描和 Windows 10 最终签名包证据。
+> 最近验收：[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)
 
 ## 1. 目标
 
@@ -178,6 +178,13 @@ wails build -clean
 - 数据库 `BEGIN IMMEDIATE` 忙门禁期间事件队列瞬时峰值 26，释放唯一连接后数据库可用且最终事件持久化；合成网络连接中断后观察到 `RECONNECTING` 并恢复 `LIVE`；子测试进程以退出码 93 强制结束后，同一数据根重启恢复活动场次为 0。
 - Windows FFmpeg 磁盘满文本 `There is not enough space on the disk` 与通用 `Disk full` 现在稳定映射 `RECORDER_LOCAL_RESOURCE`，与既有永久本地资源错误“不重试录制但继续消息链路”回归共同通过；不泛化匹配未知数字错误。
 - 结果 JSON SHA-256 为 `b0edc69d6f6b46d16afa7b1da24adaba344ccd02753ac7a4709dc0d4c0cbd5d9`；严格夹具只含合成数据，结果复核后删除独立运行根。race 仍因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 稳定性验证记录](validation/2026-07-22-p5-stability.md)。
+### 7.10 P5 最终发布验收状态（2026-07-22）
+
+- 发布包新增并强制携带用户指南、隐私说明、已知限制和正式发布清单；`P5-ACC-001/v1` 审计复核 clean/reproducible、版本/commit、manifest 文件 hash/size、签名/时间戳、双引擎扫描和 Windows 10 证据。
+- 最终暂存快照的 dirty 开发候选成功生成 15 个文件，250 组件、406 个跟踪文本文件零敏感命中；新增文档进入 manifest 和 NSIS，安装矩阵仍为 6/6。
+- 当前三个 EXE 均为 `NotSigned`，OpenSSH 会话没有 `signtool` 或可用代码签名证书；Defender 被第三方杀毒接管，命令行扫描返回 `0x80004005`；没有 Windows 10 x64 最终包结果。
+- 机器审计精确返回 `BUILD_NOT_CLEAN_REPRODUCIBLE`、`CODE_SIGNING_MISSING`、`ANTIVIRUS_EVIDENCE_MISSING`、`WINDOWS10_EVIDENCE_MISSING`，没有把缺失证据冒充为通过。提交后 clean build 可消除第一项，其余三项需要外部环境。
+- 正式标签作业在上传任何桌面 evidence/Release 附件前强制有效 Authenticode+时间戳和启用状态下的 Defender 扫描；受控签名阶段未配置前发布失败关闭。完整事实见[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)。
 
 ## 8. 测试夹具
 

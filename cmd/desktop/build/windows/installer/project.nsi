@@ -118,6 +118,18 @@ RequestExecutionLevel user
 !ifndef ARG_INSTALLATION_GUIDE
     !error "ARG_INSTALLATION_GUIDE is required"
 !endif
+!ifndef ARG_USER_GUIDE
+    !error "ARG_USER_GUIDE is required"
+!endif
+!ifndef ARG_PRIVACY_GUIDE
+    !error "ARG_PRIVACY_GUIDE is required"
+!endif
+!ifndef ARG_LIMITATIONS_GUIDE
+    !error "ARG_LIMITATIONS_GUIDE is required"
+!endif
+!ifndef ARG_RELEASE_CHECKLIST
+    !error "ARG_RELEASE_CHECKLIST is required"
+!endif
 !ifndef ARG_INSTALLER_OUTPUT
     !define ARG_INSTALLER_OUTPUT "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe"
 !endif
@@ -187,6 +199,10 @@ Section "Install ${INFO_PRODUCTNAME}" SecInstall
     File "/oname=sbom.spdx.json" "${ARG_SBOM_FILE}"
     File "/oname=ffmpeg-windows-amd64.lock.json" "${ARG_FFMPEG_LOCK}"
     File "/oname=INSTALLATION.md" "${ARG_INSTALLATION_GUIDE}"
+    File "/oname=USER-GUIDE.md" "${ARG_USER_GUIDE}"
+    File "/oname=PRIVACY.md" "${ARG_PRIVACY_GUIDE}"
+    File "/oname=KNOWN-LIMITATIONS.md" "${ARG_LIMITATIONS_GUIDE}"
+    File "/oname=RELEASE-CHECKLIST.md" "${ARG_RELEASE_CHECKLIST}"
 
     SetOutPath $INSTDIR
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"

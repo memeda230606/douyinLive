@@ -22,7 +22,9 @@ foreach ($required in @(
     [IO.Path]::Combine($releaseRoot, 'licenses.json'),
     [IO.Path]::Combine($releaseRoot, 'THIRD-PARTY-NOTICES.txt'),
     [IO.Path]::Combine($releaseRoot, 'sbom.spdx.json'),
-    $lockPath, [IO.Path]::Combine($releaseRoot, 'INSTALLATION.md')
+    $lockPath, [IO.Path]::Combine($releaseRoot, 'INSTALLATION.md'),
+    [IO.Path]::Combine($releaseRoot, 'USER-GUIDE.md'), [IO.Path]::Combine($releaseRoot, 'PRIVACY.md'),
+    [IO.Path]::Combine($releaseRoot, 'KNOWN-LIMITATIONS.md'), [IO.Path]::Combine($releaseRoot, 'RELEASE-CHECKLIST.md')
 )) {
     if (-not [IO.File]::Exists($required)) { throw "Required matrix input is missing: $required" }
 }
@@ -98,6 +100,10 @@ function New-MatrixInstaller {
         ARG_SBOM_FILE = [IO.Path]::Combine($releaseRoot, 'sbom.spdx.json')
         ARG_FFMPEG_LOCK = $lockPath
         ARG_INSTALLATION_GUIDE = [IO.Path]::Combine($releaseRoot, 'INSTALLATION.md')
+        ARG_USER_GUIDE = [IO.Path]::Combine($releaseRoot, 'USER-GUIDE.md')
+        ARG_PRIVACY_GUIDE = [IO.Path]::Combine($releaseRoot, 'PRIVACY.md')
+        ARG_LIMITATIONS_GUIDE = [IO.Path]::Combine($releaseRoot, 'KNOWN-LIMITATIONS.md')
+        ARG_RELEASE_CHECKLIST = [IO.Path]::Combine($releaseRoot, 'RELEASE-CHECKLIST.md')
         ARG_INSTALLER_OUTPUT = $Output
         DOUYINLIVE_DATA_ROOT = $dataRoot
         INFO_PROJECTNAME = $productName
@@ -123,7 +129,8 @@ function Assert-InstalledPayload {
         'ffmpeg\ffmpeg.exe', 'ffmpeg\ffprobe.exe', 'licenses\LICENSE.txt',
         'licenses\licenses.json', 'licenses\THIRD-PARTY-NOTICES.txt',
         'licenses\sbom.spdx.json', 'licenses\ffmpeg-windows-amd64.lock.json',
-        'licenses\INSTALLATION.md'
+        'licenses\INSTALLATION.md', 'licenses\USER-GUIDE.md', 'licenses\PRIVACY.md',
+        'licenses\KNOWN-LIMITATIONS.md', 'licenses\RELEASE-CHECKLIST.md'
     )) {
         if (-not [IO.File]::Exists([IO.Path]::Combine($installRoot, $relative))) {
             throw "Installed payload is missing $relative."
