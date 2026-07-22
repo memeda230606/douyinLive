@@ -140,7 +140,10 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 		return fmt.Errorf("initialize playback service: %w", err)
 	}
 	analysisService, err := analysis.NewServiceWithOptions(
-		store.Writer(), store.Reader(), analysis.ServiceOptions{ASRProvider: options.ASRProvider},
+		store.Writer(), store.Reader(), analysis.ServiceOptions{
+			ASRProvider: options.ASRProvider,
+			ExportRoot:  layout.ExportsDir,
+		},
 	)
 	if err != nil {
 		_ = store.Close()

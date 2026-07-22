@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, BarChart3, Clock3, MicOff, Play, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, BarChart3, Clock3, Download, MicOff, Play, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { userFacingError } from '../../lib/desktop'
 import { listPlaybackSessions } from '../sessions/api'
-import { analyzeSession, getAnalysisReport, getASRStatus } from './api'
+import { analyzeSession, exportAnalysisReport, getAnalysisReport, getASRStatus } from './api'
 import type { AnalysisCandidate, AnalysisReport } from './contracts'
 
 const warningLabels: Record<string, string> = {
@@ -100,7 +100,11 @@ function ErrorState({ title, error }: { title: string; error: unknown }) {
 
 function ReportView({ report, onOpenPlayback, onRegenerate, regenerating }: { report: AnalysisReport; onOpenPlayback: (sessionId: string, offsetMs: number) => void; onRegenerate: () => void; regenerating: boolean }) {
   const points = useMemo(() => downsample(report), [report])
+  const [includeText, setIncludeText] = useState(false)
   const maximum = Math.max(1, ...points.map((bucket) => bucket.chatCount + bucket.likeDelta + bucket.giftCount))
+  const exportMutation = useMutation({
+    mutationFn: () => exportAnalysisReport(report.sessionId, includeText),
+  })
   return <>
     <section className="analysis-summary" aria-label="分析摘要">
       <SummaryCard label="弹幕" value={report.summary.totals.chatCount} detail={`${report.summary.totals.uniqueChatters} 位发言用户`} />
@@ -123,6 +127,16 @@ function ReportView({ report, onOpenPlayback, onRegenerate, regenerating }: { re
       <CandidateList title="互动峰值" icon={<BarChart3 aria-hidden="true" />} candidates={report.peaks} report={report} onOpenPlayback={onOpenPlayback} />
       <CandidateList title="互动低谷" icon={<Clock3 aria-hidden="true" />} candidates={report.troughs} report={report} onOpenPlayback={onOpenPlayback} />
     </div>
+
+    <section className="analysis-export" aria-label="导出分析报告">
+      <div><p className="eyebrow">隐私导出</p><h2>CSV / JSON 报告包</h2><p>默认排除昵称、弹幕正文、转写正文、平台标识、媒体路径、摘要、Cookie、流地址与签名。</p></div>
+      <label><input checked={includeText} onChange={(event) => setIncludeText(event.target.checked)} type="checkbox" />显式包含弹幕与转写正文（可能含个人数据）</label>
+      <button className="button button--primary" disabled={exportMutation.isPending} onClick={() => exportMutation.mutate()} type="button">
+        <Download aria-hidden="true" />{exportMutation.isPending ? '正在安全导出…' : '导出 CSV/JSON'}
+      </button>
+      {exportMutation.data && <p className="analysis-export__success" aria-live="polite"><ShieldCheck aria-hidden="true" />已写入应用导出目录：{exportMutation.data.directoryName}（{exportMutation.data.files.length} 个文件）</p>}
+      {exportMutation.isError && <p className="timeline-error" role="alert"><AlertTriangle aria-hidden="true" />{userFacingError(exportMutation.error)}</p>}
+    </section>
 
     <footer className="analysis-version"><code>{report.analysisVersion}</code><span>算法 {report.algorithmVersion} · 完成于 {formatDate(report.completedAt)}</span><button className="button button--secondary" disabled={regenerating} onClick={onRegenerate} type="button">{regenerating ? '正在校验输入…' : '重新分析'}</button></footer>
   </>

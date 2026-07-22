@@ -32,6 +32,16 @@ func (a *DesktopApp) GetASRStatus() (analysis.ASRStatusDTO, error) {
 	return service.GetASRStatus(a.application.Context())
 }
 
+// ExportAnalysisReport writes a privacy-gated package beneath the application
+// export root. No absolute path, media path, or source digest crosses Wails.
+func (a *DesktopApp) ExportAnalysisReport(request analysis.ExportRequest) (analysis.ExportResultDTO, error) {
+	service, err := a.analysisService()
+	if err != nil {
+		return analysis.ExportResultDTO{}, err
+	}
+	return service.ExportAnalysis(a.application.Context(), request)
+}
+
 func (a *DesktopApp) analysisService() (*analysis.Service, error) {
 	service := a.application.AnalysisService()
 	if service == nil {

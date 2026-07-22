@@ -71,6 +71,33 @@ export const analysisReportSchema = z.object({
   if (value.completedAt < value.startedAt) context.addIssue({ code: 'custom', message: '报告完成时间不合法' })
 })
 
+const exportFileNames = ['events.csv', 'metric-buckets.csv', 'transcripts.csv', 'media-segments.csv', 'manifest.json'] as const
+
+export const analysisExportResultSchema = z.object({
+	version: z.literal(1),
+	exportId: uuid,
+	directoryName: z.string().regex(/^analysis-[0-9a-f-]{36}-[0-9a-f-]{36}$/),
+	generatedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+	includeText: z.boolean(),
+	files: z.array(z.object({
+		name: z.enum(exportFileNames),
+		mediaType: z.enum(['text/csv; charset=utf-8', 'application/json']),
+		rowCount: nonnegativeInteger,
+		sizeBytes: nonnegativeInteger,
+		sha256: z.string().regex(/^[0-9a-f]{64}$/),
+	}).strict()).length(5),
+}).strict().superRefine((value, context) => {
+	const names = value.files.map((file) => file.name)
+	if (names.some((name, index) => name !== exportFileNames[index])) {
+		context.addIssue({ code: 'custom', message: '导出文件清单顺序不合法' })
+	}
+	value.files.forEach((file, index) => {
+		const expected = index === exportFileNames.length - 1 ? 'application/json' : 'text/csv; charset=utf-8'
+		if (file.mediaType !== expected) context.addIssue({ code: 'custom', message: '导出文件类型不合法' })
+	})
+})
+
 export type AnalysisReport = z.infer<typeof analysisReportSchema>
 export type AnalysisCandidate = z.infer<typeof candidateSchema>
 export type ASRStatus = z.infer<typeof asrStatusSchema>
+export type AnalysisExportResult = z.infer<typeof analysisExportResultSchema>

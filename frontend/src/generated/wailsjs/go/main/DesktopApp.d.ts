@@ -14,6 +14,8 @@ export function CreateRoom(arg1:room.CreateRoomInput):Promise<room.RoomConfig>;
 
 export function DeleteRoom(arg1:string,arg2:boolean):Promise<void>;
 
+export function ExportAnalysisReport(arg1:analysis.ExportRequest):Promise<analysis.ExportResultDTO>;
+
 export function GetASRStatus():Promise<analysis.ASRStatusDTO>;
 
 export function GetAnalysisReport(arg1:string):Promise<analysis.ReportDTO>;

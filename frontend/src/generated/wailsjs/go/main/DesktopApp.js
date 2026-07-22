@@ -18,6 +18,10 @@ export function DeleteRoom(arg1, arg2) {
   return window['go']['main']['DesktopApp']['DeleteRoom'](arg1, arg2);
 }
 
+export function ExportAnalysisReport(arg1) {
+  return window['go']['main']['DesktopApp']['ExportAnalysisReport'](arg1);
+}
+
 export function GetASRStatus() {
   return window['go']['main']['DesktopApp']['GetASRStatus']();
 }

@@ -104,6 +104,80 @@ export namespace analysis {
 		    return a;
 		}
 	}
+	export class ExportFileDTO {
+	    name: string;
+	    mediaType: string;
+	    rowCount: number;
+	    sizeBytes: number;
+	    sha256: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ExportFileDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.mediaType = source["mediaType"];
+	        this.rowCount = source["rowCount"];
+	        this.sizeBytes = source["sizeBytes"];
+	        this.sha256 = source["sha256"];
+	    }
+	}
+	export class ExportRequest {
+	    sessionId: string;
+	    includeText: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new ExportRequest(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
+	        this.includeText = source["includeText"];
+	    }
+	}
+	export class ExportResultDTO {
+	    version: number;
+	    exportId: string;
+	    directoryName: string;
+	    generatedAt: string;
+	    includeText: boolean;
+	    files: ExportFileDTO[];
+
+	    static createFrom(source: any = {}) {
+	        return new ExportResultDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.exportId = source["exportId"];
+	        this.directoryName = source["directoryName"];
+	        this.generatedAt = source["generatedAt"];
+	        this.includeText = source["includeText"];
+	        this.files = this.convertValues(source["files"], ExportFileDTO);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class MetricBucketDTO {
 	    bucketStartMs: number;
 	    bucketSizeMs: number;

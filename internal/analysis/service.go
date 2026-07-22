@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,16 +20,21 @@ const (
 )
 
 type ServiceOptions struct {
-	Now         func() time.Time
-	ASRProvider ASRProvider
+	Now                 func() time.Time
+	ASRProvider         ASRProvider
+	ExportRoot          string
+	beforeExportPublish func() error
 }
 
 type Service struct {
-	writer      *sql.DB
-	reader      *sql.DB
-	now         func() time.Time
-	asrProvider ASRProvider
-	mu          sync.Mutex
+	writer              *sql.DB
+	reader              *sql.DB
+	now                 func() time.Time
+	asrProvider         ASRProvider
+	mu                  sync.Mutex
+	exportMu            sync.Mutex
+	exportRoot          string
+	beforeExportPublish func() error
 }
 
 type persistedCandidates struct {
@@ -52,7 +58,16 @@ func NewServiceWithOptions(writer, reader *sql.DB, options ServiceOptions) (*Ser
 	if err != nil {
 		return nil, err
 	}
-	return &Service{writer: writer, reader: reader, now: options.Now, asrProvider: provider}, nil
+	exportRoot := ""
+	if options.ExportRoot != "" {
+		exportRoot, err = filepath.Abs(options.ExportRoot)
+		if err != nil {
+			return nil, ErrInvalidArgument
+		}
+		exportRoot = filepath.Clean(exportRoot)
+	}
+	return &Service{writer: writer, reader: reader, now: options.Now, asrProvider: provider,
+		exportRoot: exportRoot, beforeExportPublish: options.beforeExportPublish}, nil
 }
 
 func (s *Service) AnalyzeSession(ctx context.Context, request AnalyzeRequest) (ReportDTO, error) {
@@ -153,12 +168,25 @@ func (s *Service) GetAnalysisReport(ctx context.Context, sessionID string) (Repo
 	return s.getReportByID(ctx, sessionID, reportID)
 }
 
+type analysisQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 func (s *Service) getReportByID(ctx context.Context, sessionID, reportID string) (ReportDTO, error) {
+	return getReportByIDFrom(ctx, s.reader, sessionID, reportID)
+}
+
+func getReportByIDFrom(
+	ctx context.Context,
+	reader analysisQueryer,
+	sessionID, reportID string,
+) (ReportDTO, error) {
 	var (
 		status, analysisVersion, summaryText, candidatesText string
 		startedAt, completedAt                               sql.NullInt64
 	)
-	err := s.reader.QueryRowContext(ctx, `SELECT status, analysis_version,
+	err := reader.QueryRowContext(ctx, `SELECT status, analysis_version,
 		summary_json, highlights_json, started_at, completed_at
 		FROM analysis_reports WHERE id = ? AND session_id = ?`, reportID, sessionID).Scan(
 		&status, &analysisVersion, &summaryText, &candidatesText, &startedAt, &completedAt,
@@ -182,7 +210,7 @@ func (s *Service) getReportByID(ctx context.Context, sessionID, reportID string)
 	if err := strictJSON(candidatesText, &candidates); err != nil {
 		return ReportDTO{}, err
 	}
-	buckets, err := loadMetricBuckets(ctx, s.reader, sessionID, analysisVersion)
+	buckets, err := loadMetricBuckets(ctx, reader, sessionID, analysisVersion)
 	if err != nil {
 		return ReportDTO{}, err
 	}
@@ -282,7 +310,7 @@ func loadComputationInput(ctx context.Context, tx *sql.Tx, sessionID string) (co
 	return input, nil
 }
 
-func loadMetricBuckets(ctx context.Context, reader *sql.DB, sessionID, analysisVersion string) ([]MetricBucketDTO, error) {
+func loadMetricBuckets(ctx context.Context, reader analysisQueryer, sessionID, analysisVersion string) ([]MetricBucketDTO, error) {
 	rows, err := reader.QueryContext(ctx, `SELECT bucket_start_ms, bucket_size_ms,
 		chat_count, unique_chatters, like_delta, gift_count, gift_value,
 		follow_count, enter_count, active_users, message_total, completeness

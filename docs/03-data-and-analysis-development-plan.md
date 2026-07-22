@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-21）：P4-ASR-001 已完成可替换 provider、disabled 默认、脱敏状态合同和未配置/不可用降级；项目总进度 84%，下一任务为 P4-EXP-001。
+> 实施状态（2026-07-22）：P4-EXP-001 已完成版本化 CSV/JSON 报告包、限界原子写入与默认隐私门禁；项目总进度 88%，下一任务为 P4-ACC-001。
 > 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
 
 ## 1. 目标与原则
@@ -447,6 +447,14 @@ type ASRProvider interface {
 - JSON：使用版本化 manifest，时间为 ISO 8601 UTC + 毫秒偏移。
 - 报告可导出 HTML/JSON；首版不要求 PDF。
 - 默认导出哈希用户 ID，不导出原始平台 ID、Cookie、流 URL 或签名。
+
+### 10.1.1 P4-EXP-001 实施结果（2026-07-22）
+
+- `analysis-export/v1` manifest 只记录脱敏场次元数据、报告摘要/候选、UTC 毫秒时间、固定隐私声明和四个 CSV 的行数、大小、SHA-256；随机 export ID 与目录名不进入 manifest，因此同一快照与固定生成时刻可字节级重复。
+- `events.csv`、`metric-buckets.csv`、`transcripts.csv`、`media-segments.csv` 均使用固定列序、稳定排序和 UTF-8 BOM；事件、桶、转写同时给出 UTC 与场次毫秒偏移，媒体清单不包含相对路径、root、attempt 或摘要。
+- 导出只允许应用 `exports` 根：Go 1.26 `os.Root` 持有根句柄并限制所有相对操作，唯一临时目录内文件使用 `O_EXCL`、逐文件 `Sync`，全部成功后同根原子重命名；失败和取消删除未发布目录，底层路径错误折叠为稳定错误码。
+- 默认 `includeText=false`，昵称、弹幕正文、转写正文、平台消息/房间 ID、data/raw/media 路径、normalized/raw payload、媒体与音频摘要、Cookie、流 URL 和签名不进入包；显式包含正文时，对去除前导空白后以 `= + - @` 开头的字段加前导单引号，避免表格公式注入。
+- Wails 只返回 version、UUIDv7 export ID、不透明目录名、生成时间、正文选择和固定五文件元数据；React 以 strict Zod v1 合同拒绝绝对路径、未知文件、顺序或媒体类型漂移，并在导出前明确包含/排除范围。
 
 ### 10.2 备份
 

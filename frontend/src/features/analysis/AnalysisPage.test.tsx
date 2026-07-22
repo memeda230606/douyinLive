@@ -37,6 +37,18 @@ describe('AnalysisPage', () => {
     vi.mocked(api.getAnalysisReport).mockResolvedValue(report)
     vi.mocked(api.analyzeSession).mockResolvedValue(report)
     vi.mocked(api.getASRStatus).mockResolvedValue({ version: 1, providerId: 'disabled', state: 'disabled', configured: false, available: false, errorCode: 'ASR_NOT_CONFIGURED' })
+    vi.mocked(api.exportAnalysisReport).mockResolvedValue({
+      version: 1, exportId: '019aa000-0000-7000-8000-000000000010',
+      directoryName: 'analysis-019aa000-0000-7000-8000-000000000002-019aa000-0000-7000-8000-000000000010',
+      generatedAt: '2026-07-22T08:00:00.000Z', includeText: true,
+      files: [
+        { name: 'events.csv', mediaType: 'text/csv; charset=utf-8', rowCount: 1, sizeBytes: 100, sha256: 'a'.repeat(64) },
+        { name: 'metric-buckets.csv', mediaType: 'text/csv; charset=utf-8', rowCount: 2, sizeBytes: 100, sha256: 'b'.repeat(64) },
+        { name: 'transcripts.csv', mediaType: 'text/csv; charset=utf-8', rowCount: 0, sizeBytes: 100, sha256: 'c'.repeat(64) },
+        { name: 'media-segments.csv', mediaType: 'text/csv; charset=utf-8', rowCount: 1, sizeBytes: 100, sha256: 'd'.repeat(64) },
+        { name: 'manifest.json', mediaType: 'application/json', rowCount: 1, sizeBytes: 100, sha256: 'e'.repeat(64) },
+      ],
+    })
   })
 
   it('renders summary, quality warning, version and jumps a highlight into playback', async () => {
@@ -75,5 +87,16 @@ describe('AnalysisPage', () => {
     renderPage()
     expect(await screen.findByRole('heading', { name: '十秒指标分桶' })).toBeInTheDocument()
     expect(screen.queryByLabelText('转写能力状态')).not.toBeInTheDocument()
+  })
+
+  it('defaults to privacy-safe export and requires an explicit text opt-in', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    expect(await screen.findByRole('heading', { name: 'CSV / JSON 报告包' })).toBeInTheDocument()
+    expect(screen.getByText(/默认排除昵称、弹幕正文、转写正文/)).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: /显式包含弹幕与转写正文/ }))
+    await user.click(screen.getByRole('button', { name: '导出 CSV/JSON' }))
+    expect(api.exportAnalysisReport).toHaveBeenCalledWith(sessionId, true)
+    expect(await screen.findByText(/已写入应用导出目录/)).toHaveTextContent('5 个文件')
   })
 })
