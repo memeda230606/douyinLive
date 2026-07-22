@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：P5-WIN-001 Windows 安装升级门禁已关闭，项目总进度 96%，当前进入 P5-STB-001 60 分钟稳定性门禁。
-> 最近验收：[P5 Windows 安装升级验证](validation/2026-07-22-p5-windows-installation.md)
+> 实施状态（2026-07-22）：P5-STB-001 60 分钟资源与故障稳定性门禁已关闭，项目总进度 98%，当前进入 P5-ACC-001 最终发布验收。
+> 最近验收：[P5 稳定性与发布故障验证](validation/2026-07-22-p5-stability.md)
 
 ## 1. 目标
 
@@ -169,6 +169,15 @@ wails build -clean
 - 默认卸载不删除 `%LOCALAPPDATA%\DouyinLive` 业务数据，静默卸载没有数据删除开关；不可恢复删除只在交互式可选节经第二次确认执行。测试专用直达分支不编译进生产安装器。
 - 新增 `douyin-live-dbrollback.exe` 和严格 `storage.RestoreBackup`：只接受数据根内合法一致备份，拒绝外部/链接/损坏/较新 schema 与活动 WAL/SHM，原子保留当前库后发布备份，失败恢复原库。v5→v6→v5 真实回滚与反例门禁通过。
 - `go test ./...`、`go vet ./...`、`go build ./...`、前端 10 文件 36 项测试/typecheck/build、双次 production Wails 可复现构建和最终 NSIS 构建通过；race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 Windows 安装升级验证记录](validation/2026-07-22-p5-windows-installation.md)。
+
+### 7.9 P5 稳定性与发布故障验证证据（2026-07-22）
+
+- `p5stbacceptance` 正式门禁必须由进程级 `P5STB_RUN_60M=1` 显式授权，固定运行 3600 秒并原子生成 `P5-STB-001/v1` 结果；本次 `P5STB_60M_RUNNING/PASSED` 齐全，测试体耗时 3601.37 秒，61 个分钟样本全部有效。
+- 4 个合成直播间中 2 个持续等待、2 个周期模拟开播/下播，共形成 13 个真实 SQLite 场次和 18984 条持久化事件；状态发布 P95 延迟 0 ms，分钟采样事件队列均回到 0。
+- 资源证据：平均 CPU 0.235%；工作集 36409344→62525440 字节、峰值 67682304；私有内存峰值 101707776；句柄 191→222、峰值 224；goroutine 10→11、峰值 15；WAL 峰值 4255992 字节，无超过阈值或持续失控增长。
+- 数据库 `BEGIN IMMEDIATE` 忙门禁期间事件队列瞬时峰值 26，释放唯一连接后数据库可用且最终事件持久化；合成网络连接中断后观察到 `RECONNECTING` 并恢复 `LIVE`；子测试进程以退出码 93 强制结束后，同一数据根重启恢复活动场次为 0。
+- Windows FFmpeg 磁盘满文本 `There is not enough space on the disk` 与通用 `Disk full` 现在稳定映射 `RECORDER_LOCAL_RESOURCE`，与既有永久本地资源错误“不重试录制但继续消息链路”回归共同通过；不泛化匹配未知数字错误。
+- 结果 JSON SHA-256 为 `b0edc69d6f6b46d16afa7b1da24adaba344ccd02753ac7a4709dc0d4c0cbd5d9`；严格夹具只含合成数据，结果复核后删除独立运行根。race 仍因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 稳定性验证记录](validation/2026-07-22-p5-stability.md)。
 
 ## 8. 测试夹具
 

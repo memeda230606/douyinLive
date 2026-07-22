@@ -1434,7 +1434,10 @@ func classifyRecorderExit(summary string) string {
 		return RecorderNetworkFailureErrorCode
 	case containsRecorderExitMarker(normalized, "invalid data", "unsupported"):
 		return RecorderUnsupportedInputErrorCode
-	case containsRecorderExitMarker(normalized, "no space left on device", "permission denied"):
+	case containsRecorderExitMarker(normalized,
+		"no space left on device", "disk full",
+		"not enough space on the disk", "there is not enough space on the disk",
+		"permission denied"):
 		return RecorderLocalResourceErrorCode
 	case containsRecorderExitMarker(normalized,
 		".dll", "shared library", "shared libraries", "error while loading",

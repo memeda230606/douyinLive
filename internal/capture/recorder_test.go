@@ -497,6 +497,16 @@ func TestClassifyRecorderExitWindowsNetworkErrors(t *testing.T) {
 			summary: "Server returned 403 Forbidden; Error number -10054 occurred",
 			want:    RecorderStreamExpiredErrorCode,
 		},
+		{
+			name:    "windows_disk_full_text",
+			summary: "av_interleaved_write_frame(): There is not enough space on the disk",
+			want:    RecorderLocalResourceErrorCode,
+		},
+		{
+			name:    "generic_disk_full_text",
+			summary: "Error writing trailer: Disk full",
+			want:    RecorderLocalResourceErrorCode,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
