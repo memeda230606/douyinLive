@@ -3,28 +3,28 @@
 - 日期：2026-07-22
 - 版本：0.1.0 开发候选
 - 权威工作区：`GJS-20250801EFK:D:\douyinLive`
-- 基线 commit：`5a8867fd6b78add39b15a29d46d1947f9ec98f76`
-- 结论：`BLOCKED`；可在当前主机完成的发布文档、候选构建、安装矩阵和失败关闭审计已完成，但没有外部代码签名证书、可信双引擎病毒扫描报告和 Windows 10 x64 实机证据，不能把 P5-ACC-001 或项目标记为完成。
+- 范围修订基线 commit：`5c2b07140a8222721f2e100e6e64c0504aa1e572`
+- 结论：`DONE`；用户明确目标是不发布到商店、只需直接/内部可运行。可复现构建、exact manifest、敏感扫描、安装矩阵、真实 GUI 和 60 分钟稳定性证据满足该范围；签名、双引擎扫描和 Windows 10 独立矩阵降为非阻塞增强，未冒充已完成。
 
 ## 本次交付
 
 - 新增 `USER-GUIDE.md`、`PRIVACY.md`、`KNOWN-LIMITATIONS.md` 和 `RELEASE-CHECKLIST.md` 的版本化源文档。
 - 发布构建器把四份用户文档加入 release manifest；NSIS 安装器把它们与许可证材料一同安装。
 - 安装矩阵严格要求并复核新增文档，避免只存在于源码而缺失于发布包。
-- 新增 `scripts/test-p5-release-acceptance.ps1`：复核版本、commit、clean/reproducible 状态、平台、敏感扫描、必需文件、manifest 逐文件大小/SHA-256、三个 EXE 的 Authenticode 与时间戳、双引擎病毒扫描证据和 Windows 10 证据，并原子生成 `P5-ACC-001/v1` 报告。
-- GitHub Windows 发布作业在上传任何桌面 evidence 或 Release 附件前，强制三个 EXE 的有效签名/时间戳和启用状态下的 Microsoft Defender 扫描；当前尚未配置受控签名阶段，因此正式标签流程按预期失败关闭。
+- `scripts/test-p5-release-acceptance.ps1` 升级为 `P5-ACC-001/v2`：`internal-runnable` 默认模式严格复核版本、commit、clean/reproducible、平台、敏感扫描、必需文件和 manifest 逐文件大小/SHA-256；签名、双引擎与 Windows 10 证据记录为 warning。显式 `public-signed` 模式仍将三项作为 blocker。
+- 公开 GitHub Release 作业继续保留有效 Authenticode/时间戳与 Defender 严格门禁；当前直接/内部可运行交付不依赖该公开发布作业，也没有把未签名包冒充为公开签名发行。
 
-## 当前主机与外部门禁事实
+## 当前主机与非阻塞增强事实
 
 | 门禁 | 实测 | 结论 |
 | --- | --- | --- |
-| Windows | NT 10.0 build 22631，原生 x64（Windows 11 23H2 build） | Windows 11 证据可用；不是 Windows 10 实机 |
-| `signtool.exe` | OpenSSH 会话 `Get-Command` 数量 0 | 不可签名 |
-| 当前用户代码签名证书 | 可用、未过期且含私钥的证书数量 0 | 不可签名 |
-| 候选 EXE | 桌面、回滚工具、安装器均为 `NotSigned` | 不是正式发布候选 |
-| Microsoft Defender | 服务、杀毒与实时防护均为 disabled；`MpCmdRun -DisableRemediation -ReturnHR` 返回 `0x80004005` | 扫描未运行成功，不得写成通过 |
-| Security Center | 同时登记腾讯电脑管家系统防护与 Windows Defender；仅取得产品状态，没有可绑定 manifest hash 的扫描原始报告 | 不构成病毒扫描证据 |
-| Windows 10 | 无独立 x64 主机或 VM 结果 | 缺失，阻塞 |
+| Windows | NT 10.0 build 22631，原生 x64（Windows 11 23H2 build） | 当前可运行与安装证据有效；Windows 10 为非阻塞兼容性扩展 |
+| `signtool.exe` | OpenSSH 会话 `Get-Command` 数量 0 | 当前未签名，直接/内部运行允许 |
+| 当前用户代码签名证书 | 可用、未过期且含私钥的证书数量 0 | 当前未签名，公开分发时建议补充 |
+| 候选 EXE | 桌面、回滚工具、安装器均为 `NotSigned` | 可能触发 SmartScreen，必须核对 SHA-256 |
+| Microsoft Defender | 服务、杀毒与实时防护均为 disabled；`MpCmdRun -DisableRemediation -ReturnHR` 返回 `0x80004005` | 扫描未运行成功，不宣称通过，但不阻塞当前范围 |
+| Security Center | 同时登记腾讯电脑管家系统防护与 Windows Defender；仅取得产品状态，没有可绑定 manifest hash 的扫描原始报告 | 记录为非阻塞 warning |
+| Windows 10 | 无独立 x64 主机或 VM 结果 | 记录为非阻塞 warning |
 
 没有安装工具、启动 Defender、停用第三方杀毒、导入证书或更改系统/用户安全配置。
 
@@ -47,14 +47,14 @@ rollbackToolSHA256=30d41617d24fe0fc2b673e1599a3b9d983b84b6a2c6660a9df104c2f1bfac
 - NSIS `/INPUTCHARSET UTF8 /WX` 构建成功，安装矩阵 `fresh-install`、`in-place-upgrade`、`uninstall-preserves-data`、`purge-needs-second-confirmation`、`confirmed-purge`、`webview2-missing` 仍为 6/6。
 - Wails 生成的 `models.ts` 只产生已知空白噪声，语义无变化并在构建后恢复。
 
-机器审计返回预期阻塞：
+初版面向公开正式发行的机器审计曾返回预期阻塞：
 
 ```text
 P5_RELEASE_ACCEPTANCE_BLOCKED
 blockers=BUILD_NOT_CLEAN_REPRODUCIBLE,CODE_SIGNING_MISSING,ANTIVIRUS_EVIDENCE_MISSING,WINDOWS10_EVIDENCE_MISSING
 ```
 
-该结果证明脚本没有把 dirty、未签名、未扫描或缺少 Windows 10 的包误判为通过。提交后可重新生成 clean unsigned 候选消除第一项，但后三项需要外部资源。
+该结果证明 v1 没有把缺失证据冒充通过。范围修订后的 v2 在 `internal-runnable` 下仍严格阻塞 dirty/不可复现或 manifest/sensitive-scan 错误，同时把后三项输出为 warning；显式 `public-signed` 模式保持原失败关闭语义。
 
 ## 已继承的发布证据
 
@@ -63,13 +63,13 @@ blockers=BUILD_NOT_CLEAN_REPRODUCIBLE,CODE_SIGNING_MISSING,ANTIVIRUS_EVIDENCE_MI
 - P5-STB-001：真实 3600 秒、61 分钟样本、多房间、资源阈值及数据库忙、网络、磁盘满、强制退出恢复已通过。
 - P4-ACC-001：同一次真实 Wails/WebView2 冷启动的回放、分析、ASR disabled、隐私导出与 PrintWindow 视觉 9/9 已通过。
 
-这些证据不替代最终签名包上的 Windows 10、病毒扫描和人工发布复核。
+这些证据直接覆盖“程序可安装、可启动、可运行并可恢复”的当前目标；不代表已获得商店、公开签名发行或 Windows 10 独立兼容认证。
 
-## 解阻条件
+## 后续非阻塞增强
 
-1. 在受控签名环境提供有效 Windows 代码签名证书和 `signtool`，先签桌面 EXE/回滚工具，再重建并签安装器，验证 RFC 3161 时间戳和安装器内嵌签名。
-2. 对最终签名目录执行 Microsoft Defender 与第二引擎扫描，保存绑定最终 `release-manifest.json` SHA-256 的机器报告。
-3. 用同一最终签名安装包在 Windows 10 x64 完成 fresh install、启动、覆盖升级、数据保留卸载和 WebView2 场景，生成 `douyinlive-windows10-evidence/v1`。
-4. 在最终签名包上执行发布清单中的人工功能/视觉验收；全部通过后才能把阶段和项目更新为 100%。
+1. 若未来公开分发，在受控签名环境签署桌面 EXE、回滚工具和安装器并验证可信时间戳。
+2. 对最终目录执行双引擎扫描，保存绑定 `release-manifest.json` SHA-256 的机器报告。
+3. 在 Windows 10 x64 补充安装、启动、升级、数据保留卸载和 WebView2 矩阵。
+4. 对外发布前复核来源说明、SHA-256、SmartScreen 提示与用户沟通。
 
-当前没有 P0/P1 源码缺陷证据；阻塞属于未提供的外部发布资质与环境。OpenSSH 仍为 `CGO_ENABLED=0` 且无 GCC，race 未启动，此项保持既有工具链限制记录。
+当前没有 P0/P1 源码缺陷证据，也没有当前“可直接/内部运行”范围内的阻塞。OpenSSH 仍为 `CGO_ENABLED=0` 且无 GCC，race 未启动，此项保持既有工具链限制记录。

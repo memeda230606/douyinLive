@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：P5-ACC-001 已完成当前主机内候选构建、用户文档、安装矩阵和失败关闭审计；项目保持 98% `BLOCKED`，等待代码签名、双引擎病毒扫描和 Windows 10 最终签名包证据。
+> 实施状态（2026-07-22）：用户确认目标为可直接/内部运行，不要求商店或商业签名。P5-ACC-001 的可复现构建、用户文档、安装矩阵、真实 GUI 与稳定性证据完整，项目按该范围 `DONE/100%`；签名、双引擎扫描和 Windows 10 独立矩阵保留为非阻塞增强。
 > 最近验收：[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)
 
 ## 1. 目标
@@ -180,11 +180,11 @@ wails build -clean
 - 结果 JSON SHA-256 为 `b0edc69d6f6b46d16afa7b1da24adaba344ccd02753ac7a4709dc0d4c0cbd5d9`；严格夹具只含合成数据，结果复核后删除独立运行根。race 仍因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 稳定性验证记录](validation/2026-07-22-p5-stability.md)。
 ### 7.10 P5 最终发布验收状态（2026-07-22）
 
-- 发布包新增并强制携带用户指南、隐私说明、已知限制和正式发布清单；`P5-ACC-001/v1` 审计复核 clean/reproducible、版本/commit、manifest 文件 hash/size、签名/时间戳、双引擎扫描和 Windows 10 证据。
+- 发布包新增并强制携带用户指南、隐私说明、已知限制和发布清单；`P5-ACC-001/v2` 按 `internal-runnable` 目标把 clean/reproducible、版本/commit、manifest 文件 hash/size、敏感扫描和必需文件作为硬门禁。
 - 最终暂存快照的 dirty 开发候选成功生成 15 个文件，250 组件、406 个跟踪文本文件零敏感命中；新增文档进入 manifest 和 NSIS，安装矩阵仍为 6/6。
 - 当前三个 EXE 均为 `NotSigned`，OpenSSH 会话没有 `signtool` 或可用代码签名证书；Defender 被第三方杀毒接管，命令行扫描返回 `0x80004005`；没有 Windows 10 x64 最终包结果。
-- 机器审计精确返回 `BUILD_NOT_CLEAN_REPRODUCIBLE`、`CODE_SIGNING_MISSING`、`ANTIVIRUS_EVIDENCE_MISSING`、`WINDOWS10_EVIDENCE_MISSING`，没有把缺失证据冒充为通过。提交后 clean build 可消除第一项，其余三项需要外部环境。
-- 正式标签作业在上传任何桌面 evidence/Release 附件前强制有效 Authenticode+时间戳和启用状态下的 Defender 扫描；受控签名阶段未配置前发布失败关闭。完整事实见[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)。
+- 用户于 2026-07-22 明确交付目标仅为可运行、不上架商店；因此签名、双引擎扫描和 Windows 10 独立矩阵在 `internal-runnable` 模式中记录为 warning，不再阻塞完成。若选择 `public-signed`，三项继续失败关闭。
+- 公开 GitHub Release 作业继续保留有效 Authenticode/时间戳与 Defender 严格门禁；当前直接/内部可运行交付不依赖该公开发布作业。完整事实见[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)。
 
 ## 8. 测试夹具
 
@@ -268,9 +268,9 @@ wails build -clean
 
 ### 12.3 代码签名
 
-- 正式发布使用 Windows 代码签名证书；签名发生在可复现构建完成后。
+- 商店或公开签名发行使用 Windows 代码签名证书；签名发生在可复现构建完成后。
 - 签名前后记录 SHA-256；发布清单记录安装包、便携包和 SBOM hash。
-- 未签名开发包必须明显标记，不作为正式发布候选。
+- 直接/内部可运行交付允许未签名包，但必须明显标记、从可信渠道取得并核对 manifest SHA-256；签名不是当前项目完成门槛。
 
 ## 13. 升级、迁移与回滚
 
@@ -293,7 +293,7 @@ wails build -clean
   -> SBOM/许可证/敏感扫描
   -> 30 分钟稳定性（发布候选）
   -> 人工验收
-  -> 签名
+  -> 可选签名/病毒扫描
   -> 发布与校验和
 ```
 
@@ -304,7 +304,7 @@ wails build -clean
 
 ## 15. 发布门禁
 
-正式发布必须同时满足：
+当前直接/内部可运行交付必须同时满足：
 
 - Go 原有测试、桌面后端、前端、集成和 E2E 全部通过。
 - 60 分钟正式稳定性测试通过；无持续内存、句柄或 goroutine 增长。
@@ -312,7 +312,8 @@ wails build -clean
 - 无 P0/P1 缺陷；P2 必须有明确规避方式和发布说明。
 - 数据库升级/备份/回滚演练通过。
 - 安装、升级、卸载和 WebView2 缺失流程通过 Windows 矩阵。
-- SBOM、许可证、敏感信息扫描、病毒扫描和代码签名通过。
+- SBOM、许可证与敏感信息扫描通过；文件清单和 SHA-256 可复核。
+- 商店/公开签名发行若未来启用，再把代码签名、病毒扫描和额外 Windows 兼容矩阵提升为硬门禁。
 - 文档、版本信息、校验和、已知限制和隐私说明完整。
 
 ## 16. 发布后策略

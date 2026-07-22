@@ -4,8 +4,8 @@
 
 ## 安装与首次启动
 
-1. 只从项目正式发布页下载安装包，并先按同版本 `release-manifest.json` 核对 SHA-256。
-2. 正式发布包必须具有有效 Windows Authenticode 签名；未签名开发包只用于测试，不应绕过 SmartScreen 当作正式版本安装。
+1. 只从项目维护者提供的可信渠道取得安装包，并先按同版本 `release-manifest.json` 核对 SHA-256。
+2. 当前直接/内部交付不要求 Authenticode 签名，Windows 可能显示 SmartScreen 提示。只有来源可信且 SHA-256 完全匹配时才继续运行；公开分发时仍建议使用带可信时间戳的代码签名。
 3. 安装器按当前用户安装，不需要管理员权限。缺少 WebView2 时，按提示从 Microsoft 官方地址安装 Evergreen Runtime 后重试。
 4. 首次启动后在“设置”确认内部数据目录、外部媒体目录、分片时长、并发录制上限、磁盘余量阈值和隐私选项。
 

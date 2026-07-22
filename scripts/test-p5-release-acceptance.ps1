@@ -5,6 +5,8 @@ param(
     [string]$ExpectedCommit = '',
     [string]$AntivirusEvidence = '',
     [string]$Windows10Evidence = '',
+    [ValidateSet('internal-runnable', 'public-signed')]
+    [string]$DistributionTarget = 'internal-runnable',
     [string]$Output = 'release/p5-release-acceptance.json'
 )
 
@@ -26,11 +28,16 @@ if ($ExpectedCommit -notmatch '^[0-9a-f]{40}$') { throw 'ExpectedCommit must be 
 
 $checks = New-Object System.Collections.Generic.List[object]
 $blockers = New-Object System.Collections.Generic.List[string]
+$warnings = New-Object System.Collections.Generic.List[string]
 function Add-Check {
-    param([string]$Name, [bool]$Passed, [string]$Detail, [string]$Blocker = '')
-    $checks.Add([ordered]@{ name = $Name; passed = $Passed; detail = $Detail })
+    param([string]$Name, [bool]$Passed, [string]$Detail, [string]$Blocker = '', [bool]$Required = $true)
+    $checks.Add([ordered]@{ name = $Name; required = $Required; passed = $Passed; detail = $Detail })
     if (-not $Passed -and -not [string]::IsNullOrWhiteSpace($Blocker) -and -not $blockers.Contains($Blocker)) {
-        $blockers.Add($Blocker)
+        if ($Required) {
+            $blockers.Add($Blocker)
+        } elseif (-not $warnings.Contains($Blocker)) {
+            $warnings.Add($Blocker)
+        }
     }
 }
 function Get-SHA256Lower {
@@ -38,19 +45,19 @@ function Get-SHA256Lower {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 function Read-Evidence {
-    param([string]$Path, [string]$Schema, [string]$MissingBlocker)
+    param([string]$Path, [string]$Schema, [string]$MissingBlocker, [bool]$Required = $true)
     if ([string]::IsNullOrWhiteSpace($Path)) {
-        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence path was not supplied' -Blocker $MissingBlocker
+        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence path was not supplied' -Blocker $MissingBlocker -Required $Required
         return $null
     }
     $absolute = [IO.Path]::GetFullPath([IO.Path]::Combine($repoRoot, $Path))
     if (-not [IO.File]::Exists($absolute)) {
-        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence file is missing' -Blocker $MissingBlocker
+        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence file is missing' -Blocker $MissingBlocker -Required $Required
         return $null
     }
     $evidence = Get-Content -LiteralPath $absolute -Raw | ConvertFrom-Json
     if ($evidence.schema -ne $Schema) {
-        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence schema is invalid' -Blocker $MissingBlocker
+        Add-Check -Name $MissingBlocker -Passed $false -Detail 'evidence schema is invalid' -Blocker $MissingBlocker -Required $Required
         return $null
     }
     return $evidence
@@ -113,6 +120,7 @@ foreach ($name in $actualNames | Where-Object { $_ -ne 'release-manifest.json' }
 $exactCount = $actualNames.Count -eq ($manifestEntries.Count + 1)
 Add-Check 'manifest-exact-file-count' $exactCount ("actual=$($actualNames.Count); registered=$($manifestEntries.Count)") 'MANIFEST_FILE_MISMATCH'
 
+$publicSigned = $DistributionTarget -eq 'public-signed'
 $signatureFiles = @(
     "douyin-live-desktop-$Version-windows-amd64.exe",
     "douyin-live-dbrollback-$Version-windows-amd64.exe",
@@ -124,10 +132,10 @@ foreach ($name in $signatureFiles) {
     $signature = Get-AuthenticodeSignature -LiteralPath $path
     $valid = $signature.Status -eq [System.Management.Automation.SignatureStatus]::Valid
     $timestamped = $valid -and $null -ne $signature.TimeStamperCertificate
-    Add-Check ("signature:" + $name) ($valid -and $timestamped) ("status=$($signature.Status); timestamped=$timestamped") 'CODE_SIGNING_MISSING'
+    Add-Check ("signature:" + $name) ($valid -and $timestamped) ("status=$($signature.Status); timestamped=$timestamped") 'CODE_SIGNING_MISSING' $publicSigned
 }
 
-$antivirus = Read-Evidence -Path $AntivirusEvidence -Schema 'douyinlive-antivirus-evidence/v1' -MissingBlocker 'ANTIVIRUS_EVIDENCE_MISSING'
+$antivirus = Read-Evidence -Path $AntivirusEvidence -Schema 'douyinlive-antivirus-evidence/v1' -MissingBlocker 'ANTIVIRUS_EVIDENCE_MISSING' -Required $publicSigned
 if ($null -ne $antivirus) {
     $engines = @($antivirus.engines)
     $engineNames = @{}
@@ -140,23 +148,26 @@ if ($null -ne $antivirus) {
         if (-not $engineValid) { $enginesValid = $false } else { $engineNames[$name] = $true }
     }
     $passed = ($antivirus.result -eq 'passed') -and ($antivirus.findingCount -eq 0) -and ($antivirus.targetManifestSHA256 -eq $manifestHash) -and $enginesValid
-    Add-Check 'antivirus-evidence' $passed ("engines=$(@($antivirus.engines).Count); findings=$($antivirus.findingCount)") 'ANTIVIRUS_EVIDENCE_INVALID'
+    Add-Check 'antivirus-evidence' $passed ("engines=$(@($antivirus.engines).Count); findings=$($antivirus.findingCount)") 'ANTIVIRUS_EVIDENCE_INVALID' $publicSigned
 }
-$windows10 = Read-Evidence -Path $Windows10Evidence -Schema 'douyinlive-windows10-evidence/v1' -MissingBlocker 'WINDOWS10_EVIDENCE_MISSING'
+$windows10 = Read-Evidence -Path $Windows10Evidence -Schema 'douyinlive-windows10-evidence/v1' -MissingBlocker 'WINDOWS10_EVIDENCE_MISSING' -Required $publicSigned
 if ($null -ne $windows10) {
     $passed = ($windows10.result -eq 'passed') -and ($windows10.targetManifestSHA256 -eq $manifestHash) -and ($windows10.architecture -eq 'amd64') -and ($windows10.build -match '^1[0-9]{4}$')
-    Add-Check 'windows10-evidence' $passed ("build=$($windows10.build); result=$($windows10.result)") 'WINDOWS10_EVIDENCE_INVALID'
+    Add-Check 'windows10-evidence' $passed ("build=$($windows10.build); result=$($windows10.result)") 'WINDOWS10_EVIDENCE_INVALID' $publicSigned
 }
 
 [string[]]$blockerArray = $blockers
+[string[]]$warningArray = $warnings
 [object[]]$checkArray = $checks
 $report = [ordered]@{
-    schema = 'P5-ACC-001/v1'
+    schema = 'P5-ACC-001/v2'
+    distributionTarget = $DistributionTarget
     version = $Version
     gitCommit = $ExpectedCommit
     manifestSHA256 = $manifestHash
     passed = $blockers.Count -eq 0
     blockerCodes = $blockerArray
+    warningCodes = $warningArray
     checks = $checkArray
 }
 $outputDirectory = [IO.Path]::GetDirectoryName($outputPath)
@@ -171,4 +182,8 @@ if ($blockers.Count -ne 0) {
     exit 3
 }
 [Console]::WriteLine('P5_RELEASE_ACCEPTANCE_PASSED')
+[Console]::WriteLine(('distributionTarget=' + $DistributionTarget))
 [Console]::WriteLine(('manifestSHA256=' + $manifestHash))
+if ($warnings.Count -ne 0) {
+    [Console]::WriteLine(('warnings=' + ($warnings -join ',')))
+}
