@@ -23,10 +23,23 @@ describe('desktop runtime contracts', () => {
       apiVersion: 'v1',
       name: 'test',
       version: 'test',
+      build: {
+        productVersion: 'test', gitCommit: 'unknown', buildTime: 'unknown', buildSource: 'local',
+        goVersion: 'go1.26.4', wailsVersion: '2.13.0', nodeVersion: 'v24.18.0',
+        ffmpegVersion: '8.1.2-essentials_build-www.gyan.dev', ffmpegSHA256: 'a'.repeat(64), ffmpegLicense: 'GPL-3.0-or-later',
+        databaseSchemaVersion: 6, settingsSchemaVersion: 2, analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
+      },
       state: 'STOPPING',
       data: { ready: false, schemaVersion: 0, mode: '', loggingReady: false },
       capabilities: [],
     }).success).toBe(true)
+    const invalidBuild = {
+      productVersion: 'test', gitCommit: 'C:\\private\\repo', buildTime: 'unknown', buildSource: 'local',
+      goVersion: 'go1.26.4', wailsVersion: '2.13.0', nodeVersion: 'v24.18.0', ffmpegVersion: '8.1.2',
+      ffmpegSHA256: 'bad', ffmpegLicense: 'GPL-3.0-or-later', databaseSchemaVersion: 6, settingsSchemaVersion: 2,
+      analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
+    }
+    expect(bootstrapSchema.safeParse({ apiVersion: 'v1', name: 'test', version: 'test', state: 'STOPPING', build: invalidBuild, data: { ready: false, schemaVersion: 0, mode: '', loggingReady: false }, capabilities: [] }).success).toBe(false)
   })
 
   it('accepts sanitized room DTOs but rejects credential fields', () => {

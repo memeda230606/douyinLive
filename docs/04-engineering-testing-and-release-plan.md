@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：PHASE-4 已由真实交互式 Wails/WebView2 一体化验收关闭，项目总进度 90%，当前进入 P5-ENG-001 发布工程门禁。
-> 最近验收：[P4 一体化验收](validation/2026-07-22-p4-phase-acceptance.md)
+> 实施状态（2026-07-22）：P5-ENG-001 发布工程门禁已关闭，项目总进度 93%，当前进入 P5-WIN-001 Windows 安装升级矩阵。
+> 最近验收：[P5 发布工程验证](validation/2026-07-22-p5-release-engineering.md)
 
 ## 1. 目标
 
@@ -152,11 +152,20 @@ wails build -clean
 - Go 全量 test/vet/build、标签 test/vet、前端 10 文件 36 项测试/typecheck/build和 production Wails 均通过；生产 EXE 为 48,712,704 字节，SHA-256 `c509622776f43db78ddd2589bb91a1d5e3d74110477ce50343b0c018c45be2a8`。
 - 验收计划任务、精确应用进程与隔离运行根全部清零；race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P4 一体化验收记录](validation/2026-07-22-p4-phase-acceptance.md)。
 
+### 7.7 P5 发布工程验证证据（2026-07-22）
+
+- 发布构建器从精确 SemVer、完整 Git commit 与 commit 时间生成不可变身份；默认拒绝脏工作树，使用 `-trimpath`、空 build ID 和固定 `SOURCE_DATE_EPOCH` 连续构建两次并要求 EXE hash/size 完全一致。
+- 本地开发验证的两次 production Wails EXE 均为 48,669,184 字节，SHA-256 均为 `b3dcb7eb25c994b0cc6de28402fa5849db5670ae93529fa52f1ba0beedc4db16`；该验证显式允许脏工作树，正式 tag/CI 仍强制清洁构建。
+- 诊断页严格展示产品版本、完整 commit、构建时间/来源、Go/Wails/Node、FFmpeg 版本/hash/许可证和数据库、设置、分析、导出 schema；WebView 增加 CSP、`nosniff`、拒绝 frame 与 no-referrer 安全头。
+- 实际桌面编译闭包与前端安装闭包共 250 个组件进入 SPDX 2.3 SBOM、许可证 JSON 和第三方 notices；上游未携带许可证声明的 1 个间接模块明确记录为 `NOASSERTION`，不猜测或遗漏。
+- 锁定 Gyan FFmpeg 8.1.2 Essentials 的官方归档来源、归档 SHA-256、ffmpeg/ffprobe SHA-256 与 GPL-3.0-or-later；最终暂存快照 389 个跟踪文本文件敏感扫描为 0 命中，历史巨型响应样例改为脱敏 fixture 索引。
+- GitHub tag 流程新增 Windows 双构建、锁定 FFmpeg 下载校验、证据归档与 Release 附件上传；全量 Go test/vet/build、前端 10 文件 36 项测试/typecheck/build 和发布门禁均通过。race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 发布工程验证记录](validation/2026-07-22-p5-release-engineering.md)。
+
 ## 8. 测试夹具
 
 ### 8.1 直播接口 fixture
 
-- 从 `doRequest.example.json` 派生脱敏最小样本，而不是在测试中解析巨型真实文件的所有无关字段。
+- `doRequest.example.json` 只保留脱敏 fixture 索引；具体最小样本位于 `testdata/stream_resolver`，测试不再携带或解析巨型真实响应。
 - 覆盖 FLV、HLS、SDK 嵌套 JSON、H.265、附加流、无流、字段类型变化和 URL 过期。
 - 所有 URL 使用 `.invalid` 域名，query 使用占位值。
 

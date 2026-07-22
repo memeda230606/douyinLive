@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "distribution": "Gyan release essentials Windows x64 static build",
+  "version": "8.1.2-essentials_build-www.gyan.dev",
+  "archive": {
+    "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip",
+    "sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
+  },
+  "license": "GPL-3.0-or-later",
+  "sourceCommit": "38b88335f9",
+  "binaries": {
+    "ffmpeg.exe": "1326dde4c84ff1f96fe6b8916c5bed29e163e9b5dccf995f6f3db069d143ec5e",
+    "ffprobe.exe": "b49ccc7c6547b141ad5a2f6ec69cc04323d7133d7704d70b331b904c63eecb07"
+  }
+}

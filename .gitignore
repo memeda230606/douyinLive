@@ -16,7 +16,8 @@ douyinLive
 .DS_Store
 
 # Build
-/build/
+/build/*
+!/build/ffmpeg-windows-amd64.lock.json
 /dist/
 /release/
 /cmd/main/build-*

@@ -515,6 +515,10 @@ func latestSchemaVersion(migrations []migration) int {
 	return migrations[len(migrations)-1].Version
 }
 
+// LatestSchemaVersion returns the compile-time database schema target for
+// release metadata. Runtime readiness still reports the actually opened DB.
+func LatestSchemaVersion() int { return latestSchemaVersion(schemaMigrations) }
+
 func ensureMigrationTable(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, createMigrationTableSQL); err != nil {
 		return fmt.Errorf("create schema migration table: %w", err)

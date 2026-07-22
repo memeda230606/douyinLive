@@ -15,7 +15,21 @@ export function DiagnosticsPage({ bootstrap }: { bootstrap: BootstrapDTO }) {
       <section className="diagnostic-grid">{checks.map(({ label, value, icon: Icon, healthy }) => <article className="diagnostic-card" key={label}><Icon aria-hidden="true" /><div><span>{label}</span><strong>{value}</strong></div><i className={healthy ? 'health-dot health-dot--ok' : 'health-dot'} aria-label={healthy ? '正常' : '异常'} /></article>)}</section>
       <section className="settings-section">
         <div className="settings-section__heading"><LockKeyhole aria-hidden="true" /><div><h2>诊断隐私边界</h2><p>当前基础诊断只展示服务状态，不显示 Cookie、凭据引用、签名、完整流地址或原始 Protobuf。</p></div></div>
-        <dl className="diagnostic-details"><div><dt>API 契约</dt><dd>{bootstrap.apiVersion}</dd></div><div><dt>数据模式</dt><dd>{bootstrap.data.mode}</dd></div><div><dt>应用版本</dt><dd>{bootstrap.version}</dd></div><div><dt>日志状态</dt><dd>{bootstrap.data.loggingReady ? '可用' : '不可用'}</dd></div></dl>
+        <dl className="diagnostic-details">
+          <div><dt>应用版本</dt><dd>{bootstrap.build.productVersion}</dd></div>
+          <div><dt>Git 提交</dt><dd>{bootstrap.build.gitCommit}</dd></div>
+          <div><dt>构建时间</dt><dd>{bootstrap.build.buildTime}</dd></div>
+          <div><dt>构建来源</dt><dd>{bootstrap.build.buildSource}</dd></div>
+          <div><dt>Go / Wails / Node</dt><dd>{bootstrap.build.goVersion} / {bootstrap.build.wailsVersion} / {bootstrap.build.nodeVersion}</dd></div>
+          <div><dt>FFmpeg</dt><dd>{bootstrap.build.ffmpegVersion}</dd></div>
+          <div><dt>FFmpeg SHA-256</dt><dd>{bootstrap.build.ffmpegSHA256}</dd></div>
+          <div><dt>FFmpeg 许可证</dt><dd>{bootstrap.build.ffmpegLicense}</dd></div>
+          <div><dt>数据库 / 设置 Schema</dt><dd>v{bootstrap.build.databaseSchemaVersion} / v{bootstrap.build.settingsSchemaVersion}</dd></div>
+          <div><dt>分析 / 导出 Schema</dt><dd>{bootstrap.build.analysisAlgorithmVersion} / {bootstrap.build.exportSchemaVersion}</dd></div>
+          <div><dt>API 契约</dt><dd>{bootstrap.apiVersion}</dd></div>
+          <div><dt>数据模式</dt><dd>{bootstrap.data.mode}</dd></div>
+          <div><dt>日志状态</dt><dd>{bootstrap.data.loggingReady ? '可用' : '不可用'}</dd></div>
+        </dl>
       </section>
       <section className="empty-panel empty-panel--compact"><div><h2>诊断事件查询将在后续开放</h2><p>当前错误会写入本地脱敏 JSONL；完整筛选和诊断包导出属于后续诊断服务任务。</p></div></section>
     </main>

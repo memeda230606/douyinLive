@@ -3,6 +3,9 @@ package douyinLive
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -49,6 +52,48 @@ func TestTikHubSignerRequiresToken(t *testing.T) {
 	_, err := signer.Sign(context.Background(), "room-id", "user-id", "Mozilla/5.0")
 	if !errors.Is(err, ErrTikHubTokenEmpty) {
 		t.Fatalf("Sign() err = %v, want ErrTikHubTokenEmpty", err)
+	}
+}
+
+func TestTikHubClientGenerateWssXbSignature(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("NO_PROXY", "127.0.0.1")
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", request.Method)
+		}
+		if request.URL.Path != tikHubSignatureAPI {
+			t.Errorf("path = %s, want %s", request.URL.Path, tikHubSignatureAPI)
+		}
+		if got := request.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := request.URL.Query().Get("user_agent"); got != "test-agent" {
+			t.Errorf("user_agent = %q", got)
+		}
+		if got := request.URL.Query().Get("room_id"); got != "123" {
+			t.Errorf("room_id = %q", got)
+		}
+		if got := request.URL.Query().Get("user_unique_id"); got != "456" {
+			t.Errorf("user_unique_id = %q", got)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{"code":200,"message":"ok","data":{"signature":"signed-value"}}`)
+	}))
+	defer server.Close()
+
+	client := newTikHubClientWithBaseURL("test-token", "test-agent", server.URL)
+	result, err := client.GenerateWssXbSignature(context.Background(), "test-agent", "123", "456")
+	if err != nil {
+		t.Fatalf("GenerateWssXbSignature() error = %v", err)
+	}
+	if result.StatusCode != http.StatusOK || result.Code != http.StatusOK {
+		t.Fatalf("response status/code = %d/%d", result.StatusCode, result.Code)
+	}
+	if got := extractTikHubSignature(result.Data); got != "signed-value" {
+		t.Fatalf("signature = %q", got)
 	}
 }
 

@@ -385,6 +385,7 @@ export namespace app {
 	    name: string;
 	    version: string;
 	    state: string;
+	    build: buildinfo.Info;
 	    data: DataStatusDTO;
 	    capabilities: CapabilityDTO[];
 
@@ -398,6 +399,7 @@ export namespace app {
 	        this.name = source["name"];
 	        this.version = source["version"];
 	        this.state = source["state"];
+	        this.build = this.convertValues(source["build"], buildinfo.Info);
 	        this.data = this.convertValues(source["data"], DataStatusDTO);
 	        this.capabilities = this.convertValues(source["capabilities"], CapabilityDTO);
 	    }
@@ -421,6 +423,49 @@ export namespace app {
 		}
 	}
 
+
+}
+
+export namespace buildinfo {
+
+	export class Info {
+	    productVersion: string;
+	    gitCommit: string;
+	    buildTime: string;
+	    buildSource: string;
+	    goVersion: string;
+	    wailsVersion: string;
+	    nodeVersion: string;
+	    ffmpegVersion: string;
+	    ffmpegSHA256: string;
+	    ffmpegLicense: string;
+	    databaseSchemaVersion: number;
+	    settingsSchemaVersion: number;
+	    analysisAlgorithmVersion: string;
+	    exportSchemaVersion: string;
+
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.productVersion = source["productVersion"];
+	        this.gitCommit = source["gitCommit"];
+	        this.buildTime = source["buildTime"];
+	        this.buildSource = source["buildSource"];
+	        this.goVersion = source["goVersion"];
+	        this.wailsVersion = source["wailsVersion"];
+	        this.nodeVersion = source["nodeVersion"];
+	        this.ffmpegVersion = source["ffmpegVersion"];
+	        this.ffmpegSHA256 = source["ffmpegSHA256"];
+	        this.ffmpegLicense = source["ffmpegLicense"];
+	        this.databaseSchemaVersion = source["databaseSchemaVersion"];
+	        this.settingsSchemaVersion = source["settingsSchemaVersion"];
+	        this.analysisAlgorithmVersion = source["analysisAlgorithmVersion"];
+	        this.exportSchemaVersion = source["exportSchemaVersion"];
+	    }
+	}
 
 }
 

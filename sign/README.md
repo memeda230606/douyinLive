@@ -24,7 +24,7 @@
 ```ini
 [Cookie]
 # 录制抖音必填
-抖音cookie = ttwid=1%7CB1qls3GdnZhUov9o2NxOMxxYS2ff6OSvEWbv0ytbES4%7C1680522049%7C280d802d6d478e3e78d0c807f7c487e7ffec0ae4e5fdd6a0fe74c3c6af149511; my_rd=1; passport_csrf_token=3ab34460fa656183fccfb904b16ff742; ...
+抖音cookie = REDACTED_COOKIE_PLACEHOLDER
 ```
 
 **代码位置**: [`config/config.ini`](https://github.com/ihmily/DouyinLiveRecorder/blob/main/config/config.ini)
@@ -46,7 +46,7 @@ dy_cookie = read_config_value(config, 'Cookie', '抖音cookie', '')
 async def get_douyin_web_stream_data(url: str, proxy_addr=None, cookies=None):
     headers = {
         # 默认有一个基础 cookie
-        'cookie': 'ttwid=1%7C2iDIYVmjzMcpZ20fcaFde0VghXAA3NaNXE_SLR68IyE...',
+        'cookie': 'REDACTED_COOKIE_PLACEHOLDER',
         'referer': 'https://live.douyin.com/',
         'user-agent': 'Mozilla/5.0 ...'
     }

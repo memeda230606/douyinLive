@@ -56,7 +56,7 @@ jobs:
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "short_sha=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          echo "build_source=github-actions/${GITHUB_WORKFLOW}#${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "build_source=github-actions/${GITHUB_WORKFLOW}/${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
   docker:
     name: Build Docker image
@@ -166,3 +166,97 @@ jobs:
           BUILD_DATE: ${{ needs.release-meta.outputs.build_date }}
           BUILD_SOURCE: ${{ needs.release-meta.outputs.build_source }}
           GORELEASER_CURRENT_TAG: ${{ needs.release-meta.outputs.release_tag }}
+
+  desktop-release:
+    name: Build reproducible Windows desktop release
+    runs-on: windows-latest
+    needs:
+      - release-meta
+      - publish-release
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.release-meta.outputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 24.18.0
+
+      - name: Set up pinned pnpm and Wails
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.12.3 --activate
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+          node --version
+          pnpm --version
+          wails version
+
+      - name: Install locked FFmpeg distribution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content -LiteralPath 'build/ffmpeg-windows-amd64.lock.json' -Raw | ConvertFrom-Json
+          $archivePath = Join-Path $env:RUNNER_TEMP 'ffmpeg-locked.zip'
+          $extractPath = Join-Path $env:RUNNER_TEMP 'ffmpeg-locked'
+          Invoke-WebRequest -Uri $lock.archive.url -OutFile $archivePath
+          $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archiveHash -ne $lock.archive.sha256) {
+            throw 'FFmpeg archive checksum mismatch.'
+          }
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath
+          $ffmpegCandidates = @(Get-ChildItem -LiteralPath $extractPath -Recurse -File -Filter 'ffmpeg.exe')
+          if ($ffmpegCandidates.Count -ne 1) {
+            throw 'Expected exactly one ffmpeg.exe in the locked archive.'
+          }
+          $binaryDirectory = $ffmpegCandidates[0].Directory.FullName
+          foreach ($binaryName in @('ffmpeg.exe', 'ffprobe.exe')) {
+            $binaryPath = Join-Path $binaryDirectory $binaryName
+            $actualHash = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $lock.binaries.$binaryName) {
+              throw "$binaryName checksum mismatch."
+            }
+          }
+          $binaryDirectory | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build and verify reproducible desktop release
+        shell: pwsh
+        run: |
+          $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
+          ./scripts/build-release.ps1 -Version $version -Source '${{ needs.release-meta.outputs.build_source }}'
+
+      - name: Upload desktop release evidence
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: douyin-live-desktop-${{ needs.release-meta.outputs.release_tag }}-windows-amd64
+          path: release/${{ needs.release-meta.outputs.release_tag }}/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach desktop assets to GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release-meta.outputs.release_tag }}
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          $files = @(Get-ChildItem -LiteralPath "release/v$version" -File | ForEach-Object FullName)
+          if ($files.Count -eq 0) {
+            throw 'Desktop release output is empty.'
+          }
+          $uploadArguments = @('release', 'upload', $env:RELEASE_TAG) + $files + @('--clobber')
+          & gh @uploadArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "gh release upload failed with exit code $LASTEXITCODE."
+          }

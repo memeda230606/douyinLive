@@ -21,37 +21,20 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-22T14:20:00+08:00"
+updated_at: "2026-07-22T15:10:00+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "e6a853b624ed9be104fbd1b408931e082bf5b6c8"
+last_verified_head: "e293817fcd9cae9e4859a70b182a3c6914e920ac"
 project_status: "IN_PROGRESS"
-overall_completion_percent: 90
+overall_completion_percent: 93
 current_phase: "PHASE-5-RELEASE"
-current_task: "P5-ENG-001"
-next_task: "P5-WIN-001"
-expected_dirty_paths:
-  - "cmd/desktop/acceptance_hook_disabled.go"
-  - "cmd/desktop/acceptance_hook_p4_acc.go"
-  - "cmd/desktop/acceptance_hook_p4_acc_test.go"
-  - "cmd/desktop/infrastructure_options_default.go"
-  - "cmd/desktop/infrastructure_options_p4_acc.go"
-  - "cmd/desktop/p4_acc_acceptance.js"
-  - "cmd/desktop/p4_acc_screenshot_other.go"
-  - "cmd/desktop/p4_acc_screenshot_windows.go"
-  - "docs/00-master-development-plan.md"
-  - "docs/01-desktop-ui-development-plan.md"
-  - "docs/03-data-and-analysis-development-plan.md"
-  - "docs/04-engineering-testing-and-release-plan.md"
-  - "docs/validation/2026-07-22-p4-phase-acceptance.md"
-  - "frontend/src/features/sessions/SessionsPage.test.tsx"
-  - "frontend/src/features/sessions/SessionsPage.tsx"
-  - "internal/playback/media_repository.go"
-  - "internal/playback/media_repository_test.go"
+current_task: "P5-WIN-001"
+next_task: "P5-STB-001"
+expected_dirty_paths: []
 blockers: []
-last_completed_task: "P4-ACC-001"
-last_completion_evidence: "修正校准偏移下媒体 DTO 与定位的统一时间域，并实现仅对相邻已验证 MP4 自动跨段续播、真实缺口不静默跳过。真实交互式 Wails/WebView2 验收 9/9 通过：两段 H.264/AAC 解码与跨段续播、20 点校准时间轴 P95=0 ms、报告重复生成稳定、ASR disabled 基础分析降级、5 文件隐私导出和 1440x900 PrintWindow 视觉均通过；全量 Go test/vet/build、前端 36 测试/typecheck/build、带标签验收及 production Wails 构建通过。"
-resume_instruction: "执行 P5-ENG-001：建立可复现发布构建、版本元数据、SBOM/许可证与敏感扫描门禁。"
+last_completed_task: "P5-ENG-001"
+last_completion_evidence: "新增 fail-closed 发布构建器、精确 SemVer/工具链/FFmpeg 锁、完整诊断构建身份、CSP 安全头、实际桌面依赖 SBOM/许可证清单、敏感扫描与 GitHub Windows 发布作业；本地双次 production Wails EXE 完全一致（48,669,184 字节，SHA-256 b3dcb7eb25c994b0cc6de28402fa5849db5670ae93529fa52f1ba0beedc4db16），250 个组件、最终暂存快照 389 个跟踪文本文件、0 个敏感命中，全量 Go test/vet/build 与前端 36 测试/typecheck/build 通过。"
+resume_instruction: "执行 P5-WIN-001：完成 Windows x64 安装、升级、卸载、WebView2 缺失、数据保留与数据库回滚矩阵。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -86,8 +69,8 @@ resume_instruction: "执行 P5-ENG-001：建立可复现发布构建、版本元
 | PHASE-2 Wails 桌面壳与房间管理 | 20% | `DONE` | 100% | 桌面壳、数据基础、房间设置、监控状态机、基础页面及真实 GUI 验收完成 | 平台或 WebView2 行为变化时复验 |
 | PHASE-3 采集与录制 MVP | 30% | `DONE` | 100% | 30/30 点完成；稳定窗口、FFmpeg/网络故障恢复和人工停止收尾已按 2026-07-21 项目级豁免记录关闭 | 真实平台或工具链变化时复验；正式控制器合同保持严格 |
 | PHASE-4 回放与基础分析 | 20% | `DONE` | 100% | 20/20 点完成；跨段同步回放、版本化分析、ASR 降级、隐私导出及真实 GUI 一体化验收通过 | 平台、WebView2 或媒体工具链变化时复验 |
-| PHASE-5 发布与稳定性 | 10% | `NOT_STARTED` | 0% | — | 发布门禁、安装升级和 60 分钟稳定性通过 |
-| **总体** | **100%** | **`IN_PROGRESS`** | **90%** | PHASE-0 至 PHASE-4 已关闭；核心采集、录制、回放和基础分析链路完成 | 执行 P5-ENG-001 发布工程门禁 |
+| PHASE-5 发布与稳定性 | 10% | `IN_PROGRESS` | 30% | 3/10 点完成；可复现构建、版本身份、SBOM/许可证、FFmpeg 锁与敏感扫描门禁通过 | 安装升级矩阵和 60 分钟稳定性通过 |
+| **总体** | **100%** | **`IN_PROGRESS`** | **93%** | PHASE-0 至 PHASE-4 已关闭；P5 发布工程门禁完成 | 执行 P5-WIN-001 Windows 安装升级矩阵 |
 
 完成度解释：0–10% 为规划与技术准备，11–30% 为采集和桌面基础，31–60% 为录制主链路，61–80% 为回放分析，81–99% 为发布加固，100% 仅在全部发布门禁通过后填写。
 
@@ -123,8 +106,8 @@ resume_instruction: "执行 P5-ENG-001：建立可复现发布构建、版本元
 | P4-ASR-001 | 实现 ASR 插件接口与未配置降级 | 2 | P4-ANA-001 | `DONE` | [验证记录](validation/2026-07-21-p4-asr-provider.md)：可替换 provider、disabled 默认、脱敏状态合同和降级 UI 完成；基础分析独立性、专项重复和全量门禁通过 | 执行 P4-EXP-001 |
 | P4-EXP-001 | 实现 CSV/JSON 报告导出与隐私门禁 | 4 | P4-ANA-001 | `DONE` | [验证记录](validation/2026-07-22-p4-analysis-export.md)：稳定 v1 manifest、四类 BOM CSV、限界原子写、默认正文排除、显式正文与公式注入防护、strict React 合同完成；专项重复和全量门禁通过 | 执行 P4-ACC-001 |
 | P4-ACC-001 | 完成回放、分析、ASR 降级与导出验收 | 2 | P4-ASR-001、P4-EXP-001 | `DONE` | [验收记录](validation/2026-07-22-p4-phase-acceptance.md)：真实交互式 GUI 9/9、两段媒体解码与跨段续播、校准时间轴 P95=0 ms、报告复用、ASR 降级、5 文件隐私导出和 PrintWindow 视觉通过 | PHASE-4 完成；执行 P5-ENG-001 |
-| P5-ENG-001 | 建立可复现发布构建、版本元数据与供应链扫描 | 3 | P4-ACC-001 | `READY` | PHASE-4 已关闭，生产 Wails 构建基线可用 | 固化版本注入、产物清单、SBOM、许可证与敏感扫描 |
-| P5-WIN-001 | 完成安装、升级、卸载与数据库回滚矩阵 | 3 | P5-ENG-001 | `NOT_STARTED` | 等待发布工程基线 | 验证 Windows x64 安装包、WebView2 缺失、数据保留和回滚 |
+| P5-ENG-001 | 建立可复现发布构建、版本元数据与供应链扫描 | 3 | P4-ACC-001 | `DONE` | [验证记录](validation/2026-07-22-p5-release-engineering.md)：双次 production EXE hash/size 一致；版本/commit/工具链/schema 诊断身份、250 组件 SBOM/许可证、锁定 FFmpeg、最终暂存快照 389 文件零命中扫描、CSP 与 tag 发布作业完成 | 执行 P5-WIN-001 |
+| P5-WIN-001 | 完成安装、升级、卸载与数据库回滚矩阵 | 3 | P5-ENG-001 | `READY` | 发布工程基线和可审计产物清单已完成 | 验证 Windows x64 安装包、WebView2 缺失、数据保留和回滚 |
 | P5-STB-001 | 完成 60 分钟稳定性与发布故障门禁 | 2 | P5-WIN-001 | `NOT_STARTED` | 等待安装升级矩阵 | 采样资源并覆盖数据库忙、磁盘满、网络和强制退出恢复 |
 | P5-ACC-001 | 完成最终发布验收与发布清单 | 2 | P5-STB-001 | `NOT_STARTED` | 等待全部发布门禁 | 汇总签名就绪、校验和、已知限制与人工验收 |
 
@@ -163,6 +146,7 @@ resume_instruction: "执行 P5-ENG-001：建立可复现发布构建、版本元
 
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
+| 2026-07-22 15:10 | P5-ENG-001 | `DONE` | 建立严格版本注入、FFmpeg 8.1.2 来源/归档/二进制 hash 锁、双构建可复现断言、产物 manifest、SPDX 2.3 SBOM、许可证与 notices、跟踪文件敏感扫描、CSP 安全头和 GitHub Windows tag 发布作业；移除无许可证 Tikhub 客户端依赖并保留协议回归。双次 EXE 48,669,184 字节且 SHA-256 完全一致，250 组件、最终暂存快照 389 文件、0 命中；Go 全量 test/vet/build 与前端 36 测试/typecheck/build 通过，race 因 CGO/GCC 不可用未启动 | 执行 P5-WIN-001 Windows x64 安装、升级、卸载、WebView2 与数据库回滚矩阵 |
 | 2026-07-22 14:20 | P4-ACC-001 | `DONE` | 修正 capture offset 统一时间域与相邻 MP4 跨段续播；真实 Wails/WebView2 结果 9/9、20 点时间轴 P95=0 ms、两段解码、报告复用、ASR disabled、5 文件隐私导出、1440×900 PrintWindow 视觉和零残留通过；Go 全量、前端 36 项、标签验收与 production Wails 构建通过，race 因 CGO/GCC 不可用未启动 | PHASE-4 关闭；执行 P5-ENG-001 发布工程门禁 |
 | 2026-07-21 22:30 | P4-ASR-001 | `DONE` | 新增可替换 ASRProvider、disabled 默认、稳定状态码与严格 Wails/前端 allowlist；未配置/不可用时隐藏转写依赖并明确基础分析继续可用，ready 时移除降级提示；分析 20 轮、适配器 10 轮、前端 32 测试、全量 Go/前端/Wails 门禁通过 | 执行 P4-EXP-001 CSV/JSON 导出与隐私门禁 |
 | 2026-07-22 12:58 | P4-EXP-001 | `DONE` | 新增 analysis-export/v1 JSON manifest、事件/指标桶/转写/分片四类 UTF-8 BOM CSV、UTC 与毫秒偏移、SHA-256 文件清单、os.Root 限界临时目录和原子发布；默认排除正文，显式正文导出防公式注入，平台标识/昵称/路径/摘要/凭据不进入包或 Wails；专项 20 轮、适配器 10 轮、前端 35 测试、全量 Go/前端/Wails 门禁通过 | 执行 P4-ACC-001 回放、分析、ASR 降级和导出一体化验收 |

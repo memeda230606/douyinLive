@@ -13,11 +13,29 @@ export const dataStatusSchema = z.object({
   loggingReady: z.boolean(),
 }).strict()
 
+export const buildInfoSchema = z.object({
+  productVersion: z.string().min(1),
+  gitCommit: z.union([z.literal('unknown'), z.string().regex(/^[0-9a-f]{40}$/)]),
+  buildTime: z.union([z.literal('unknown'), z.string().datetime({ offset: true })]),
+  buildSource: z.string().regex(/^[A-Za-z0-9._/-]{1,128}$/),
+  goVersion: z.string().min(1).max(64),
+  wailsVersion: z.string().min(1).max(32),
+  nodeVersion: z.string().min(1).max(32),
+  ffmpegVersion: z.string().min(1).max(128),
+  ffmpegSHA256: z.string().regex(/^[0-9a-f]{64}$/),
+  ffmpegLicense: z.literal('GPL-3.0-or-later'),
+  databaseSchemaVersion: z.number().int().positive(),
+  settingsSchemaVersion: z.number().int().positive(),
+  analysisAlgorithmVersion: z.literal('basic-analysis/v1'),
+  exportSchemaVersion: z.literal('analysis-export/v1'),
+}).strict()
+
 export const bootstrapSchema = z.object({
   apiVersion: z.literal('v1'),
   name: z.string().min(1),
   version: z.string().min(1),
   state: z.enum(['CREATED', 'RUNNING', 'STOPPING', 'STOPPED']),
+  build: buildInfoSchema,
   data: dataStatusSchema,
   capabilities: z.array(z.object({
     id: capabilityIDSchema,

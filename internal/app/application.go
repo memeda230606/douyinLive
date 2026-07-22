@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/jwwsjlm/douyinLive/v2/internal/analysis"
+	"github.com/jwwsjlm/douyinLive/v2/internal/buildinfo"
 	"github.com/jwwsjlm/douyinLive/v2/internal/capture"
 	"github.com/jwwsjlm/douyinLive/v2/internal/credentials"
 	"github.com/jwwsjlm/douyinLive/v2/internal/diagnostics"
@@ -33,6 +34,7 @@ const (
 type Options struct {
 	Name    string
 	Version string
+	Build   buildinfo.Info
 }
 
 type CapabilityDTO struct {
@@ -53,6 +55,7 @@ type BootstrapDTO struct {
 	Name         string          `json:"name"`
 	Version      string          `json:"version"`
 	State        State           `json:"state"`
+	Build        buildinfo.Info  `json:"build"`
 	Data         DataStatusDTO   `json:"data"`
 	Capabilities []CapabilityDTO `json:"capabilities"`
 }
@@ -74,6 +77,7 @@ type Application struct {
 	lifecycle                  context.Context
 	initialized                bool
 	dataStatus                 DataStatusDTO
+	buildInfo                  buildinfo.Info
 	store                      *storage.Store
 	rooms                      *room.Service
 	settings                   *settings.Service
@@ -109,14 +113,22 @@ func New(options Options) *Application {
 	if options.Name == "" {
 		options.Name = "抖音直播分析"
 	}
+	if options.Build.ProductVersion == "" {
+		options.Build = buildinfo.Current(
+			storage.LatestSchemaVersion(), settings.SettingsVersion,
+			analysis.AlgorithmVersion, analysis.ExportSchema,
+		)
+	}
 	if options.Version == "" {
-		options.Version = "dev"
+		options.Version = options.Build.ProductVersion
+	} else {
+		// Tests and embedders may override the display version while retaining
+		// the remaining privacy-safe release identity defaults.
+		options.Build.ProductVersion = options.Version
 	}
 	return &Application{
-		name:    options.Name,
-		version: options.Version,
-		state:   StateCreated,
-		logger:  slog.New(slog.NewJSONHandler(io.Discard, nil)),
+		name: options.Name, version: options.Version, buildInfo: options.Build,
+		state: StateCreated, logger: slog.New(slog.NewJSONHandler(io.Discard, nil)),
 	}
 }
 
@@ -255,6 +267,7 @@ func (a *Application) Bootstrap() BootstrapDTO {
 		Name:       a.name,
 		Version:    a.version,
 		State:      a.state,
+		Build:      a.buildInfo,
 		Data:       a.dataStatus,
 		Capabilities: []CapabilityDTO{
 			{ID: "overview", Label: "总览", Available: true},
