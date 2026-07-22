@@ -83,6 +83,12 @@ type Result struct {
 	ArtifactPath    string
 	ArtifactSHA256  string
 	ArtifactSize    int64
+	InstallerPath   string
+	InstallerSHA256 string
+	InstallerSize   int64
+	RollbackPath    string
+	RollbackSHA256  string
+	RollbackSize    int64
 	Metadata        GitMetadata
 	ComponentCount  int
 	ScanFileCount   int
@@ -256,8 +262,14 @@ func Run(options BuildOptions) (Result, error) {
 		return Result{}, err
 	}
 	artifact := filepath.Join(outDir, "douyin-live-desktop-"+options.Version+"-windows-amd64.exe")
+	rollback := filepath.Join(outDir, "douyin-live-dbrollback-"+options.Version+"-windows-amd64.exe")
+	installer := filepath.Join(outDir, "douyin-live-desktop-"+options.Version+"-windows-amd64-installer.exe")
 	var artifactHash string
 	var artifactSize int64
+	var rollbackHash string
+	var rollbackSize int64
+	var installerHash string
+	var installerSize int64
 	if !options.SkipBuild {
 		nodeVersion, err := commandOutput(root, "node", "--version")
 		if err != nil {
@@ -270,6 +282,10 @@ func Run(options BuildOptions) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		rollbackHash, rollbackSize, err = reproducibleGoToolBuild(root, "./cmd/dbrollback", rollback)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	components, err := CollectComponents(root, lock, options.Version)
 	if err != nil {
@@ -278,8 +294,19 @@ func Run(options BuildOptions) (Result, error) {
 	if err := writeReleaseDocuments(root, outDir, options, metadata, lock, components, findings, scanned, artifact, artifactHash, artifactSize); err != nil {
 		return Result{}, err
 	}
+	if !options.SkipBuild {
+		installerHash, installerSize, err = buildWindowsInstaller(root, outDir, installer, artifact, rollback, options.Version, lock)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := refreshInstallerManifest(outDir, installer, installerHash, installerSize, rollback, rollbackHash, rollbackSize); err != nil {
+			return Result{}, err
+		}
+	}
 	return Result{OutputDirectory: outDir, ArtifactPath: artifact, ArtifactSHA256: artifactHash,
-		ArtifactSize: artifactSize, Metadata: metadata, ComponentCount: len(components), ScanFileCount: scanned}, nil
+		ArtifactSize: artifactSize, InstallerPath: installer, InstallerSHA256: installerHash,
+		InstallerSize: installerSize, RollbackPath: rollback, RollbackSHA256: rollbackHash,
+		RollbackSize: rollbackSize, Metadata: metadata, ComponentCount: len(components), ScanFileCount: scanned}, nil
 }
 
 func reproducibleDesktopBuild(root, artifact, version string, metadata GitMetadata, source, nodeVersion string) (string, int64, error) {
@@ -668,6 +695,9 @@ func writeReleaseDocuments(root, outDir string, options BuildOptions, metadata G
 		return err
 	}
 	if err := copyFile(filepath.Join(root, "build", "ffmpeg-windows-amd64.lock.json"), filepath.Join(outDir, "ffmpeg-windows-amd64.lock.json")); err != nil {
+		return err
+	}
+	if err := copyFile(filepath.Join(root, "docs", "windows-installation-and-rollback.md"), filepath.Join(outDir, "INSTALLATION.md")); err != nil {
 		return err
 	}
 	publicComponents := make([]Component, len(components))

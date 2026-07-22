@@ -202,6 +202,10 @@ jobs:
           node --version
           pnpm --version
           wails version
+          $nsisVersion = (& makensis /VERSION).Trim()
+          if ($nsisVersion -ne 'v3.12') {
+            throw "NSIS version mismatch: expected v3.12, got $nsisVersion."
+          }
 
       - name: Install locked FFmpeg distribution
         shell: pwsh
@@ -235,6 +239,12 @@ jobs:
         run: |
           $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
           ./scripts/build-release.ps1 -Version $version -Source '${{ needs.release-meta.outputs.build_source }}'
+
+      - name: Run isolated Windows installer matrix
+        shell: pwsh
+        run: |
+          $version = '${{ needs.release-meta.outputs.release_tag }}'.Substring(1)
+          ./scripts/test-windows-installer.ps1 -ReleaseDirectory "release/v$version" -CurrentVersion $version
 
       - name: Upload desktop release evidence
         uses: actions/upload-artifact@v7.0.1

@@ -99,6 +99,38 @@ func TestWriteJSONIsStableLFAndNoHTMLRewrite(t *testing.T) {
 	}
 }
 
+func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
+	defines := map[string]string{
+		"ARG_WAILS_AMD64_BINARY": `D:\out\desktop.exe`,
+		"ARG_FFMPEG_BINARY":      `D:\tools\ffmpeg.exe`,
+		"ARG_FFPROBE_BINARY":     `D:\tools\ffprobe.exe`,
+		"ARG_DBROLLBACK_BINARY":  `D:\out\rollback.exe`,
+		"ARG_LICENSE_FILE":       `D:\out\LICENSE.txt`,
+		"ARG_LICENSE_MANIFEST":   `D:\out\licenses.json`,
+		"ARG_NOTICES_FILE":       `D:\out\THIRD-PARTY-NOTICES.txt`,
+		"ARG_SBOM_FILE":          `D:\out\sbom.spdx.json`,
+		"ARG_FFMPEG_LOCK":        `D:\out\ffmpeg.lock.json`,
+		"ARG_INSTALLATION_GUIDE": `D:\out\INSTALLATION.md`,
+		"ARG_INSTALLER_OUTPUT":   `D:\out\installer.exe`,
+		"INFO_PRODUCTVERSION":    "0.1.0",
+	}
+	first := installerArguments(defines)
+	second := installerArguments(defines)
+	if strings.Join(first, "\n") != strings.Join(second, "\n") {
+		t.Fatal("installer arguments are not stable")
+	}
+	for _, required := range []string{
+		"ARG_WAILS_AMD64_BINARY", "ARG_FFMPEG_BINARY", "ARG_FFPROBE_BINARY",
+		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
+		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
+		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT", "INFO_PRODUCTVERSION",
+	} {
+		if !strings.Contains(strings.Join(first, "\n"), "-D"+required+"=") {
+			t.Fatalf("installer arguments are missing %s", required)
+		}
+	}
+}
+
 func mustMkdir(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {

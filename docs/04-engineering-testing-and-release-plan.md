@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：P5-ENG-001 发布工程门禁已关闭，项目总进度 93%，当前进入 P5-WIN-001 Windows 安装升级矩阵。
-> 最近验收：[P5 发布工程验证](validation/2026-07-22-p5-release-engineering.md)
+> 实施状态（2026-07-22）：P5-WIN-001 Windows 安装升级门禁已关闭，项目总进度 96%，当前进入 P5-STB-001 60 分钟稳定性门禁。
+> 最近验收：[P5 Windows 安装升级验证](validation/2026-07-22-p5-windows-installation.md)
 
 ## 1. 目标
 
@@ -160,6 +160,15 @@ wails build -clean
 - 实际桌面编译闭包与前端安装闭包共 250 个组件进入 SPDX 2.3 SBOM、许可证 JSON 和第三方 notices；上游未携带许可证声明的 1 个间接模块明确记录为 `NOASSERTION`，不猜测或遗漏。
 - 锁定 Gyan FFmpeg 8.1.2 Essentials 的官方归档来源、归档 SHA-256、ffmpeg/ffprobe SHA-256 与 GPL-3.0-or-later；最终暂存快照 389 个跟踪文本文件敏感扫描为 0 命中，历史巨型响应样例改为脱敏 fixture 索引。
 - GitHub tag 流程新增 Windows 双构建、锁定 FFmpeg 下载校验、证据归档与 Release 附件上传；全量 Go test/vet/build、前端 10 文件 36 项测试/typecheck/build 和发布门禁均通过。race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 发布工程验证记录](validation/2026-07-22-p5-release-engineering.md)。
+
+### 7.8 P5 Windows 安装升级验证证据（2026-07-22）
+
+- 发布构建器新增 Windows x64 当前用户范围 NSIS 安装包，固定随附主程序、离线数据库回滚工具、锁定 FFmpeg/ffprobe、许可证、SPDX SBOM、第三方 notices、FFmpeg 锁和安装回滚说明；NSIS 以 `/WX /INPUTCHARSET UTF8` 编译。
+- WebView2 在写文件前检查；交互缺失仅打开 Microsoft 官方 Evergreen Runtime 地址，静默缺失固定返回 74。低于 Windows 10 和非原生 x64 分别固定返回 64/65，但本次不冒充 Windows 10 实机或 arm64 验证。
+- 独立 nonce 安装矩阵 `fresh-install`、`in-place-upgrade`、`uninstall-preserves-data`、`purge-needs-second-confirmation`、`confirmed-purge`、`webview2-missing` 共 6/6 通过；结束时矩阵目录、快捷方式和卸载键归零。
+- 默认卸载不删除 `%LOCALAPPDATA%\DouyinLive` 业务数据，静默卸载没有数据删除开关；不可恢复删除只在交互式可选节经第二次确认执行。测试专用直达分支不编译进生产安装器。
+- 新增 `douyin-live-dbrollback.exe` 和严格 `storage.RestoreBackup`：只接受数据根内合法一致备份，拒绝外部/链接/损坏/较新 schema 与活动 WAL/SHM，原子保留当前库后发布备份，失败恢复原库。v5→v6→v5 真实回滚与反例门禁通过。
+- `go test ./...`、`go vet ./...`、`go build ./...`、前端 10 文件 36 项测试/typecheck/build、双次 production Wails 可复现构建和最终 NSIS 构建通过；race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P5 Windows 安装升级验证记录](validation/2026-07-22-p5-windows-installation.md)。
 
 ## 8. 测试夹具
 

@@ -42,5 +42,11 @@ func main() {
 		fmt.Printf("artifact=%s\n", result.ArtifactPath)
 		fmt.Printf("artifactSHA256=%s\n", result.ArtifactSHA256)
 		fmt.Printf("artifactSize=%d\n", result.ArtifactSize)
+		fmt.Printf("installer=%s\n", result.InstallerPath)
+		fmt.Printf("installerSHA256=%s\n", result.InstallerSHA256)
+		fmt.Printf("installerSize=%d\n", result.InstallerSize)
+		fmt.Printf("rollbackTool=%s\n", result.RollbackPath)
+		fmt.Printf("rollbackToolSHA256=%s\n", result.RollbackSHA256)
+		fmt.Printf("rollbackToolSize=%d\n", result.RollbackSize)
 	}
 }

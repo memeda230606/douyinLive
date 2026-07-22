@@ -1,43 +1,136 @@
 Unicode true
 
-####
-## Please note: Template replacements don't work in this file. They are provided with default defines like
-## mentioned underneath.
-## If the keyword is not defined, "wails_tools.nsh" will populate them with the values from ProjectInfo.
-## If they are defined here, "wails_tools.nsh" will not touch them. This allows to use this project.nsi manually
-## from outside of Wails for debugging and development of the installer.
-##
-## For development first make a wails nsis build to populate the "wails_tools.nsh":
-## > wails build --target windows/amd64 --nsis
-## Then you can call makensis on this file with specifying the path to your binary:
-## For a AMD64 only installer:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app.exe
-## For a ARM64 only installer:
-## > makensis -DARG_WAILS_ARM64_BINARY=..\..\bin\app.exe
-## For a installer with both architectures:
-## > makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\app-amd64.exe -DARG_WAILS_ARM64_BINARY=..\..\bin\app-arm64.exe
-####
-## The following information is taken from the ProjectInfo file, but they can be overwritten here.
-####
-## !define INFO_PROJECTNAME    "MyProject" # Default "{{.Name}}"
-## !define INFO_COMPANYNAME    "MyCompany" # Default "{{.Info.CompanyName}}"
-## !define INFO_PRODUCTNAME    "MyProduct" # Default "{{.Info.ProductName}}"
-## !define INFO_PRODUCTVERSION "1.0.0"     # Default "{{.Info.ProductVersion}}"
-## !define INFO_COPYRIGHT      "Copyright" # Default "{{.Info.Copyright}}"
-###
-## !define PRODUCT_EXECUTABLE  "Application.exe"      # Default "${INFO_PROJECTNAME}.exe"
-## !define UNINST_KEY_NAME     "UninstKeyInRegistry"  # Default "${INFO_COMPANYNAME}${INFO_PRODUCTNAME}"
-####
-## !define REQUEST_EXECUTION_LEVEL "admin"            # Default "admin"  see also https://nsis.sourceforge.io/Docs/Chapter4.html
-####
-## Include the wails tools
-####
-!include "wails_tools.nsh"
+!define REQUEST_EXECUTION_LEVEL "user"
+!define WAILS_INSTALL_SCOPE "user"
+!include "x64.nsh"
+!include "WinVer.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!include "Sections.nsh"
 
-# The version information for this two must consist of 4 parts
+!ifndef INFO_PROJECTNAME
+    !define INFO_PROJECTNAME "DouyinLiveDesktop"
+!endif
+!ifndef INFO_COMPANYNAME
+    !define INFO_COMPANYNAME "DouyinLive"
+!endif
+!ifndef INFO_PRODUCTNAME
+    !define INFO_PRODUCTNAME "DouyinLive Desktop"
+!endif
+!ifndef INFO_PRODUCTVERSION
+    !define INFO_PRODUCTVERSION "0.1.0"
+!endif
+!ifndef INFO_COPYRIGHT
+    !define INFO_COPYRIGHT "Copyright (c) 2026"
+!endif
+!ifndef PRODUCT_EXECUTABLE
+    !define PRODUCT_EXECUTABLE "douyin-live-desktop.exe"
+!endif
+!ifndef UNINST_KEY_NAME
+    !define UNINST_KEY_NAME "${INFO_COMPANYNAME}${INFO_PROJECTNAME}"
+!endif
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}"
+!define ARCH "amd64"
+
+RequestExecutionLevel user
+
+!macro wails.checkArchitecture
+    ${IfNot} ${AtLeastWin10}
+        IfSilent unsupportedWindowsSilent unsupportedWindowsUI
+        unsupportedWindowsSilent:
+            SetErrorLevel 64
+            Quit
+        unsupportedWindowsUI:
+            MessageBox MB_OK "This product requires Windows 10 or later."
+            Quit
+    ${EndIf}
+    ${IfNot} ${IsNativeAMD64}
+        IfSilent unsupportedArchitectureSilent unsupportedArchitectureUI
+        unsupportedArchitectureSilent:
+            SetErrorLevel 65
+            Quit
+        unsupportedArchitectureUI:
+            MessageBox MB_OK "This package requires Windows x64."
+            Quit
+    ${EndIf}
+!macroend
+
+!macro wails.setShellContext
+    SetShellVarContext current
+!macroend
+
+!macro wails.files
+    File "/oname=${PRODUCT_EXECUTABLE}" "${ARG_WAILS_AMD64_BINARY}"
+!macroend
+
+!macro wails.writeUninstaller
+    WriteUninstaller "$INSTDIR\uninstall.exe"
+    SetRegView 64
+    WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${INFO_COMPANYNAME}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${INFO_PRODUCTNAME}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+    WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr HKCU "${UNINST_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
+    WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
+    ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
+    IntFmt $0 "0x%08X" $0
+    WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
+!macroend
+
+!macro wails.deleteUninstaller
+    Delete "$INSTDIR\uninstall.exe"
+    SetRegView 64
+    DeleteRegKey HKCU "${UNINST_KEY}"
+    SetRegView 32
+    DeleteRegKey HKCU "${UNINST_KEY}"
+!macroend
+
+!ifndef ARG_WAILS_AMD64_BINARY
+    !error "ARG_WAILS_AMD64_BINARY is required"
+!endif
+!ifndef ARG_FFMPEG_BINARY
+    !error "ARG_FFMPEG_BINARY is required"
+!endif
+!ifndef ARG_FFPROBE_BINARY
+    !error "ARG_FFPROBE_BINARY is required"
+!endif
+!ifndef ARG_DBROLLBACK_BINARY
+    !error "ARG_DBROLLBACK_BINARY is required"
+!endif
+!ifndef ARG_LICENSE_FILE
+    !error "ARG_LICENSE_FILE is required"
+!endif
+!ifndef ARG_LICENSE_MANIFEST
+    !error "ARG_LICENSE_MANIFEST is required"
+!endif
+!ifndef ARG_NOTICES_FILE
+    !error "ARG_NOTICES_FILE is required"
+!endif
+!ifndef ARG_SBOM_FILE
+    !error "ARG_SBOM_FILE is required"
+!endif
+!ifndef ARG_FFMPEG_LOCK
+    !error "ARG_FFMPEG_LOCK is required"
+!endif
+!ifndef ARG_INSTALLATION_GUIDE
+    !error "ARG_INSTALLATION_GUIDE is required"
+!endif
+!ifndef ARG_INSTALLER_OUTPUT
+    !define ARG_INSTALLER_OUTPUT "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe"
+!endif
+!ifndef DOUYINLIVE_DATA_ROOT
+    !define DOUYINLIVE_DATA_ROOT "$LOCALAPPDATA\DouyinLive"
+!endif
+
+!define DOUYINLIVE_WEBVIEW2_URL "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+!define DOUYINLIVE_WEBVIEW2_MISSING_EXIT 74
+!define DOUYINLIVE_PURGE_CONFIRM_EXIT 75
+
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
-
 VIAddVersionKey "CompanyName"     "${INFO_COMPANYNAME}"
 VIAddVersionKey "FileDescription" "${INFO_PRODUCTNAME} Installer"
 VIAddVersionKey "ProductVersion"  "${INFO_PRODUCTVERSION}"
@@ -45,78 +138,150 @@ VIAddVersionKey "FileVersion"     "${INFO_PRODUCTVERSION}"
 VIAddVersionKey "LegalCopyright"  "${INFO_COPYRIGHT}"
 VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 
-# Enable HiDPI support. https://nsis.sourceforge.io/Reference/ManifestDPIAware
 ManifestDPIAware true
 
 !include "MUI.nsh"
-
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
-# !define MUI_WELCOMEFINISHPAGE_BITMAP "resources\leftimage.bmp" #Include this to add a bitmap on the left side of the Welcome Page. Must be a size of 164x314
-!define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
-!define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
+!define MUI_FINISHPAGE_NOAUTOCLOSE
+!define MUI_ABORTWARNING
 
-!insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
-# !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
-!insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
-!insertmacro MUI_PAGE_INSTFILES # Installing page.
-!insertmacro MUI_PAGE_FINISH # Finished installation page.
-
-!insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
-
-!insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
-
-## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
-#!uninstfinalize 'signtool --file "%1"'
-#!finalize 'signtool --file "%1"'
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "${ARG_LICENSE_FILE}"
+!insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_COMPONENTS
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "SimpChinese"
+!insertmacro MUI_LANGUAGE "English"
 
 Name "${INFO_PRODUCTNAME}"
-OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-!ifdef WAILS_INSTALL_SCOPE
-  !if "${WAILS_INSTALL_SCOPE}" == "user"
-    InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
-  !else
-    InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-  !endif
-!else
-  InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}"
-!endif # Default installing folder ($PROGRAMFILES is Program Files folder).
-ShowInstDetails show # This will always show the installation details.
+OutFile "${ARG_INSTALLER_OUTPUT}"
+InstallDir "$LOCALAPPDATA\Programs\${INFO_PRODUCTNAME}"
+ShowInstDetails show
+ShowUninstDetails show
+
+Var PurgeMode
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
+    Call CheckWebView2
 FunctionEnd
 
-Section
+Section "Install ${INFO_PRODUCTNAME}" SecInstall
     !insertmacro wails.setShellContext
+    SetOverwrite on
+    SetOutPath $INSTDIR
+    !insertmacro wails.files
+    File "/oname=douyin-live-dbrollback.exe" "${ARG_DBROLLBACK_BINARY}"
 
-    !insertmacro wails.webview2runtime
+    SetOutPath "$INSTDIR\ffmpeg"
+    File "/oname=ffmpeg.exe" "${ARG_FFMPEG_BINARY}"
+    File "/oname=ffprobe.exe" "${ARG_FFPROBE_BINARY}"
+
+    SetOutPath "$INSTDIR\licenses"
+    File "/oname=LICENSE.txt" "${ARG_LICENSE_FILE}"
+    File "/oname=licenses.json" "${ARG_LICENSE_MANIFEST}"
+    File "/oname=THIRD-PARTY-NOTICES.txt" "${ARG_NOTICES_FILE}"
+    File "/oname=sbom.spdx.json" "${ARG_SBOM_FILE}"
+    File "/oname=ffmpeg-windows-amd64.lock.json" "${ARG_FFMPEG_LOCK}"
+    File "/oname=INSTALLATION.md" "${ARG_INSTALLATION_GUIDE}"
 
     SetOutPath $INSTDIR
-
-    !insertmacro wails.files
-
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-
-    !insertmacro wails.associateFiles
-    !insertmacro wails.associateCustomProtocols
-
     !insertmacro wails.writeUninstaller
 SectionEnd
 
-Section "uninstall"
+Section "un.Uninstall ${INFO_PRODUCTNAME}" SecUninstall
     !insertmacro wails.setShellContext
-
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
-
+    SetRegView 64
+    DeleteRegKey HKCU "${UNINST_KEY}"
+    SetRegView 32
+    DeleteRegKey HKCU "${UNINST_KEY}"
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
     RMDir /r $INSTDIR
-
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
-
-    !insertmacro wails.unassociateFiles
-    !insertmacro wails.unassociateCustomProtocols
-
     !insertmacro wails.deleteUninstaller
+    StrCmp $PurgeMode "confirmed" 0 uninstallDone
+    RMDir /r "${DOUYINLIVE_DATA_ROOT}"
+    IfFileExists "${DOUYINLIVE_DATA_ROOT}\*.*" uninstallPurgeFailed uninstallDone
+    uninstallPurgeFailed:
+        SetErrorLevel ${DOUYINLIVE_PURGE_CONFIRM_EXIT}
+        Quit
+    uninstallDone:
 SectionEnd
+
+Section /o "un.Delete database, internal media, configuration and logs" SecPurgeData
+    IfSilent silentPurge interactivePurge
+    interactivePurge:
+        ${GetSize} "${DOUYINLIVE_DATA_ROOT}" "/S=0K" $0 $1 $2
+        MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON2 \
+            "This permanently deletes local data (estimated $0 KiB), including the database and internal media. External media is not deleted. Continue?" \
+            IDYES purgeData IDNO skipPurge
+    silentPurge:
+        StrCmp $PurgeMode "confirmed" purgeData purgeDenied
+    purgeDenied:
+        SetErrorLevel ${DOUYINLIVE_PURGE_CONFIRM_EXIT}
+        Quit
+    purgeData:
+        RMDir /r "${DOUYINLIVE_DATA_ROOT}"
+        IfFileExists "${DOUYINLIVE_DATA_ROOT}\*.*" purgeFailed purgeDone
+    purgeFailed:
+        SetErrorLevel ${DOUYINLIVE_PURGE_CONFIRM_EXIT}
+        Quit
+    purgeDone:
+    skipPurge:
+SectionEnd
+
+Function CheckWebView2
+    StrCpy $0 ""
+    !ifndef DOUYINLIVE_FORCE_WEBVIEW2_MISSING
+        SetRegView 64
+        ReadRegStr $0 HKLM "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${If} $0 == ""
+            ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${EndIf}
+        ${If} $0 == ""
+            ReadRegStr $0 HKCU "Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${EndIf}
+        SetRegView 32
+        ${If} $0 == ""
+            ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
+        ${EndIf}
+    !endif
+    ${If} $0 == ""
+        IfSilent webviewMissingSilent webviewMissingInteractive
+        webviewMissingInteractive:
+            MessageBox MB_ICONEXCLAMATION|MB_OKCANCEL \
+                "Microsoft Edge WebView2 Evergreen Runtime is required. Select OK to open the official installer, install it, then run this setup again." \
+                IDOK openWebView2 IDCANCEL webviewMissingAbort
+        openWebView2:
+            ExecShell "open" "${DOUYINLIVE_WEBVIEW2_URL}"
+        webviewMissingAbort:
+            SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
+            Quit
+        webviewMissingSilent:
+            SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
+            Quit
+    ${EndIf}
+FunctionEnd
+
+Function un.onInit
+    StrCpy $PurgeMode "preserve"
+    !ifdef DOUYINLIVE_MANAGED_PURGE_TEST
+        ReadEnvStr $0 "DOUYINLIVE_PURGE_DATA"
+        StrCmp $0 "1" 0 purgeOptionsDone
+        StrCpy $PurgeMode "requested"
+        ReadEnvStr $0 "DOUYINLIVE_CONFIRM_PURGE"
+        StrCmp $0 "1" 0 purgeConfirmationDenied
+        StrCpy $PurgeMode "confirmed"
+        Goto purgeOptionsDone
+        purgeConfirmationDenied:
+            SetErrorLevel ${DOUYINLIVE_PURGE_CONFIRM_EXIT}
+            Quit
+        purgeOptionsDone:
+    !endif
+FunctionEnd
