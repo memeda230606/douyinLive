@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,6 +14,8 @@ const roomId = '019aa000-0000-7000-8000-000000000002'
 const segmentId = '019aa000-0000-7000-8000-000000000003'
 const artifactId = '019aa000-0000-7000-8000-000000000004'
 const eventId = '019aa000-0000-7000-8000-000000000005'
+const nextSegmentId = '019aa000-0000-7000-8000-000000000006'
+const nextArtifactId = '019aa000-0000-7000-8000-000000000007'
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -47,16 +49,28 @@ describe('SessionsPage', () => {
         id: artifactId, mediaSegmentId: segmentId, kind: 'playback_mp4', container: 'mp4', codec: 'h264',
         durationMs: 60_000, sizeBytes: 1000, sampleRate: 0, channels: 0, status: 'complete', directPlayback: true,
       }], playbackArtifactId: artifactId,
+    }, {
+      id: nextSegmentId, sequence: 2, container: 'mkv', videoCodec: 'h264', audioCodec: 'aac',
+      startedAt: 1_700_000_060_000, endedAt: 1_700_000_120_000,
+      durationMs: 60_000, sizeBytes: 1024, status: 'complete', timelineStartMs: 60_000, timelineEndMs: 120_000,
+      artifacts: [], playbackArtifactId: nextArtifactId,
     }] })
-    vi.mocked(api.locatePlaybackMedia).mockResolvedValue({
-      version: 1, sessionId, requestedOffsetMs: 5_000, adjustedOffsetMs: 5_000,
-      state: 'playback_mp4', segmentPlaybackMs: 5_000, playbackArtifactId: artifactId,
-      segment: {
-        id: segmentId, sequence: 1, container: 'mkv', videoCodec: 'h264', audioCodec: 'aac',
-        startedAt: 1_700_000_000_000, endedAt: 1_700_000_060_000,
-        durationMs: 60_000, sizeBytes: 1024, status: 'complete', timelineStartMs: 0, timelineEndMs: 60_000,
-        artifacts: [], playbackArtifactId: artifactId,
-      },
+    vi.mocked(api.locatePlaybackMedia).mockImplementation(async (_session, offset) => {
+      const second = offset >= 60_000
+      return {
+        version: 1, sessionId, requestedOffsetMs: offset, adjustedOffsetMs: offset,
+        state: 'playback_mp4', segmentPlaybackMs: second ? offset - 60_000 : offset,
+        playbackArtifactId: second ? nextArtifactId : artifactId,
+        segment: {
+          id: second ? nextSegmentId : segmentId, sequence: second ? 2 : 1,
+          container: 'mkv', videoCodec: 'h264', audioCodec: 'aac',
+          startedAt: second ? 1_700_000_060_000 : 1_700_000_000_000,
+          endedAt: second ? 1_700_000_120_000 : 1_700_000_060_000,
+          durationMs: 60_000, sizeBytes: 1024, status: 'complete',
+          timelineStartMs: second ? 60_000 : 0, timelineEndMs: second ? 120_000 : 60_000,
+          artifacts: [], playbackArtifactId: second ? nextArtifactId : artifactId,
+        },
+      }
     })
     vi.mocked(api.playbackMediaURL).mockImplementation((id) => `/playback/media/${id}`)
   })
@@ -77,5 +91,17 @@ describe('SessionsPage', () => {
     expect(api.locatePlaybackMedia).toHaveBeenCalledWith(sessionId, 5_000)
     const player = await screen.findByLabelText('场次视频')
     expect(player).toHaveAttribute('src', `/playback/media/${artifactId}`)
+  })
+
+  it('continues into an adjacent verified MP4 segment when playback ends', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await screen.findByRole('heading', { name: '夏季新品场' })
+    await user.click(screen.getByRole('button', { name: /观众/ }))
+    const firstPlayer = await screen.findByLabelText('场次视频')
+    fireEvent.ended(firstPlayer)
+    await waitFor(() => expect(api.locatePlaybackMedia).toHaveBeenCalledWith(sessionId, 60_000))
+    const secondPlayer = await screen.findByLabelText('场次视频')
+    expect(secondPlayer).toHaveAttribute('src', `/playback/media/${nextArtifactId}`)
   })
 })

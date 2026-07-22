@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -43,8 +44,8 @@ func TestRepositoryListsMediaAndLocatesUnifiedTimeline(t *testing.T) {
 	if strings.Join(gotIDs, ",") != strings.Join(segmentIDs, ",") {
 		t.Fatalf("media keyset order = %v, want %v", gotIDs, segmentIDs)
 	}
-	if first.Items[0].TimelineStartMS != 100 ||
-		first.Items[0].TimelineEndMS != 1100 ||
+	if first.Items[0].TimelineStartMS != 50 ||
+		first.Items[0].TimelineEndMS != 1050 ||
 		first.Items[0].PlaybackArtifactID == "" ||
 		len(first.Items[0].Artifacts) != 2 {
 		t.Fatalf("mapped first media item = %+v", first.Items[0])
@@ -118,6 +119,52 @@ func TestRepositoryListsMediaAndLocatesUnifiedTimeline(t *testing.T) {
 	if err != nil || gap.State != MediaLocationGap || gap.Segment != nil ||
 		gap.ReasonCode != "MEDIA_TIMELINE_GAP" {
 		t.Fatalf("timeline gap = %+v, err = %v", gap, err)
+	}
+}
+
+func TestPhase4AcceptanceCalibratedTimelineP95(t *testing.T) {
+	fixture := newPlaybackFixture(t)
+	defer fixture.close()
+	sessionID := fixture.sessionIDs[0]
+	if _, err := fixture.writer.Exec(
+		`UPDATE live_sessions SET capture_offset_ms = 50, clock_source = 'calibrated' WHERE id = ?`,
+		sessionID,
+	); err != nil {
+		t.Fatalf("update calibrated capture offset: %v", err)
+	}
+	insertPlaybackMedia(t, fixture, sessionID)
+
+	type calibrationSample struct {
+		sessionOffsetMS int64
+		playbackMS      int64
+	}
+	samples := []calibrationSample{
+		{50, 0}, {175, 125}, {300, 250}, {425, 375}, {550, 500},
+		{675, 625}, {800, 750}, {925, 875}, {1050, 0}, {1175, 125},
+		{1300, 250}, {1425, 375}, {1550, 500}, {1675, 625}, {1800, 750},
+		{1925, 875},
+	}
+	errorsMS := make([]int64, 0, len(samples))
+	for _, sample := range samples {
+		located, err := fixture.repository.LocateMedia(context.Background(), MediaLocationRequest{
+			SessionID: sessionID, SessionOffsetMS: sample.sessionOffsetMS,
+		})
+		if err != nil {
+			t.Fatalf("LocateMedia(%d) error = %v", sample.sessionOffsetMS, err)
+		}
+		if located.SegmentPlaybackMS == nil {
+			t.Fatalf("LocateMedia(%d) has no playback offset: %+v", sample.sessionOffsetMS, located)
+		}
+		delta := *located.SegmentPlaybackMS - sample.playbackMS
+		if delta < 0 {
+			delta = -delta
+		}
+		errorsMS = append(errorsMS, delta)
+	}
+	slices.Sort(errorsMS)
+	p95Index := (95*len(errorsMS)+99)/100 - 1
+	if p95 := errorsMS[p95Index]; p95 > 1500 {
+		t.Fatalf("calibrated timeline P95 = %d ms, want <= 1500 ms", p95)
 	}
 }
 

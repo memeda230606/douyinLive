@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-21）：PHASE-3 已按真实运行证据与用户明确豁免关闭，项目总进度 70%，当前进入 P4-PLY-001。
-> 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
+> 实施状态（2026-07-22）：PHASE-4 已由真实交互式 Wails/WebView2 一体化验收关闭，项目总进度 90%，当前进入 P5-ENG-001 发布工程门禁。
+> 最近验收：[P4 一体化验收](validation/2026-07-22-p4-phase-acceptance.md)
 
 ## 1. 目标
 
@@ -144,6 +144,13 @@ wails build -clean
 - 当前 OpenSSH 为 `CGO_ENABLED=0` 且无 GCC，`go test -race` 未启动；这是工具链限制，不是源码失败。
 - 任务、相关进程、交互式测试临时目录为零；正式数据根保留，因本次没有约 19 GB 不可恢复删除授权，不声明控制器零数据残留。
 - 本次例外只关闭项目阶段，不形成自动验收成功分支；正式发布门禁仍可要求按原合同完整复验。
+
+### 7.6 P4 一体化验收证据（2026-07-22）
+
+- `p4accacceptance` 仅在验收标签暴露隔离夹具；同一次交互式冷启动严格结果 9/9，通过真实两段媒体解码、跨段续播、校准时间轴、报告复用、ASR disabled、5 文件隐私导出和布局检查。
+- 精确窗口使用 `PrintWindow(PW_RENDERFULLCONTENT)` 生成 1440×900 PNG，结果内 SHA-256 与文件复算均为 `c6d4d4dcc632e79a4365303608b3bc46a4b208de4f7e52c23afe33ba6326c05e`，并完成人工视觉复核。
+- Go 全量 test/vet/build、标签 test/vet、前端 10 文件 36 项测试/typecheck/build和 production Wails 均通过；生产 EXE 为 48,712,704 字节，SHA-256 `c509622776f43db78ddd2589bb91a1d5e3d74110477ce50343b0c018c45be2a8`。
+- 验收计划任务、精确应用进程与隔离运行根全部清零；race 因当前 `CGO_ENABLED=0` 且无 GCC 未启动。完整事实见[P4 一体化验收记录](validation/2026-07-22-p4-phase-acceptance.md)。
 
 ## 8. 测试夹具
 

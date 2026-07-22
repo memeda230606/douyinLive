@@ -1,4 +1,4 @@
-//go:build !p3accacceptance
+//go:build !p3accacceptance && !p4accacceptance
 
 package main
 

@@ -109,6 +109,18 @@ export function SessionsPage({ initialSessionId, initialOffsetMs = 0 }: { initia
     setCurrentOffset(Math.max(0, location.requestedOffsetMs + delta))
   }
 
+  function onPlayerEnded() {
+    if (!location?.segment) return
+    const currentIndex = media.findIndex((item) => item.id === location.segment?.id)
+    const next = currentIndex >= 0 ? media[currentIndex + 1] : undefined
+    if (next?.playbackArtifactId && next.timelineStartMs <= location.segment.timelineEndMs + 250) {
+      seekTo(Math.max(0, next.timelineStartMs))
+      return
+    }
+    // A real gap must remain visible instead of being skipped to a later file.
+    seekTo(Math.max(0, location.segment.timelineEndMs))
+  }
+
   if (sessionsQuery.isLoading) return <div className="page sessions-page"><p className="eyebrow">历史场次</p><h1>正在读取本地场次…</h1></div>
   if (sessionsQuery.isError) return <div className="page sessions-page"><p className="eyebrow">历史场次</p><h1>历史场次不可用</h1><p className="page-subtitle">{userFacingError(sessionsQuery.error)}</p></div>
 
@@ -154,6 +166,7 @@ export function SessionsPage({ initialSessionId, initialOffsetMs = 0 }: { initia
                       controls
                       key={location.playbackArtifactId}
                       onLoadedMetadata={(event) => { event.currentTarget.currentTime = (location.segmentPlaybackMs ?? 0) / 1000 }}
+                      onEnded={onPlayerEnded}
                       onTimeUpdate={onPlayerTimeUpdate}
                       ref={playerRef}
                       src={playbackMediaURL(location.playbackArtifactId)}

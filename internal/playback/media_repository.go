@@ -25,7 +25,7 @@ type normalizedMediaFilter struct {
 const mediaSegmentSelectSQL = `SELECT ms.id, ms.sequence, ms.container,
 	ms.video_codec, ms.audio_codec, ms.started_at, ms.ended_at,
 	ms.pts_start_ms, ms.pts_end_ms, ms.duration_ms, ms.size_bytes,
-	ms.sha256, ms.status, ms.error_code, s.started_at, s.media_epoch_at
+	ms.sha256, ms.status, ms.error_code, s.started_at, s.media_epoch_at, s.capture_offset_ms
 	FROM media_segments ms
 	JOIN live_sessions s ON s.id = ms.session_id`
 
@@ -160,7 +160,7 @@ func (r *Repository) LocateMedia(
 	segment = located[0]
 	result.Segment = &segment
 
-	segmentOffset, ok := checkedSubInt64(adjustedOffsetMS, segment.TimelineStartMS)
+	segmentOffset, ok := checkedSubInt64(request.SessionOffsetMS, segment.TimelineStartMS)
 	if !ok || segmentOffset < 0 {
 		result.ReasonCode = "MEDIA_TIMELINE_INVALID"
 		return result, nil
@@ -194,12 +194,12 @@ func scanMediaSegment(source scanner) (MediaSegmentDTO, string, error) {
 	var item MediaSegmentDTO
 	var videoCodec, audioCodec, digest, errorCode sql.NullString
 	var ptsStart, ptsEnd, mediaEpoch sql.NullInt64
-	var sessionStartedAt int64
+	var sessionStartedAt, captureOffsetMS int64
 	if err := source.Scan(
 		&item.ID, &item.Sequence, &item.Container, &videoCodec, &audioCodec,
 		&item.StartedAt, &item.EndedAt, &ptsStart, &ptsEnd, &item.DurationMS,
 		&item.SizeBytes, &digest, &item.Status, &errorCode,
-		&sessionStartedAt, &mediaEpoch,
+		&sessionStartedAt, &mediaEpoch, &captureOffsetMS,
 	); err != nil {
 		return MediaSegmentDTO{}, "", err
 	}
@@ -231,7 +231,15 @@ func scanMediaSegment(source scanner) (MediaSegmentDTO, string, error) {
 	if !ok {
 		return MediaSegmentDTO{}, "", errors.New("media timeline start overflow")
 	}
+	item.TimelineStartMS, ok = checkedSubInt64(item.TimelineStartMS, captureOffsetMS)
+	if !ok {
+		return MediaSegmentDTO{}, "", errors.New("media timeline start overflow")
+	}
 	item.TimelineEndMS, ok = checkedSubInt64(endWallMS, sessionStartedAt)
+	if !ok {
+		return MediaSegmentDTO{}, "", errors.New("media timeline end overflow")
+	}
+	item.TimelineEndMS, ok = checkedSubInt64(item.TimelineEndMS, captureOffsetMS)
 	if !ok || item.TimelineEndMS < item.TimelineStartMS {
 		return MediaSegmentDTO{}, "", errors.New("media timeline range invalid")
 	}

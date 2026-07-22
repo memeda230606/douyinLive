@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [工程与发布](04-engineering-testing-and-release-plan.md)
-> 实施状态（2026-07-22）：P4-EXP-001 已完成版本化 CSV/JSON 报告包、限界原子写入与默认隐私门禁；项目总进度 88%，下一任务为 P4-ACC-001。
-> 最近验收：[P3-ACC 关闭记录](validation/2026-07-21-p3-acceptance-closeout.md)
+> 实施状态（2026-07-22）：P4-ACC-001 已完成校准时间轴、跨段回放、报告复用、ASR 降级、隐私导出与真实 GUI 一体化验收；PHASE-4 关闭，项目总进度 90%，下一任务为 P5-ENG-001。
+> 最近验收：[P4 一体化验收](validation/2026-07-22-p4-phase-acceptance.md)
 
 ## 1. 目标与原则
 
@@ -506,6 +506,13 @@ type ASRProvider interface {
 - 点赞累计重置、礼物无价值、用户 ID 缺失和缺口低完整性。
 - 峰值合并、权重缺失归一化和跨版本可重复性。
 - ASR 全成功、部分失败、取消、缓存命中和未配置提供器。
+
+### 12.4 P4 一体化验收（2026-07-22）
+
+- 媒体 DTO 与定位统一使用扣除 `capture_offset_ms` 的场次偏移域；20 个固定样本覆盖两段 4 秒媒体，校准 P95 误差为 0 ms，满足不高于 1.5 秒的目标。
+- 同一输入连续分析返回相同报告 ID、算法版本和完整 DTO，证明 fingerprint 复用与报告可重复；ASR 为 disabled 时仍保留弹幕、点赞、礼物与完整度基础统计。
+- `analysis-export/v1` 包严格为 5 个文件：manifest 与四类 UTF-8 BOM CSV；schema、逐文件结构、隐私标记和原始展示名排除均通过，允许导出的 `user_hash` 保持伪匿名语义。
+- 全量 Go test/vet/build、`p4accacceptance` test/vet、前端 36 项/typecheck/build 与 production Wails 构建通过。当前 OpenSSH 为 `CGO_ENABLED=0` 且没有 GCC，因此 race 未启动，不记为源码失败。完整证据见[P4 一体化验收记录](validation/2026-07-22-p4-phase-acceptance.md)。
 
 ## 13. 完成标准
 
