@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	HealthMarkerSchema  = "douyinlive-update-health/v1"
-	InstallResultSchema = "douyinlive-install-result/v1"
-	parentExitTimeout   = 60 * time.Second
-	healthTimeout       = 90 * time.Second
+	HealthMarkerSchema                 = "douyinlive-update-health/v1"
+	InstallResultSchema                = "douyinlive-install-result/v1"
+	parentExitTimeout                  = 60 * time.Second
+	healthTimeout                      = 90 * time.Second
+	productionUninstallRegistryKeyPath = `Software\Microsoft\Windows\CurrentVersion\Uninstall\DouyinLiveDesktop`
 )
 
 type HealthMarker struct {
@@ -214,13 +215,12 @@ func verifyInstalledIdentity(job InstallJob) error {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("UPDATE_INSTALLED_EXE_INVALID")
 	}
-	const keyPath = `Software\Microsoft\Windows\CurrentVersion\Uninstall\DouyinLiveDouyinLiveDesktop`
 	var key registry.Key
 	for _, access := range []uint32{
 		registry.QUERY_VALUE | registry.WOW64_64KEY,
 		registry.QUERY_VALUE | registry.WOW64_32KEY,
 	} {
-		key, err = registry.OpenKey(registry.CURRENT_USER, keyPath, access)
+		key, err = registry.OpenKey(registry.CURRENT_USER, productionUninstallRegistryKeyPath, access)
 		if err == nil {
 			break
 		}

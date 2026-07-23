@@ -30,6 +30,9 @@ Unicode true
     !define UNINST_KEY_NAME "${INFO_COMPANYNAME}${INFO_PROJECTNAME}"
 !endif
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UNINST_KEY_NAME}"
+!ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+    !define UPDATE_COMPAT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${UPDATE_COMPAT_UNINST_KEY_NAME}"
+!endif
 !define ARCH "amd64"
 
 RequestExecutionLevel user
@@ -78,14 +81,24 @@ RequestExecutionLevel user
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
     IntFmt $0 "0x%08X" $0
     WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" "$0"
+    !ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+        WriteRegStr HKCU "${UPDATE_COMPAT_UNINST_KEY}" "DisplayVersion" "${INFO_PRODUCTVERSION}"
+        WriteRegStr HKCU "${UPDATE_COMPAT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
+    !endif
 !macroend
 
 !macro wails.deleteUninstaller
     Delete "$INSTDIR\uninstall.exe"
     SetRegView 64
     DeleteRegKey HKCU "${UNINST_KEY}"
+    !ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+        DeleteRegKey HKCU "${UPDATE_COMPAT_UNINST_KEY}"
+    !endif
     SetRegView 32
     DeleteRegKey HKCU "${UNINST_KEY}"
+    !ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+        DeleteRegKey HKCU "${UPDATE_COMPAT_UNINST_KEY}"
+    !endif
 !macroend
 
 !ifndef ARG_WAILS_AMD64_BINARY
@@ -225,8 +238,14 @@ Section "un.Uninstall ${INFO_PRODUCTNAME}" SecUninstall
     !insertmacro wails.setShellContext
     SetRegView 64
     DeleteRegKey HKCU "${UNINST_KEY}"
+    !ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+        DeleteRegKey HKCU "${UPDATE_COMPAT_UNINST_KEY}"
+    !endif
     SetRegView 32
     DeleteRegKey HKCU "${UNINST_KEY}"
+    !ifdef UPDATE_COMPAT_UNINST_KEY_NAME
+        DeleteRegKey HKCU "${UPDATE_COMPAT_UNINST_KEY}"
+    !endif
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
     RMDir /r $INSTDIR
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"

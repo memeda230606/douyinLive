@@ -2,7 +2,7 @@
 
 - 日期：2026-07-23
 - 权威工作副本：`GJS-20250801EFK:D:\douyinLive`
-- 任务状态：实现与基础设施、0.2.0 人工引导、0.2.1 通道修复/正式构建/canary 发布已完成；真实自动升级、失败恢复和 24 小时观察仍为 `IN_PROGRESS`
+- 任务状态：实现与基础设施、0.2.0 人工引导、0.2.1 canary/stable 发布已完成；安装前发现引导注册表键不一致并转入不可变 0.2.2 修复，真实自动升级、失败恢复和 24 小时观察仍为 `IN_PROGRESS`
 - 凭据边界：本文及仓库不记录 AccessKey、RAM 密钥、Ed25519 私钥或解密后的 DPAPI 数据
 
 ## 1. OSS 与发布身份
@@ -106,13 +106,19 @@ git diff --check
 - 实网复查：canary 200、版本化信封 200、安装器 Range 206/1 字节、HTTP 403、匿名 List 403，`channels/stable.json` 保持 404；
 - 首次发布直连探测为 000，本机 Clash/Mihomo 代理为 404；仅为发布进程设置 `HTTP_PROXY`/`HTTPS_PROXY` 后成功，没有修改持久 Git、系统或应用代理。
 
+0.2.1 stable 与引导修复：
+
+- 用户授权一次性 stable 引导后，`releases/v0.2.1/update-stable.json` 与 `channels/stable.json` 签发成功，二者 SHA-256 均为 `0c51750abf903444124469273e8697608e3aad4297ef533898a96885f559669b`；stable/canary 的安装器和发布清单描述完全一致；
+- 安装前只读检查发现实际卸载键是 `HKCU\...\Uninstall\DouyinLiveDesktop`，0.2.0 助手却硬编码 `DouyinLiveDouyinLiveDesktop`。直接安装会在新安装器成功后误报 `UPDATE_REGISTRY_NOT_CONVERGED` 并回滚，因此未触发客户端安装；
+- 0.2.1 版本化对象保持不可变。0.2.2 安装器将额外写入仅含版本/安装位置的旧助手兼容键并在卸载时清理；0.2.2 助手改为校验正式键，后续版本不再依赖兼容键。
+
 ## 7. 已知限制与剩余发布门
 
 OSS 在 Bucket Versioning Enabled/Suspended 时忽略 `x-oss-forbid-overwrite`。当前发布工具对通道专属版本信封执行 HeadObject 并拒绝已存在 key；跨通道提升只复用匿名回读 hash 完全一致的安装器与发布清单，配合单一最小权限发布身份和版本历史实现可审计保护；这不是存储层不可绕过的 WORM。
 
 以下证据不得提前宣称完成：
 
-- 0.2.0→0.2.1 的真实自动升级（正式 0.2.0 固定 stable，需先解决一次性引导通道）；
-- 0.2.1 canary 的 0.2.0→0.2.1 真实升级、重启、活动录制拒绝、断网续传、坏签名/坏安装包与失败恢复；
+- 0.2.0→0.2.2 的真实自动升级、重启、活动录制拒绝、断网续传、坏签名/坏安装包与失败恢复；
+- 0.2.2 canary/stable 的签名回读、不可变资产一致性与更新助手兼容键验收；
 - 权威 Windows 主机 24 小时稳定观察；
 - 使用与 canary 完全相同的安装器和发布清单签发 stable 信封，并完成 stable 匿名回读与协议复验。

@@ -122,6 +122,7 @@ func installerArguments(defines map[string]string) []string {
 		"-DINFO_PRODUCTVERSION="+defines["INFO_PRODUCTVERSION"],
 		"-DPRODUCT_EXECUTABLE=douyin-live-desktop.exe",
 		"-DUNINST_KEY_NAME=DouyinLiveDesktop",
+		"-DUPDATE_COMPAT_UNINST_KEY_NAME=DouyinLiveDouyinLiveDesktop",
 	)
 	return arguments
 }

@@ -118,3 +118,9 @@ func TestWriteInstallJobRejectsOverwrite(t *testing.T) {
 		t.Fatalf("WriteInstallJob overwrite error = %v", err)
 	}
 }
+
+func TestProductionUninstallRegistryKeyMatchesInstaller(t *testing.T) {
+	if productionUninstallRegistryKeyPath != `Software\Microsoft\Windows\CurrentVersion\Uninstall\DouyinLiveDesktop` {
+		t.Fatalf("production uninstall key = %q", productionUninstallRegistryKeyPath)
+	}
+}

@@ -168,6 +168,9 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 			t.Fatalf("installer arguments are missing %s", required)
 		}
 	}
+	if !strings.Contains(strings.Join(first, "\n"), "-DUPDATE_COMPAT_UNINST_KEY_NAME=DouyinLiveDouyinLiveDesktop") {
+		t.Fatal("installer arguments are missing the 0.2.0 updater compatibility key")
+	}
 }
 
 func mustMkdir(t *testing.T, path string) {

@@ -69,6 +69,9 @@ $productName = "DouyinLiveMatrix$nonce"
 $uninstallKeyName = "DouyinLiveMatrix$nonce"
 $uninstallRegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$uninstallKeyName"
 $uninstallRegistrySubKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$uninstallKeyName"
+$compatUninstallKeyName = "DouyinLiveMatrixCompat$nonce"
+$compatUninstallRegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$compatUninstallKeyName"
+$compatUninstallRegistrySubKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$compatUninstallKeyName"
 $oldInstaller = [IO.Path]::Combine($outputRoot, 'old-installer.exe')
 $currentInstaller = [IO.Path]::Combine($outputRoot, 'current-installer.exe')
 $autoWebView2Installer = [IO.Path]::Combine($outputRoot, 'auto-webview2-installer.exe')
@@ -142,6 +145,7 @@ function New-MatrixInstaller {
         INFO_PRODUCTVERSION = $Version
         PRODUCT_EXECUTABLE = 'douyin-live-desktop.exe'
         UNINST_KEY_NAME = $uninstallKeyName
+        UPDATE_COMPAT_UNINST_KEY_NAME = $compatUninstallKeyName
     }
     $arguments = @('/WX', '/INPUTCHARSET', 'UTF8')
     foreach ($entry in $defines.GetEnumerator()) { $arguments += "-D$($entry.Key)=$($entry.Value)" }
@@ -172,6 +176,11 @@ function Assert-InstalledPayload {
     }
     $displayVersion = (Get-ItemProperty -LiteralPath $uninstallRegistryPath -Name DisplayVersion).DisplayVersion
     if ($displayVersion -ne $ExpectedVersion) { throw "DisplayVersion is $displayVersion, expected $ExpectedVersion." }
+    $compat = Get-ItemProperty -LiteralPath $compatUninstallRegistryPath
+    if ($compat.DisplayVersion -ne $ExpectedVersion -or
+        [IO.Path]::GetFullPath($compat.InstallLocation).TrimEnd('\') -ne [IO.Path]::GetFullPath($installRoot).TrimEnd('\')) {
+        throw 'Updater compatibility registry identity is invalid.'
+    }
     if ((Get-FileHash -LiteralPath ([IO.Path]::Combine($installRoot, 'ffmpeg', 'ffmpeg.exe')) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $lock.binaries.'ffmpeg.exe') {
         throw 'Installed FFmpeg checksum mismatch.'
     }
@@ -187,6 +196,11 @@ function Test-UninstallKeyExists {
     foreach ($view in @([Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32)) {
         $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser, $view)
         try {
+            $compatKey = $baseKey.OpenSubKey($compatUninstallRegistrySubKey)
+            if ($null -ne $compatKey) {
+                $compatKey.Dispose()
+                return $true
+            }
             $key = $baseKey.OpenSubKey($uninstallRegistrySubKey)
             if ($null -ne $key) {
                 $key.Dispose()
@@ -300,6 +314,7 @@ try {
         } catch {}
     }
     if (Test-Path -LiteralPath $uninstallRegistryPath) { Remove-Item -LiteralPath $uninstallRegistryPath -Recurse -Force }
+    if (Test-Path -LiteralPath $compatUninstallRegistryPath) { Remove-Item -LiteralPath $compatUninstallRegistryPath -Recurse -Force }
     foreach ($shortcut in @(
         [IO.Path]::Combine([Environment]::GetFolderPath('Desktop'), "$productName.lnk"),
         [IO.Path]::Combine([Environment]::GetFolderPath('Programs'), "$productName.lnk")
