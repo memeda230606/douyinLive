@@ -2,7 +2,7 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-23）：P6-UPD-001 的 OSS、签名协议、客户端、独立更新助手、发布工具与设置 UI 已实现并通过自动化门禁；0.2.0 人工引导安装和 0.2.1 真实 canary 升级/24 小时观察仍按发布顺序执行。
+> 实施状态（2026-07-23）：0.2.0 已由用户确认安装并正常启动；0.2.1 已完成通道修复、正式构建并发布 canary，等待解决 0.2.0 固定 stable 的一次性引导后执行真实升级与 24 小时观察。
 > 最近验收：[P6 OSS 自动更新实现记录](validation/2026-07-23-p6-oss-auto-update.md)
 
 ## 1. 目标

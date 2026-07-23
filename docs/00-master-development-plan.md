@@ -21,23 +21,22 @@
 
 ```yaml
 schema_version: 1
-updated_at: "2026-07-23T13:55:00+08:00"
+updated_at: "2026-07-23T14:08:00+08:00"
 authoritative_workspace: "GJS-20250801EFK:D:\douyinLive"
 last_verified_branch: "main"
-last_verified_head: "6eeba29c07cd7619a70f2140d6a95146310d057e"
+last_verified_head: "a176be66e217f48fd0aab7620d1ef0695bae36eb"
 project_status: "IN_PROGRESS"
 overall_completion_percent: 99
 current_phase: "PHASE-6-AUTO-UPDATE"
 current_task: "P6-UPD-003"
 next_task: "P6-UPD-003"
-expected_dirty_paths:
-  - "P6-UPD-003 的 0.2.1 版本、通道策略、更新助手通道验签、发布器提升复用与计划/验证记录。"
+expected_dirty_paths: []
 blockers:
-  - "正式 0.2.0 客户端和其更新助手固定只接受 stable；它无法消费 canary 指针。0.2.1 已开始修复后续 canary 通道，但首次 0.2.0→0.2.1 需要在 stable 暴露或另装 canary 引导版之间做一次性发布决策。"
+  - "0.2.1 canary 已正式发布并通过匿名回读，但正式 0.2.0 客户端和其更新助手固定只接受 stable；首次 0.2.0→0.2.1 仍需在一次性 stable 引导或另装 canary 引导版之间做发布决策。"
   - "P6-UPD-003 仍须完成真实升级/失败恢复和 24 小时稳定观察，不能用单元测试或仅下载验证替代。"
 last_completed_task: "P6-UPD-002"
 last_completion_evidence: "用户提供 0.2.0 首次启动截图：版本 0.2.0、桌面服务已连接、本地存储正常、SQLite Schema v6，证明正式引导版可安装并正常启动。"
-resume_instruction: "完成 0.2.1 通道与发布修复、全量门禁、精确 tag/正式产物并发布 canary；完成 canary 对象与下载校验后，在触及 stable 或替换用户当前安装前先解决一次性 0.2.0 引导通道选择。"
+resume_instruction: "0.2.1 canary 已发布且 stable 仍为 404；先由用户确认一次性引导策略。若允许 stable 引导，则在精确 v0.2.1 源提交上签发 stable 信封、自动升级现有 0.2.0 并开始 24 小时观察；否则需另装 canary 引导版。"
 ```
 
 <!-- DEVELOPMENT_PROGRESS_END -->
@@ -117,7 +116,7 @@ resume_instruction: "完成 0.2.1 通道与发布修复、全量门禁、精确 
 | P5-WIN-002 | WebView2 一键安装与新用户安装包 | 1 | P5-ACC-001 | `DONE` | [验证记录](validation/2026-07-23-p5-webview2-one-click-installer.md)：锁定 Microsoft 官方 Bootstrapper；缺失时自动安装、复检并失败关闭；隔离矩阵 7/7、Go 全量 test/vet/build、双次 Wails 与正式 NSIS 发布门禁通过 | 当前计划全部完成；新需求另建任务 |
 | P6-UPD-001 | 实现 OSS 自动更新协议、客户端、更新助手、发布工具与基础设施 | 8 | P5-WIN-002 | `DONE` | [验证记录](validation/2026-07-23-p6-oss-auto-update.md)：Ed25519/严格 JSON/防回放、Range/ETag、忙状态门、Wails/React、安装恢复、OSS/RAM/DPAPI 完成；全量 Go/前端/Wails、候选发布、NSIS 7/7 与 OSS 实网负例通过 | 执行 P6-UPD-002 干净 0.2.0 引导版 |
 | P6-UPD-002 | 生成并人工安装 0.2.0 自动更新引导版 | 2 | P6-UPD-001 | `DONE` | 精确 `v0.2.0`、dirty=false 正式构建、Ed25519 信封和正式 NSIS 7/7 通过；用户截图确认版本 0.2.0 正常启动、桌面服务连接、本地存储与 Schema v6 正常 | 执行 P6-UPD-003 |
-| P6-UPD-003 | 0.2.1 canary 真实升级、回滚、24 小时观察与 stable 提升 | 2 | P6-UPD-002 | `IN_PROGRESS` | 已识别 0.2.0 固定 stable 与签名通道绑定导致的首次引导矛盾；正在补齐管理员 canary 策略、助手通道验签和按通道信封提升 | 完成 0.2.1 canary 构建/发布；解决首次引导通道后执行真实矩阵与 24 小时观察 |
+| P6-UPD-003 | 0.2.1 canary 真实升级、回滚、24 小时观察与 stable 提升 | 2 | P6-UPD-002 | `IN_PROGRESS` | 提交/tag `a176be6`/`v0.2.1`；dirty=false 正式构建、安装矩阵 7/7、canary 发布及匿名 hash 回读通过，stable 保持 404；正式 0.2.0 固定 stable 的一次性引导决策待定 | 选择一次性引导策略，执行真实升级/失败恢复与 24 小时观察 |
 
 阶段任务点按当前阶段统计：P1 共 12 点且已完成；P2 共 20 点且已完成；P3 共 30 点且已完成；P4 共 20 点且已完成；P5 共 11 点且已完成；P6 共 12 点、已完成 10 点。上表若新增或调整点数，必须同步修正本句和对应阶段完成度。P0 的 5 点只用于记录文档基线。
 
@@ -154,6 +153,7 @@ resume_instruction: "完成 0.2.1 通道与发布修复、全量门禁、精确 
 
 | 时间 | 任务 | 状态 | 变更与验证 | 下一步 |
 | --- | --- | --- | --- | --- |
+| 2026-07-23 14:08 | P6-UPD-003 | `IN_PROGRESS` | 提交 `a176be6`、精确 tag `v0.2.1`；Go 全量 test/vet/build、前端 10 文件 37 测试/typecheck/build、production Wails、dirty=false 正式发布门禁（251 组件/439 扫描文件）与 NSIS 7/7 通过；安装器 98,400,858 字节、SHA-256 `c9e43663cd086dc306971ed4c73008c9640a2adf4073b31be8db13207f367b8e`；真实 OSS canary 发布成功，信封回读 hash 一致，stable 仍为 404 | 用户确认一次性 stable 引导或另装 canary 引导版；随后执行真实升级/回滚与 24 小时观察 |
 | 2026-07-23 13:55 | P6-UPD-002 / P6-UPD-003 | `DONE` / `IN_PROGRESS` | 用户截图确认正式 0.2.0 正常启动、桌面服务连接、本地存储与 Schema v6 正常；复核发现 0.2.0 客户端和助手固定 stable，且签名载荷绑定通道使同一信封不能跨通道提升，已启动 0.2.1 管理员通道策略、助手按签名通道验签和发布器复用不可变产物修复 | 完成 0.2.1 全量门禁、精确 tag、正式 canary 发布；触及 stable 或替换现有安装前明确一次性引导选择 |
 | 2026-07-23 14:05 | P6-UPD-002 | `BLOCKED` | P6 提交 `54172c6` 并创建精确 `v0.2.0`；dirty=false 正式构建通过（251 组件、436 文件敏感扫描），安装器 98,399,776 字节、SHA-256 `891b0afefd6ae597332be4568151c269d1fc3dbdd0c7e791e3134f931c37167b`，正式 NSIS 7/7；Ed25519 canary 信封已生成但未发布 | 用户人工安装 `release\v0.2.0` 正式安装器并确认首次启动 |
 | 2026-07-23 13:45 | P6-UPD-001 | `DONE` | 完成 OSS/RAM/DPAPI、Ed25519 信封、严格客户端、Range/ETag、录制忙状态门、Wails/React、独立更新助手和受控发布器；全量 Go/前端/Wails、0.2.0 脏树候选发布、NSIS 7/7、OSS HTTPS/权限负例/VersionId 恢复均通过，验收对象版本清零 | 执行 P6-UPD-002：提交、精确 v0.2.0、干净正式构建并交付人工安装 |

@@ -2,7 +2,7 @@
 
 - 日期：2026-07-23
 - 权威工作副本：`GJS-20250801EFK:D:\douyinLive`
-- 任务状态：实现与基础设施 `DONE`；精确 `v0.2.0` 已由用户确认安装并正常启动；0.2.1 通道/提升修复与 canary 发布 `IN_PROGRESS`，真实升级和 24 小时 stable 提升门禁未完成
+- 任务状态：实现与基础设施、0.2.0 人工引导、0.2.1 通道修复/正式构建/canary 发布已完成；真实自动升级、失败恢复和 24 小时观察仍为 `IN_PROGRESS`
 - 凭据边界：本文及仓库不记录 AccessKey、RAM 密钥、Ed25519 私钥或解密后的 DPAPI 数据
 
 ## 1. OSS 与发布身份
@@ -95,9 +95,20 @@ git diff --check
 - 签名 payload 明确包含 channel，canary 信封不能逐字节提升为 stable。0.2.1 修复为：管理员机器策略选择 canary、安装作业携带并按签名 channel 验证、不可变安装器/发布清单跨通道复用、通道信封分别保存；
 - 在真实 OSS 发布 canary 后，触及 stable 指针或替换用户当前正式安装前，必须记录一次性 0.2.0 引导决策；不得把仅下载 canary 冒充真实自动安装。
 
+0.2.1 正式结果：
+
+- 源提交/tag：`a176be66e217f48fd0aab7620d1ef0695bae36eb` / `v0.2.1`；
+- Go 全量 `test/vet/build`、前端 10 文件 37 项测试/typecheck/build、production Wails 通过；
+- 正式发布门禁：`dirty=false`、251 个组件、439 个扫描文件；
+- 安装器矩阵：7/7；安装器大小 98,400,858 字节，SHA-256 `c9e43663cd086dc306971ed4c73008c9640a2adf4073b31be8db13207f367b8e`；
+- canary 发布器通过进程级代理完成上传；不可变安装器、发布清单、`releases/v0.2.1/update-canary.json` 与 `channels/canary.json` 均经匿名 HTTPS 回读；
+- `channels/canary.json` 与本地签名信封 SHA-256 均为 `e8bf381972355f478936b68c3610dbd32e1d8b25a49a7a1eb3d38784b0d1b684`，大小 1,424 字节；
+- 实网复查：canary 200、版本化信封 200、安装器 Range 206/1 字节、HTTP 403、匿名 List 403，`channels/stable.json` 保持 404；
+- 首次发布直连探测为 000，本机 Clash/Mihomo 代理为 404；仅为发布进程设置 `HTTP_PROXY`/`HTTPS_PROXY` 后成功，没有修改持久 Git、系统或应用代理。
+
 ## 7. 已知限制与剩余发布门
 
-OSS 在 Bucket Versioning Enabled/Suspended 时忽略 `x-oss-forbid-overwrite`。当前发布工具在每个 `releases/vX.Y.Z/*` 上传前执行 HeadObject 并拒绝已存在 key，配合单一最小权限发布身份和版本历史实现可审计保护；这不是存储层不可绕过的 WORM。
+OSS 在 Bucket Versioning Enabled/Suspended 时忽略 `x-oss-forbid-overwrite`。当前发布工具对通道专属版本信封执行 HeadObject 并拒绝已存在 key；跨通道提升只复用匿名回读 hash 完全一致的安装器与发布清单，配合单一最小权限发布身份和版本历史实现可审计保护；这不是存储层不可绕过的 WORM。
 
 以下证据不得提前宣称完成：
 
