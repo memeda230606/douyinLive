@@ -98,7 +98,7 @@ func NewService(options Options) (*Service, error) {
 	}
 	if options.HTTPClient == nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.Proxy = http.ProxyFromEnvironment
+		transport.Proxy = defaultProxy
 		transport.ResponseHeaderTimeout = 15 * time.Second
 		transport.TLSHandshakeTimeout = 10 * time.Second
 		options.HTTPClient = &http.Client{

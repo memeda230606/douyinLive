@@ -15,7 +15,7 @@ const (
 // These values are overridden only by the audited release builder through
 // Go -ldflags -X. Defaults are explicit so local builds remain diagnosable.
 var (
-	productVersion = "0.2.2-dev"
+	productVersion = "0.2.3-dev"
 	gitCommit      = "unknown"
 	buildTime      = "unknown"
 	buildSource    = "local"
