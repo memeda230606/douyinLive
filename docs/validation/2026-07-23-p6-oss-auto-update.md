@@ -2,7 +2,7 @@
 
 - 日期：2026-07-23
 - 权威工作副本：`GJS-20250801EFK:D:\douyinLive`
-- 任务状态：实现与基础设施、0.2.0 人工引导、0.2.1 canary/stable 发布已完成；安装前发现引导注册表键不一致并转入不可变 0.2.2 修复，真实自动升级、失败恢复和 24 小时观察仍为 `IN_PROGRESS`
+- 任务状态：实现与基础设施、0.2.0 人工引导、0.2.2 canary/stable 发布及 0.2.0→0.2.2 真实自动升级已完成；剩余受控故障矩阵和 24 小时观察仍为 `IN_PROGRESS`
 - 凭据边界：本文及仓库不记录 AccessKey、RAM 密钥、Ed25519 私钥或解密后的 DPAPI 数据
 
 ## 1. OSS 与发布身份
@@ -112,13 +112,21 @@ git diff --check
 - 安装前只读检查发现实际卸载键是 `HKCU\...\Uninstall\DouyinLiveDesktop`，0.2.0 助手却硬编码 `DouyinLiveDouyinLiveDesktop`。直接安装会在新安装器成功后误报 `UPDATE_REGISTRY_NOT_CONVERGED` 并回滚，因此未触发客户端安装；
 - 0.2.1 版本化对象保持不可变。0.2.2 安装器将额外写入仅含版本/安装位置的旧助手兼容键并在卸载时清理；0.2.2 助手改为校验正式键，后续版本不再依赖兼容键。
 
+0.2.2 正式发布与真实升级：
+
+- 源提交/tag：`4e51f521d19b74a2d715ff867ee9cf0382e9ea9a` / `v0.2.2`；正式发布门禁为 `dirty=false`、251 个组件、439 个扫描文件，正式 NSIS 安装矩阵 7/7；
+- 安装器 98,400,939 字节，SHA-256 `a1d39cdde96a9dd164dfb44af6802a9ea228a1138a124244c6e129caae2a2d3e`；主 EXE SHA-256 `371a6cd050a04a66fec6f3168def848bdb43ecbfcbd2029c94ecb9f78b2d6b60`；
+- canary 信封 SHA-256 `159f2bb16d1b4a6d06094da5d2012da0924c1d8fb81902e8a4a757d7caca0b96`，stable 信封 SHA-256 `4b00ec602cfa99bc7e8ecd67675a8370c1c1c90fb9476215e031e2a0a3b47720`；两者载荷通道不同但安装器与发布清单 object key/size/hash 完全一致；
+- 匿名实网复验：安装器 Range 为 206/1 字节，HTTP 为 403，匿名 List 为 403；
+- 当前主机的 Go 进程不自动继承 WinINET/Clash，仅给真实验收应用进程临时设置 `HTTP_PROXY`/`HTTPS_PROXY` 与本机 `NO_PROXY`，未修改持久环境；0.2.0 随后自动检查、下载并显示“版本 0.2.2 已准备好”；
+- 第一次安装由验收夹具错误地把应用工作目录设为安装目录，助手安全返回 `UPDATE_PROGRAM_BACKUP_FAILED`，0.2.0 和数据库备份均保留。改用桌面工作目录后重试成功，安装结果为 `success=true`；
+- 安装后正式键与兼容键的版本/位置均为 0.2.2/正式安装目录；已安装 EXE hash 与正式发布物一致；新应用健康启动，界面显示 0.2.2、本地存储正常、SQLite Schema v6；程序目录更新备份为 0，更新助手进程为 0。
+
 ## 7. 已知限制与剩余发布门
 
 OSS 在 Bucket Versioning Enabled/Suspended 时忽略 `x-oss-forbid-overwrite`。当前发布工具对通道专属版本信封执行 HeadObject 并拒绝已存在 key；跨通道提升只复用匿名回读 hash 完全一致的安装器与发布清单，配合单一最小权限发布身份和版本历史实现可审计保护；这不是存储层不可绕过的 WORM。
 
 以下证据不得提前宣称完成：
 
-- 0.2.0→0.2.2 的真实自动升级、重启、活动录制拒绝、断网续传、坏签名/坏安装包与失败恢复；
-- 0.2.2 canary/stable 的签名回读、不可变资产一致性与更新助手兼容键验收；
-- 权威 Windows 主机 24 小时稳定观察；
-- 使用与 canary 完全相同的安装器和发布清单签发 stable 信封，并完成 stable 匿名回读与协议复验。
+- 活动录制拒绝、断网续传、坏签名/坏安装包与安装失败自动恢复的受控验收；
+- 权威 Windows 主机从 2026-07-23 14:42 +08:00 起连续 24 小时稳定观察。
