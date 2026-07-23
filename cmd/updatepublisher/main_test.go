@@ -80,6 +80,10 @@ func TestPrepareEnvelopeBindsReleaseArtifactsAndSigningKey(t *testing.T) {
 		t.Fatalf("verified payload = %+v", verified.Payload)
 	}
 
+	if got := versionedEnvelopeObjectKey("0.2.1", "canary"); got != "releases/v0.2.1/update-canary.json" {
+		t.Fatalf("versionedEnvelopeObjectKey() = %q", got)
+	}
+
 	if err := os.WriteFile(installerPath, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}

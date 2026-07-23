@@ -22,6 +22,7 @@ type InstallJob struct {
 	ParentPID      int    `json:"parentPid"`
 	CurrentVersion string `json:"currentVersion"`
 	TargetVersion  string `json:"targetVersion"`
+	Channel        string `json:"channel"`
 	Envelope       string `json:"envelope"`
 	InstallerPath  string `json:"installerPath"`
 	InstallDir     string `json:"installDir"`
@@ -46,6 +47,7 @@ func NewInstallJob(parentPID int, currentVersion string, envelope []byte, verifi
 	return InstallJob{
 		Schema: InstallJobSchema, ParentPID: parentPID,
 		CurrentVersion: currentVersion, TargetVersion: verified.Payload.Version,
+		Channel:       verified.Payload.Channel,
 		Envelope:      base64.StdEncoding.EncodeToString(envelope),
 		InstallerPath: installerPath, InstallDir: installDir,
 		ExecutableName: "douyin-live-desktop.exe",
@@ -103,10 +105,10 @@ func LoadAndVerifyInstallJob(path string, trusted map[string][]byte) (VerifiedIn
 	for keyID, raw := range trusted {
 		keys[keyID] = ed25519.PublicKey(raw)
 	}
-	return loadAndVerifyInstallJob(path, keys, ProductionChannel, ProductionBaseURL)
+	return loadAndVerifyInstallJob(path, keys, ProductionBaseURL)
 }
 
-func loadAndVerifyInstallJob(path string, trusted map[string]ed25519.PublicKey, channel, baseURL string) (VerifiedInstallJob, error) {
+func loadAndVerifyInstallJob(path string, trusted map[string]ed25519.PublicKey, baseURL string) (VerifiedInstallJob, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return VerifiedInstallJob{}, fmt.Errorf("UPDATE_INSTALL_JOB_READ_FAILED: %w", err)
@@ -126,7 +128,7 @@ func loadAndVerifyInstallJob(path string, trusted map[string]ed25519.PublicKey, 
 		return VerifiedInstallJob{}, errors.New("UPDATE_INSTALL_JOB_INVALID")
 	}
 	verified, err := VerifyEnvelope(
-		envelope, trusted, job.CurrentVersion, "", channel, baseURL,
+		envelope, trusted, job.CurrentVersion, "", job.Channel, baseURL,
 	)
 	if err != nil {
 		return VerifiedInstallJob{}, fmt.Errorf("UPDATE_INSTALL_JOB_SIGNATURE_INVALID: %w", err)
@@ -161,6 +163,7 @@ func validateInstallJobShape(job InstallJob) error {
 		!ValidVersion(job.CurrentVersion) || !ValidVersion(job.TargetVersion) ||
 		CompareVersions(job.TargetVersion, job.CurrentVersion) <= 0 ||
 		job.ExecutableName != "douyin-live-desktop.exe" ||
+		(job.Channel != "stable" && job.Channel != "canary") ||
 		!healthNoncePattern.MatchString(job.HealthNonce) {
 		return errors.New("UPDATE_INSTALL_JOB_INVALID")
 	}

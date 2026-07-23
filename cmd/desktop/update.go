@@ -41,9 +41,13 @@ func (a *DesktopApp) initializeUpdater(parent context.Context) error {
 	if err != nil {
 		return err
 	}
+	channel, err := update.ProductionUpdateChannel()
+	if err != nil {
+		return err
+	}
 	updateContext, cancel := context.WithCancel(parent)
 	service, err := update.NewService(update.Options{
-		BaseURL: update.ProductionBaseURL, Channel: update.ProductionChannel,
+		BaseURL: update.ProductionBaseURL, Channel: channel,
 		CurrentVersion: a.application.Bootstrap().Build.ProductVersion,
 		TrustedKeys:    trustedKeys, Root: filepath.Join(currentSettings.StorageRoot, "updates"),
 		CanTransfer: a.updateTransferAllowed,

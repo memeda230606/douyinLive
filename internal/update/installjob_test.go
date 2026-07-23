@@ -36,6 +36,7 @@ func TestInstallJobRoundTripAndReverifiesSignedInstaller(t *testing.T) {
 	}
 	digest := sha256.Sum256(installerBytes)
 	payload := testPayload()
+	payload.Channel = "canary"
 	payload.Version = "0.2.1"
 	payload.Installer = FileDescriptor{
 		ObjectKey: "releases/v0.2.1/douyin-live-desktop-0.2.1-windows-amd64-installer.exe",
@@ -57,12 +58,13 @@ func TestInstallJobRoundTripAndReverifiesSignedInstaller(t *testing.T) {
 		t.Fatalf("WriteInstallJob() error = %v", err)
 	}
 	verified, err := loadAndVerifyInstallJob(
-		jobPath, map[string]ed25519.PublicKey{"test": publicKey}, "stable", "https://updates.example.invalid",
+		jobPath, map[string]ed25519.PublicKey{"test": publicKey}, "https://updates.example.invalid",
 	)
 	if err != nil {
 		t.Fatalf("loadAndVerifyInstallJobWithConfig() error = %v", err)
 	}
-	if verified.Job.TargetVersion != "0.2.1" || verified.Job.InstallerPath != installer {
+	if verified.Job.TargetVersion != "0.2.1" || verified.Job.Channel != "canary" ||
+		verified.Job.InstallerPath != installer {
 		t.Fatalf("verified job = %+v", verified.Job)
 	}
 
@@ -70,7 +72,7 @@ func TestInstallJobRoundTripAndReverifiesSignedInstaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := loadAndVerifyInstallJob(
-		jobPath, map[string]ed25519.PublicKey{"test": publicKey}, "stable", "https://updates.example.invalid",
+		jobPath, map[string]ed25519.PublicKey{"test": publicKey}, "https://updates.example.invalid",
 	); errorCode(err) != "UPDATE_HASH_MISMATCH" {
 		t.Fatalf("tampered installer error = %v", err)
 	}
@@ -89,6 +91,7 @@ func TestInstallJobRejectsDuplicateFieldAndEscapingPaths(t *testing.T) {
 	job := InstallJob{
 		Schema: InstallJobSchema, ParentPID: 1, CurrentVersion: "0.2.0",
 		TargetVersion: "0.2.1", ExecutableName: "douyin-live-desktop.exe",
+		Channel:       "stable",
 		InstallerPath: filepath.Join(root, "outside.exe"),
 		InstallDir:    filepath.Join(t.TempDir(), "app"), DataRoot: root,
 		DatabaseBackup: filepath.Join(root, "backups", "app-v6-20260723T080910.123Z.db"),
@@ -98,6 +101,10 @@ func TestInstallJobRejectsDuplicateFieldAndEscapingPaths(t *testing.T) {
 	}
 	if err := validateInstallJobShape(job); errorCode(err) != "UPDATE_INSTALL_JOB_PATH_INVALID" {
 		t.Fatalf("escaping-path error = %v", err)
+	}
+	job.Channel = "preview"
+	if err := validateInstallJobShape(job); errorCode(err) != "UPDATE_INSTALL_JOB_INVALID" {
+		t.Fatalf("invalid-channel error = %v", err)
 	}
 }
 

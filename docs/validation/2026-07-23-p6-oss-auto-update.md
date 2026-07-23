@@ -2,7 +2,7 @@
 
 - 日期：2026-07-23
 - 权威工作副本：`GJS-20250801EFK:D:\douyinLive`
-- 任务状态：实现与基础设施 `DONE`；精确 `v0.2.0` 正式产物和信封已完成，等待人工引导安装；0.2.1 canary 真实升级和 24 小时 stable 提升门禁未执行
+- 任务状态：实现与基础设施 `DONE`；精确 `v0.2.0` 已由用户确认安装并正常启动；0.2.1 通道/提升修复与 canary 发布 `IN_PROGRESS`，真实升级和 24 小时 stable 提升门禁未完成
 - 凭据边界：本文及仓库不记录 AccessKey、RAM 密钥、Ed25519 私钥或解密后的 DPAPI 数据
 
 ## 1. OSS 与发布身份
@@ -88,13 +88,20 @@ git diff --check
 - 同一通道 key 连续上传 revision 1/2 后存在两个 VersionId；管理员按旧 VersionId 下载与 revision 1 字节一致；
 - 验收结束后精确删除全部验收对象版本，三个验收前缀剩余 Version/DeleteMarker 总数为 0。
 
-## 6. 已知限制与剩余发布门
+## 6. 0.2.0 人工引导与通道复核
+
+- 用户提供的首次启动截图显示：左下角版本 `0.2.0`、桌面服务已连接、本地存储正常、SQLite Schema v6，P6-UPD-002 据此完成；
+- 后续静态复核发现正式 0.2.0 的客户端固定读取 `channels/stable.json`，其已安装更新助手也固定按 stable 验证签名载荷，因此无法直接消费 canary 信封；
+- 签名 payload 明确包含 channel，canary 信封不能逐字节提升为 stable。0.2.1 修复为：管理员机器策略选择 canary、安装作业携带并按签名 channel 验证、不可变安装器/发布清单跨通道复用、通道信封分别保存；
+- 在真实 OSS 发布 canary 后，触及 stable 指针或替换用户当前正式安装前，必须记录一次性 0.2.0 引导决策；不得把仅下载 canary 冒充真实自动安装。
+
+## 7. 已知限制与剩余发布门
 
 OSS 在 Bucket Versioning Enabled/Suspended 时忽略 `x-oss-forbid-overwrite`。当前发布工具在每个 `releases/vX.Y.Z/*` 上传前执行 HeadObject 并拒绝已存在 key，配合单一最小权限发布身份和版本历史实现可审计保护；这不是存储层不可绕过的 WORM。
 
 以下证据不得提前宣称完成：
 
-- 用户人工安装 0.2.0 引导版；
+- 0.2.0→0.2.1 的真实自动升级（正式 0.2.0 固定 stable，需先解决一次性引导通道）；
 - 0.2.1 canary 的 0.2.0→0.2.1 真实升级、重启、活动录制拒绝、断网续传、坏签名/坏安装包与失败恢复；
 - 权威 Windows 主机 24 小时稳定观察；
-- 将完全相同的已验证 canary 信封提升到 stable。
+- 使用与 canary 完全相同的安装器和发布清单签发 stable 信封，并完成 stable 匿名回读与协议复验。

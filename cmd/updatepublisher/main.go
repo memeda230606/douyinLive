@@ -268,15 +268,13 @@ func publishRelease(ctx context.Context, value options, identity releaseIdentity
 	releaseFiles := []struct {
 		key, path, contentType string
 		content                []byte
+		reusable               bool
 	}{
-		{key: identity.Installer.ObjectKey, path: filepath.Join(value.releaseDirectory, filepath.Base(identity.Installer.ObjectKey)), contentType: "application/vnd.microsoft.portable-executable"},
-		{key: identity.Manifest.ObjectKey, path: filepath.Join(value.releaseDirectory, "release-manifest.json"), contentType: "application/json"},
-		{key: "releases/v" + value.version + "/update.json", content: envelope, contentType: "application/json"},
+		{key: identity.Installer.ObjectKey, path: filepath.Join(value.releaseDirectory, filepath.Base(identity.Installer.ObjectKey)), contentType: "application/vnd.microsoft.portable-executable", reusable: true},
+		{key: identity.Manifest.ObjectKey, path: filepath.Join(value.releaseDirectory, "release-manifest.json"), contentType: "application/json", reusable: true},
+		{key: versionedEnvelopeObjectKey(value.version, value.channel), content: envelope, contentType: "application/json"},
 	}
 	for _, file := range releaseFiles {
-		if err := ensureObjectAbsent(ctx, client, value.bucket, file.key); err != nil {
-			return err
-		}
 		var body io.Reader
 		var size int64
 		if file.content != nil {
@@ -294,17 +292,6 @@ func publishRelease(ctx context.Context, value options, identity releaseIdentity
 			}
 			body, size = handle, info.Size()
 		}
-		forbid := "true"
-		encryption := "AES256"
-		_, err := client.PutObject(ctx, &oss.PutObjectRequest{
-			Bucket: oss.Ptr(value.bucket), Key: oss.Ptr(file.key), Body: body,
-			ContentLength: oss.Ptr(size), ContentType: oss.Ptr(file.contentType),
-			CacheControl: oss.Ptr(immutableCache), ForbidOverwrite: &forbid,
-			ServerSideEncryption: &encryption,
-		})
-		if err != nil {
-			return fmt.Errorf("UPDATE_OSS_UPLOAD_FAILED: %w", err)
-		}
 		expectedHash := ""
 		if file.content != nil {
 			digest := sha256.Sum256(file.content)
@@ -314,6 +301,30 @@ func publishRelease(ctx context.Context, value options, identity releaseIdentity
 			if err != nil {
 				return err
 			}
+		}
+		exists, err := objectExists(ctx, client, value.bucket, file.key)
+		if err != nil {
+			return err
+		}
+		if exists {
+			if !file.reusable {
+				return errors.New("UPDATE_OSS_RELEASE_OBJECT_EXISTS")
+			}
+			if err := verifyAnonymousObject(ctx, baseURL, file.key, size, expectedHash); err != nil {
+				return err
+			}
+			continue
+		}
+		forbid := "true"
+		encryption := "AES256"
+		_, err = client.PutObject(ctx, &oss.PutObjectRequest{
+			Bucket: oss.Ptr(value.bucket), Key: oss.Ptr(file.key), Body: body,
+			ContentLength: oss.Ptr(size), ContentType: oss.Ptr(file.contentType),
+			CacheControl: oss.Ptr(immutableCache), ForbidOverwrite: &forbid,
+			ServerSideEncryption: &encryption,
+		})
+		if err != nil {
+			return fmt.Errorf("UPDATE_OSS_UPLOAD_FAILED: %w", err)
 		}
 		if err := verifyAnonymousObject(ctx, baseURL, file.key, size, expectedHash); err != nil {
 			return err
@@ -337,18 +348,22 @@ func publishRelease(ctx context.Context, value options, identity releaseIdentity
 	)
 }
 
-func ensureObjectAbsent(ctx context.Context, client *oss.Client, bucket, key string) error {
+func versionedEnvelopeObjectKey(version, channel string) string {
+	return "releases/v" + version + "/update-" + channel + ".json"
+}
+
+func objectExists(ctx context.Context, client *oss.Client, bucket, key string) (bool, error) {
 	_, err := client.HeadObject(ctx, &oss.HeadObjectRequest{
 		Bucket: oss.Ptr(bucket), Key: oss.Ptr(key),
 	})
 	if err == nil {
-		return errors.New("UPDATE_OSS_RELEASE_OBJECT_EXISTS")
+		return true, nil
 	}
 	var serviceError *oss.ServiceError
 	if errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusNotFound {
-		return nil
+		return false, nil
 	}
-	return fmt.Errorf("UPDATE_OSS_OBJECT_INSPECT_FAILED: %w", err)
+	return false, fmt.Errorf("UPDATE_OSS_OBJECT_INSPECT_FAILED: %w", err)
 }
 
 func verifyAnonymousObject(ctx context.Context, origin *url.URL, key string, size int64, digest string) error {
