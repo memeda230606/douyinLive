@@ -36,7 +36,7 @@ func reproducibleGoToolBuild(root, packagePath, artifact string) (string, int64,
 	return firstHash, firstSize, nil
 }
 
-func buildWindowsInstaller(root, outDir, installer, desktop, rollback, version string, lock FFmpegLock) (string, int64, error) {
+func buildWindowsInstaller(root, outDir, installer, desktop, rollback, webView2Bootstrapper, version string, lock FFmpegLock) (string, int64, error) {
 	makensis, err := exec.LookPath("makensis")
 	if err != nil {
 		return "", 0, fmt.Errorf("locate NSIS compiler: %w", err)
@@ -51,22 +51,24 @@ func buildWindowsInstaller(root, outDir, installer, desktop, rollback, version s
 	}
 	installerScript := filepath.Join(root, "cmd", "desktop", "build", "windows", "installer", "project.nsi")
 	arguments := installerArguments(map[string]string{
-		"ARG_WAILS_AMD64_BINARY": desktop,
-		"ARG_FFMPEG_BINARY":      ffmpeg,
-		"ARG_FFPROBE_BINARY":     ffprobe,
-		"ARG_DBROLLBACK_BINARY":  rollback,
-		"ARG_LICENSE_FILE":       filepath.Join(outDir, "LICENSE.txt"),
-		"ARG_LICENSE_MANIFEST":   filepath.Join(outDir, "licenses.json"),
-		"ARG_NOTICES_FILE":       filepath.Join(outDir, "THIRD-PARTY-NOTICES.txt"),
-		"ARG_SBOM_FILE":          filepath.Join(outDir, "sbom.spdx.json"),
-		"ARG_FFMPEG_LOCK":        filepath.Join(outDir, "ffmpeg-windows-amd64.lock.json"),
-		"ARG_INSTALLATION_GUIDE": filepath.Join(outDir, "INSTALLATION.md"),
-		"ARG_USER_GUIDE":         filepath.Join(outDir, "USER-GUIDE.md"),
-		"ARG_PRIVACY_GUIDE":      filepath.Join(outDir, "PRIVACY.md"),
-		"ARG_LIMITATIONS_GUIDE":  filepath.Join(outDir, "KNOWN-LIMITATIONS.md"),
-		"ARG_RELEASE_CHECKLIST":  filepath.Join(outDir, "RELEASE-CHECKLIST.md"),
-		"ARG_INSTALLER_OUTPUT":   installer,
-		"INFO_PRODUCTVERSION":    version,
+		"ARG_WAILS_AMD64_BINARY":    desktop,
+		"ARG_FFMPEG_BINARY":         ffmpeg,
+		"ARG_FFPROBE_BINARY":        ffprobe,
+		"ARG_WEBVIEW2_BOOTSTRAPPER": webView2Bootstrapper,
+		"ARG_WEBVIEW2_LOCK":         filepath.Join(outDir, "webview2-bootstrapper-windows.lock.json"),
+		"ARG_DBROLLBACK_BINARY":     rollback,
+		"ARG_LICENSE_FILE":          filepath.Join(outDir, "LICENSE.txt"),
+		"ARG_LICENSE_MANIFEST":      filepath.Join(outDir, "licenses.json"),
+		"ARG_NOTICES_FILE":          filepath.Join(outDir, "THIRD-PARTY-NOTICES.txt"),
+		"ARG_SBOM_FILE":             filepath.Join(outDir, "sbom.spdx.json"),
+		"ARG_FFMPEG_LOCK":           filepath.Join(outDir, "ffmpeg-windows-amd64.lock.json"),
+		"ARG_INSTALLATION_GUIDE":    filepath.Join(outDir, "INSTALLATION.md"),
+		"ARG_USER_GUIDE":            filepath.Join(outDir, "USER-GUIDE.md"),
+		"ARG_PRIVACY_GUIDE":         filepath.Join(outDir, "PRIVACY.md"),
+		"ARG_LIMITATIONS_GUIDE":     filepath.Join(outDir, "KNOWN-LIMITATIONS.md"),
+		"ARG_RELEASE_CHECKLIST":     filepath.Join(outDir, "RELEASE-CHECKLIST.md"),
+		"ARG_INSTALLER_OUTPUT":      installer,
+		"INFO_PRODUCTVERSION":       version,
 	})
 	arguments = append(arguments, installerScript)
 	command := exec.Command(makensis, arguments...)
@@ -101,6 +103,7 @@ func lockedBinaryPath(name, expectedHash string) (string, error) {
 func installerArguments(defines map[string]string) []string {
 	order := []string{
 		"ARG_WAILS_AMD64_BINARY", "ARG_FFMPEG_BINARY", "ARG_FFPROBE_BINARY",
+		"ARG_WEBVIEW2_BOOTSTRAPPER", "ARG_WEBVIEW2_LOCK",
 		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT",

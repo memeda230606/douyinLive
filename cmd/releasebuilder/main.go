@@ -14,6 +14,7 @@ func main() {
 	source := flag.String("source", "local-release", "privacy-safe build source identifier")
 	allowDirty := flag.Bool("allow-dirty", false, "allow a dirty tree for development validation only")
 	verifyOnly := flag.Bool("verify-only", false, "run inventories and gates without building the desktop executable")
+	webView2Bootstrapper := flag.String("webview2-bootstrapper", "", "absolute path to the locked Microsoft WebView2 Evergreen Bootstrapper")
 	flag.Parse()
 	if *version == "" {
 		fmt.Fprintln(os.Stderr, "RELEASE_VERSION_REQUIRED")
@@ -26,7 +27,7 @@ func main() {
 	}
 	result, err := releasegate.Run(releasegate.BuildOptions{
 		RepoRoot: root, Version: *version, OutputRoot: *output, BuildSource: *source,
-		AllowDirty: *allowDirty, SkipBuild: *verifyOnly,
+		AllowDirty: *allowDirty, SkipBuild: *verifyOnly, WebView2Bootstrapper: *webView2Bootstrapper,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "RELEASE_GATE_FAILED:", err)

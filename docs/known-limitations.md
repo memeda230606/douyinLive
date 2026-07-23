@@ -16,7 +16,8 @@
 
 ## 系统与安装
 
-- 首发安装包只支持原生 Windows x64，并依赖 Microsoft Edge WebView2 Evergreen Runtime。
+- 首发安装包只支持原生 Windows x64，并依赖 Microsoft Edge WebView2 Evergreen Runtime；缺失时安装器会通过包内锁定的微软官方 Bootstrapper 在线安装。
+- 完全离线的新系统仍需提前安装微软官方 x64 Evergreen Standalone Installer。
 - arm64 没有独立构建和安装矩阵；Windows Server、Wine、虚拟化兼容层和非原生架构不在首版承诺范围。
 - 当前可运行验收主机为 Windows 11 x64 build 22631；Windows 10 x64 仍是计划兼容目标，但未取得独立实机矩阵，不阻塞当前直接/内部交付。
 - 当前直接/内部交付包可能未签名并触发 SmartScreen；必须从可信渠道取得并按 release manifest 核对 SHA-256。公开分发时建议补充 Authenticode 和可信时间戳。

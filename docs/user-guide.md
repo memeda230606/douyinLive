@@ -6,7 +6,7 @@
 
 1. 只从项目维护者提供的可信渠道取得安装包，并先按同版本 `release-manifest.json` 核对 SHA-256。
 2. 当前直接/内部交付不要求 Authenticode 签名，Windows 可能显示 SmartScreen 提示。只有来源可信且 SHA-256 完全匹配时才继续运行；公开分发时仍建议使用带可信时间戳的代码签名。
-3. 安装器按当前用户安装，不需要管理员权限。缺少 WebView2 时，按提示从 Microsoft 官方地址安装 Evergreen Runtime 后重试。
+3. 安装器按当前用户安装，不需要管理员权限。缺少 WebView2 时会自动静默运行包内锁定的 Microsoft 官方 Evergreen Bootstrapper，安装成功后继续部署。
 4. 首次启动后在“设置”确认内部数据目录、外部媒体目录、分片时长、并发录制上限、磁盘余量阈值和隐私选项。
 
 ## 添加直播间与监控
@@ -47,7 +47,7 @@
 
 ## 故障处理
 
-1. WebView2 缺失：安装 Microsoft 官方 Evergreen Runtime，重新运行安装器。
+1. WebView2 自动安装失败：确认可访问 Microsoft 下载服务后重试；离线环境可先安装 Microsoft 官方 x64 Evergreen Standalone Installer。
 2. FFmpeg 校验失败：不要替换随附二进制；重新下载并核对正式发布清单。
 3. 磁盘不足：释放目标数据盘空间或更换经过验证的外部媒体目录；消息监听会尽量继续，录制可能停止。
 4. 数据库忙或异常退出：保留数据根并重启；程序会按耐久 checkpoint 恢复。不要同时启动多个实例操作同一数据根。

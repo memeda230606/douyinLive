@@ -18,6 +18,7 @@ douyinLive
 # Build
 /build/*
 !/build/ffmpeg-windows-amd64.lock.json
+!/build/webview2-bootstrapper-windows.lock.json
 /dist/
 /release/
 /cmd/main/build-*

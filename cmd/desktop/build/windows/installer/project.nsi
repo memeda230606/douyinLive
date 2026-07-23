@@ -97,6 +97,12 @@ RequestExecutionLevel user
 !ifndef ARG_FFPROBE_BINARY
     !error "ARG_FFPROBE_BINARY is required"
 !endif
+!ifndef ARG_WEBVIEW2_BOOTSTRAPPER
+    !error "ARG_WEBVIEW2_BOOTSTRAPPER is required"
+!endif
+!ifndef ARG_WEBVIEW2_LOCK
+    !error "ARG_WEBVIEW2_LOCK is required"
+!endif
 !ifndef ARG_DBROLLBACK_BINARY
     !error "ARG_DBROLLBACK_BINARY is required"
 !endif
@@ -198,6 +204,7 @@ Section "Install ${INFO_PRODUCTNAME}" SecInstall
     File "/oname=THIRD-PARTY-NOTICES.txt" "${ARG_NOTICES_FILE}"
     File "/oname=sbom.spdx.json" "${ARG_SBOM_FILE}"
     File "/oname=ffmpeg-windows-amd64.lock.json" "${ARG_FFMPEG_LOCK}"
+    File "/oname=webview2-bootstrapper-windows.lock.json" "${ARG_WEBVIEW2_LOCK}"
     File "/oname=INSTALLATION.md" "${ARG_INSTALLATION_GUIDE}"
     File "/oname=USER-GUIDE.md" "${ARG_USER_GUIDE}"
     File "/oname=PRIVACY.md" "${ARG_PRIVACY_GUIDE}"
@@ -252,7 +259,7 @@ Section /o "un.Delete database, internal media, configuration and logs" SecPurge
     skipPurge:
 SectionEnd
 
-Function CheckWebView2
+Function DetectWebView2
     StrCpy $0 ""
     !ifndef DOUYINLIVE_FORCE_WEBVIEW2_MISSING
         SetRegView 64
@@ -268,21 +275,58 @@ Function CheckWebView2
             ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
         ${EndIf}
     !endif
-    ${If} $0 == ""
-        IfSilent webviewMissingSilent webviewMissingInteractive
-        webviewMissingInteractive:
-            MessageBox MB_ICONEXCLAMATION|MB_OKCANCEL \
-                "Microsoft Edge WebView2 Evergreen Runtime is required. Select OK to open the official installer, install it, then run this setup again." \
-                IDOK openWebView2 IDCANCEL webviewMissingAbort
-        openWebView2:
-            ExecShell "open" "${DOUYINLIVE_WEBVIEW2_URL}"
-        webviewMissingAbort:
-            SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
-            Quit
-        webviewMissingSilent:
-            SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
-            Quit
-    ${EndIf}
+FunctionEnd
+
+Function CheckWebView2
+    Call DetectWebView2
+    StrCmp $0 "" webviewInstallRequired webviewReady
+
+    webviewInstallRequired:
+        InitPluginsDir
+        SetOutPath "$PLUGINSDIR"
+        File "/oname=MicrosoftEdgeWebview2Setup.exe" "${ARG_WEBVIEW2_BOOTSTRAPPER}"
+        DetailPrint "Installing Microsoft Edge WebView2 Evergreen Runtime..."
+        !ifdef DOUYINLIVE_WEBVIEW2_INSTALL_TEST_EXIT
+            StrCpy $1 "${DOUYINLIVE_WEBVIEW2_INSTALL_TEST_EXIT}"
+        !else
+            ClearErrors
+            ExecWait '"$PLUGINSDIR\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
+            IfErrors webviewInstallFailed
+        !endif
+        DetailPrint "WebView2 bootstrapper exit code: $1"
+
+        !ifdef DOUYINLIVE_WEBVIEW2_INSTALL_TEST_SUCCESS
+            StrCpy $0 "test-version"
+            Goto webviewReady
+        !endif
+
+        StrCpy $2 0
+    webviewDetectRetry:
+        Call DetectWebView2
+        StrCmp $0 "" webviewDetectMissing webviewReady
+    webviewDetectMissing:
+        IntCmp $2 20 webviewInstallFailed webviewDetectWait webviewInstallFailed
+    webviewDetectWait:
+        Sleep 250
+        IntOp $2 $2 + 1
+        Goto webviewDetectRetry
+
+    webviewInstallFailed:
+        IfSilent webviewInstallFailedSilent webviewInstallFailedInteractive
+    webviewInstallFailedInteractive:
+        MessageBox MB_ICONEXCLAMATION|MB_OKCANCEL \
+            "Microsoft Edge WebView2 Evergreen Runtime could not be installed automatically. Check the network connection. Select OK to open the official Microsoft download page." \
+            IDOK openWebView2 IDCANCEL webviewInstallAbort
+    openWebView2:
+        ExecShell "open" "${DOUYINLIVE_WEBVIEW2_URL}"
+    webviewInstallAbort:
+        SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
+        Quit
+    webviewInstallFailedSilent:
+        SetErrorLevel ${DOUYINLIVE_WEBVIEW2_MISSING_EXIT}
+        Quit
+
+    webviewReady:
 FunctionEnd
 
 Function un.onInit

@@ -26,7 +26,7 @@
 | Wails | v2.13.0 | `wails version`、`wails doctor` | v3 稳定前不采用 |
 | Node.js | 24.18.0 LTS | `node --version` | 由现有 NVM for Windows 管理；使用项目声明和锁文件 |
 | pnpm | 当前 9.12.3；前端创建时由 `packageManager` 固定 | `pnpm --version` | 禁止混用 npm/yarn 更新锁文件 |
-| WebView2 | Evergreen Runtime（验证版本 150.0.4078.65） | `wails doctor` | 安装包检测并给出官方修复入口 |
+| WebView2 | Evergreen Runtime（验证版本 150.0.4078.65） | `wails doctor` | 安装包锁定并随附官方 Evergreen Bootstrapper；缺失时静默安装并复检 |
 | FFmpeg/ffprobe | Gyan 8.1.2 Essentials | `ffmpeg -version`、`ffprobe -version` | ZIP SHA-256 `db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec`；GPLv3 |
 | NSIS | 3.12 | `makensis /VERSION` | 仅用于 Windows 安装包；Wails doctor 已识别 |
 | Git | 支持当前仓库 | `git --version` | 构建注入 commit |
@@ -186,6 +186,13 @@ wails build -clean
 - 用户于 2026-07-22 明确交付目标仅为可运行、不上架商店；因此签名、双引擎扫描和 Windows 10 独立矩阵在 `internal-runnable` 模式中记录为 warning，不再阻塞完成。若选择 `public-signed`，三项继续失败关闭。
 - 公开 GitHub Release 作业继续保留有效 Authenticode/时间戳与 Defender 严格门禁；当前直接/内部可运行交付不依赖该公开发布作业。完整事实见[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)。
 
+### 7.11 P5 一键安装补强证据（2026-07-23）
+
+- 正式安装包锁定并嵌入 Microsoft 官方 WebView2 Evergreen Bootstrapper；发布构建同时校验精确文件大小、SHA-256 和 Microsoft Authenticode 签名。
+- 新系统缺少 WebView2 时，NSIS 在写入应用文件前静默运行官方引导程序并重新检测；安装失败或运行库仍不可用时固定失败关闭，不留下应用文件。
+- 隔离安装矩阵扩展为 7/7：全新安装、原位升级、默认保留数据、删除二次确认、确认清理、WebView2 自动安装成功、WebView2 自动安装失败回滚。
+- 正式 `0.1.0` 安装包为 94,597,359 字节，SHA-256 `64cde79b412724ed70cebef559b73af99e9354c13cabf935abac581076781263`；Go 全量 test/vet/build 和发布门禁通过。完整事实见[P5 一键安装验证记录](validation/2026-07-23-p5-webview2-one-click-installer.md)。
+
 ## 8. 测试夹具
 
 ### 8.1 直播接口 fixture
@@ -262,7 +269,7 @@ wails build -clean
 
 - 首版提供 x64 安装包；arm64 只在独立构建和测试矩阵完成后增加。
 - 默认按用户安装，避免不必要管理员权限。
-- 检查 WebView2；缺失时引导安装官方 Evergreen Runtime。
+- 检查 WebView2；缺失时自动静默安装随包锁定的 Microsoft 官方 Evergreen Bootstrapper 并复检，失败则在写应用文件前中止。完全离线环境需预先安装 WebView2 Evergreen Standalone Runtime。
 - 应用数据位于用户数据目录，与程序安装目录分离。
 - 卸载默认保留数据库和媒体；用户主动选择删除时二次确认并显示预计大小。
 

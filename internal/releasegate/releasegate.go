@@ -46,6 +46,18 @@ type FFmpegLock struct {
 	Binaries     map[string]string `json:"binaries"`
 }
 
+type WebView2BootstrapperLock struct {
+	SchemaVersion      int    `json:"schemaVersion"`
+	Distribution       string `json:"distribution"`
+	Version            string `json:"version"`
+	URL                string `json:"url"`
+	SHA256             string `json:"sha256"`
+	Size               int64  `json:"size"`
+	AuthenticodeSigner string `json:"authenticodeSigner"`
+	OriginalFilename   string `json:"originalFilename"`
+	License            string `json:"license"`
+}
+
 type GitMetadata struct {
 	Commit    string
 	BuildTime string
@@ -70,12 +82,13 @@ type ScanFinding struct {
 }
 
 type BuildOptions struct {
-	RepoRoot    string
-	Version     string
-	OutputRoot  string
-	BuildSource string
-	AllowDirty  bool
-	SkipBuild   bool
+	RepoRoot             string
+	Version              string
+	OutputRoot           string
+	BuildSource          string
+	WebView2Bootstrapper string
+	AllowDirty           bool
+	SkipBuild            bool
 }
 
 type Result struct {
@@ -179,6 +192,43 @@ func LoadFFmpegLock(path string) (FFmpegLock, error) {
 	return lock, nil
 }
 
+func LoadWebView2BootstrapperLock(path string) (WebView2BootstrapperLock, error) {
+	var lock WebView2BootstrapperLock
+	if err := readJSON(path, &lock); err != nil {
+		return WebView2BootstrapperLock{}, err
+	}
+	if lock.SchemaVersion != 1 ||
+		lock.Distribution != "Microsoft Edge WebView2 Evergreen Bootstrapper" ||
+		!regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){3}$`).MatchString(lock.Version) ||
+		lock.URL != "https://go.microsoft.com/fwlink/p/?LinkId=2124703" ||
+		!validSHA256(lock.SHA256) || lock.Size <= 0 ||
+		lock.AuthenticodeSigner != "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" ||
+		lock.OriginalFilename != "MicrosoftEdgeUpdateSetup.exe" ||
+		lock.License != "LicenseRef-Microsoft-WebView2" {
+		return WebView2BootstrapperLock{}, errors.New("invalid WebView2 bootstrapper lock")
+	}
+	return lock, nil
+}
+
+func VerifyWebView2Bootstrapper(path string, lock WebView2BootstrapperLock) (string, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return "", errors.New("WebView2 bootstrapper path must be absolute")
+	}
+	absolute := filepath.Clean(path)
+	info, err := os.Stat(absolute)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("WebView2 bootstrapper is not a regular file")
+	}
+	digest, size, err := HashFile(absolute)
+	if err != nil {
+		return "", err
+	}
+	if digest != lock.SHA256 || size != lock.Size {
+		return "", fmt.Errorf("WebView2 bootstrapper identity mismatch: got %s/%d", digest, size)
+	}
+	return absolute, nil
+}
+
 func VerifyInstalledFFmpeg(lock FFmpegLock) error {
 	for _, name := range []string{"ffmpeg.exe", "ffprobe.exe"} {
 		path, err := exec.LookPath(strings.TrimSuffix(name, ".exe"))
@@ -230,6 +280,11 @@ func Run(options BuildOptions) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	webView2LockPath := filepath.Join(root, "build", "webview2-bootstrapper-windows.lock.json")
+	webView2Lock, err := LoadWebView2BootstrapperLock(webView2LockPath)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := VerifyInstalledFFmpeg(lock); err != nil {
 		return Result{}, err
 	}
@@ -270,6 +325,7 @@ func Run(options BuildOptions) (Result, error) {
 	var rollbackSize int64
 	var installerHash string
 	var installerSize int64
+	var webView2Bootstrapper string
 	if !options.SkipBuild {
 		nodeVersion, err := commandOutput(root, "node", "--version")
 		if err != nil {
@@ -286,16 +342,20 @@ func Run(options BuildOptions) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		webView2Bootstrapper, err = VerifyWebView2Bootstrapper(options.WebView2Bootstrapper, webView2Lock)
+		if err != nil {
+			return Result{}, err
+		}
 	}
-	components, err := CollectComponents(root, lock, options.Version)
+	components, err := CollectComponents(root, lock, webView2Lock, options.Version)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := writeReleaseDocuments(root, outDir, options, metadata, lock, components, findings, scanned, artifact, artifactHash, artifactSize); err != nil {
+	if err := writeReleaseDocuments(root, outDir, options, metadata, lock, webView2Lock, components, findings, scanned, artifact, artifactHash, artifactSize); err != nil {
 		return Result{}, err
 	}
 	if !options.SkipBuild {
-		installerHash, installerSize, err = buildWindowsInstaller(root, outDir, installer, artifact, rollback, options.Version, lock)
+		installerHash, installerSize, err = buildWindowsInstaller(root, outDir, installer, artifact, rollback, webView2Bootstrapper, options.Version, lock)
 		if err != nil {
 			return Result{}, err
 		}
@@ -493,7 +553,7 @@ func summarizeFindings(findings []ScanFinding) string {
 	return strings.Join(parts, "; ")
 }
 
-func CollectComponents(root string, lock FFmpegLock, productVersion string) ([]Component, error) {
+func CollectComponents(root string, lock FFmpegLock, webView2Lock WebView2BootstrapperLock, productVersion string) ([]Component, error) {
 	components, err := collectGoComponents(root, productVersion)
 	if err != nil {
 		return nil, err
@@ -505,6 +565,9 @@ func CollectComponents(root string, lock FFmpegLock, productVersion string) ([]C
 	components = append(components, npm...)
 	components = append(components, Component{Name: "ffmpeg-gyan-essentials", Version: lock.Version,
 		Ecosystem: "binary", License: lock.License, PURL: "pkg:generic/ffmpeg-gyan-essentials@" + lock.Version})
+	components = append(components, Component{Name: "microsoft-edge-webview2-evergreen-bootstrapper",
+		Version: webView2Lock.Version, Ecosystem: "binary", License: webView2Lock.License,
+		PURL: "pkg:generic/microsoft-edge-webview2-evergreen-bootstrapper@" + webView2Lock.Version})
 	sort.Slice(components, func(i, j int) bool {
 		if components[i].Ecosystem != components[j].Ecosystem {
 			return components[i].Ecosystem < components[j].Ecosystem
@@ -690,11 +753,14 @@ func detectLicense(text string) string {
 	}
 }
 
-func writeReleaseDocuments(root, outDir string, options BuildOptions, metadata GitMetadata, lock FFmpegLock, components []Component, findings []ScanFinding, scanned int, artifact, artifactHash string, artifactSize int64) error {
+func writeReleaseDocuments(root, outDir string, options BuildOptions, metadata GitMetadata, lock FFmpegLock, webView2Lock WebView2BootstrapperLock, components []Component, findings []ScanFinding, scanned int, artifact, artifactHash string, artifactSize int64) error {
 	if err := copyFile(filepath.Join(root, "LICENSE"), filepath.Join(outDir, "LICENSE.txt")); err != nil {
 		return err
 	}
 	if err := copyFile(filepath.Join(root, "build", "ffmpeg-windows-amd64.lock.json"), filepath.Join(outDir, "ffmpeg-windows-amd64.lock.json")); err != nil {
+		return err
+	}
+	if err := copyFile(filepath.Join(root, "build", "webview2-bootstrapper-windows.lock.json"), filepath.Join(outDir, "webview2-bootstrapper-windows.lock.json")); err != nil {
 		return err
 	}
 	if err := copyFile(filepath.Join(root, "docs", "windows-installation-and-rollback.md"), filepath.Join(outDir, "INSTALLATION.md")); err != nil {

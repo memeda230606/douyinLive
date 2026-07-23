@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ReleaseDirectory = 'release/v0.1.0',
-    [string]$CurrentVersion = '0.1.0'
+    [string]$CurrentVersion = '0.1.0',
+    [string]$WebView2Bootstrapper
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,6 +11,28 @@ $releaseRoot = [IO.Path]::GetFullPath([IO.Path]::Combine($repoRoot, $ReleaseDire
 $installerScript = [IO.Path]::Combine($repoRoot, 'cmd', 'desktop', 'build', 'windows', 'installer', 'project.nsi')
 $lockPath = [IO.Path]::Combine($releaseRoot, 'ffmpeg-windows-amd64.lock.json')
 $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+$webView2LockPath = [IO.Path]::Combine($releaseRoot, 'webview2-bootstrapper-windows.lock.json')
+$webView2Lock = Get-Content -LiteralPath $webView2LockPath -Raw | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($WebView2Bootstrapper)) {
+    $cacheRoot = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'DouyinLiveBuildDependencies', 'WebView2')
+    [IO.Directory]::CreateDirectory($cacheRoot) | Out-Null
+    $WebView2Bootstrapper = [IO.Path]::Combine($cacheRoot, "MicrosoftEdgeWebview2Setup-$($webView2Lock.sha256).exe")
+    $needsDownload = -not [IO.File]::Exists($WebView2Bootstrapper)
+    if (-not $needsDownload) {
+        $cachedHash = (Get-FileHash -LiteralPath $WebView2Bootstrapper -Algorithm SHA256).Hash.ToLowerInvariant()
+        $cachedSize = (Get-Item -LiteralPath $WebView2Bootstrapper).Length
+        $needsDownload = $cachedHash -ne $webView2Lock.sha256 -or $cachedSize -ne [int64]$webView2Lock.size
+    }
+    if ($needsDownload) {
+        Invoke-WebRequest -UseBasicParsing -Uri $webView2Lock.url -OutFile $WebView2Bootstrapper
+    }
+}
+$WebView2Bootstrapper = [IO.Path]::GetFullPath($WebView2Bootstrapper)
+if (-not [IO.File]::Exists($WebView2Bootstrapper) -or
+    (Get-FileHash -LiteralPath $WebView2Bootstrapper -Algorithm SHA256).Hash.ToLowerInvariant() -ne $webView2Lock.sha256 -or
+    (Get-Item -LiteralPath $WebView2Bootstrapper).Length -ne [int64]$webView2Lock.size) {
+    throw 'Matrix WebView2 bootstrapper does not match the release lock.'
+}
 $ffmpegPath = (Get-Command ffmpeg.exe -ErrorAction Stop).Source
 $ffprobePath = (Get-Command ffprobe.exe -ErrorAction Stop).Source
 $makensisPath = (Get-Command makensis.exe -ErrorAction Stop).Source
@@ -17,12 +40,12 @@ $desktopPath = [IO.Path]::Combine($releaseRoot, "douyin-live-desktop-$CurrentVer
 $rollbackPath = [IO.Path]::Combine($releaseRoot, "douyin-live-dbrollback-$CurrentVersion-windows-amd64.exe")
 
 foreach ($required in @(
-    $installerScript, $desktopPath, $rollbackPath, $ffmpegPath, $ffprobePath,
+    $installerScript, $desktopPath, $rollbackPath, $ffmpegPath, $ffprobePath, $WebView2Bootstrapper,
     [IO.Path]::Combine($releaseRoot, 'LICENSE.txt'),
     [IO.Path]::Combine($releaseRoot, 'licenses.json'),
     [IO.Path]::Combine($releaseRoot, 'THIRD-PARTY-NOTICES.txt'),
     [IO.Path]::Combine($releaseRoot, 'sbom.spdx.json'),
-    $lockPath, [IO.Path]::Combine($releaseRoot, 'INSTALLATION.md'),
+    $lockPath, $webView2LockPath, [IO.Path]::Combine($releaseRoot, 'INSTALLATION.md'),
     [IO.Path]::Combine($releaseRoot, 'USER-GUIDE.md'), [IO.Path]::Combine($releaseRoot, 'PRIVACY.md'),
     [IO.Path]::Combine($releaseRoot, 'KNOWN-LIMITATIONS.md'), [IO.Path]::Combine($releaseRoot, 'RELEASE-CHECKLIST.md')
 )) {
@@ -47,7 +70,8 @@ $uninstallRegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninst
 $uninstallRegistrySubKey = "Software\Microsoft\Windows\CurrentVersion\Uninstall\$uninstallKeyName"
 $oldInstaller = [IO.Path]::Combine($outputRoot, 'old-installer.exe')
 $currentInstaller = [IO.Path]::Combine($outputRoot, 'current-installer.exe')
-$missingInstaller = [IO.Path]::Combine($outputRoot, 'missing-webview2-installer.exe')
+$autoWebView2Installer = [IO.Path]::Combine($outputRoot, 'auto-webview2-installer.exe')
+$failedWebView2Installer = [IO.Path]::Combine($outputRoot, 'failed-webview2-installer.exe')
 
 function Invoke-NativeChecked {
     param([Parameter(Mandatory)][string]$FilePath, [Parameter(Mandatory)][string[]]$Arguments)
@@ -87,12 +111,16 @@ function New-MatrixInstaller {
     param(
         [Parameter(Mandatory)][string]$Version,
         [Parameter(Mandatory)][string]$Output,
-        [switch]$ForceMissingWebView2
+        [switch]$ForceMissingWebView2,
+        [switch]$AssumeWebView2InstallSuccess,
+        [int]$ForcedWebView2InstallExit = -1
     )
     $defines = [ordered]@{
         ARG_WAILS_AMD64_BINARY = $desktopPath
         ARG_FFMPEG_BINARY = $ffmpegPath
         ARG_FFPROBE_BINARY = $ffprobePath
+        ARG_WEBVIEW2_BOOTSTRAPPER = $WebView2Bootstrapper
+        ARG_WEBVIEW2_LOCK = $webView2LockPath
         ARG_DBROLLBACK_BINARY = $rollbackPath
         ARG_LICENSE_FILE = [IO.Path]::Combine($releaseRoot, 'LICENSE.txt')
         ARG_LICENSE_MANIFEST = [IO.Path]::Combine($releaseRoot, 'licenses.json')
@@ -116,6 +144,8 @@ function New-MatrixInstaller {
     $arguments = @('/WX', '/INPUTCHARSET', 'UTF8')
     foreach ($entry in $defines.GetEnumerator()) { $arguments += "-D$($entry.Key)=$($entry.Value)" }
     if ($ForceMissingWebView2) { $arguments += '-DDOUYINLIVE_FORCE_WEBVIEW2_MISSING=1' }
+    if ($AssumeWebView2InstallSuccess) { $arguments += '-DDOUYINLIVE_WEBVIEW2_INSTALL_TEST_SUCCESS=1' }
+    if ($ForcedWebView2InstallExit -ge 0) { $arguments += "-DDOUYINLIVE_WEBVIEW2_INSTALL_TEST_EXIT=$ForcedWebView2InstallExit" }
     $arguments += '-DDOUYINLIVE_MANAGED_PURGE_TEST=1'
     $arguments += $installerScript
     Invoke-NativeChecked -FilePath $makensisPath -Arguments $arguments
@@ -129,6 +159,7 @@ function Assert-InstalledPayload {
         'ffmpeg\ffmpeg.exe', 'ffmpeg\ffprobe.exe', 'licenses\LICENSE.txt',
         'licenses\licenses.json', 'licenses\THIRD-PARTY-NOTICES.txt',
         'licenses\sbom.spdx.json', 'licenses\ffmpeg-windows-amd64.lock.json',
+        'licenses\webview2-bootstrapper-windows.lock.json',
         'licenses\INSTALLATION.md', 'licenses\USER-GUIDE.md', 'licenses\PRIVACY.md',
         'licenses\KNOWN-LIMITATIONS.md', 'licenses\RELEASE-CHECKLIST.md'
     )) {
@@ -179,7 +210,10 @@ try {
     [IO.Directory]::CreateDirectory($outputRoot) | Out-Null
     New-MatrixInstaller -Version '0.0.9' -Output $oldInstaller
     New-MatrixInstaller -Version $CurrentVersion -Output $currentInstaller
-    New-MatrixInstaller -Version $CurrentVersion -Output $missingInstaller -ForceMissingWebView2
+    New-MatrixInstaller -Version $CurrentVersion -Output $autoWebView2Installer `
+        -ForceMissingWebView2 -AssumeWebView2InstallSuccess -ForcedWebView2InstallExit 0
+    New-MatrixInstaller -Version $CurrentVersion -Output $failedWebView2Installer `
+        -ForceMissingWebView2 -ForcedWebView2InstallExit 23
 
     Invoke-Install -Installer $oldInstaller -Target $installRoot
     Assert-InstalledPayload -ExpectedVersion '0.0.9'
@@ -236,11 +270,18 @@ try {
     }
     $passed.Add('confirmed-purge')
 
-    $exitCode = Invoke-BoundedProcess -FilePath $missingInstaller -Arguments @('/S', "/D=$missingRoot")
+    Invoke-Install -Installer $autoWebView2Installer -Target $installRoot
+    Assert-InstalledPayload -ExpectedVersion $CurrentVersion
+    $passed.Add('webview2-auto-install')
+    $uninstaller = [IO.Path]::Combine($installRoot, 'uninstall.exe')
+    [void](Invoke-BoundedProcess -FilePath $uninstaller -Arguments @('/S'))
+    Wait-UninstallCleanup
+
+    $exitCode = Invoke-BoundedProcess -FilePath $failedWebView2Installer -Arguments @('/S', "/D=$missingRoot")
     if ($exitCode -ne 74 -or [IO.Directory]::Exists($missingRoot) -or (Test-UninstallKeyExists)) {
-        throw "WebView2 missing gate failed closed contract: exit=$exitCode."
+        throw "WebView2 automatic install failure did not fail closed: exit=$exitCode."
     }
-    $passed.Add('webview2-missing')
+    $passed.Add('webview2-auto-install-failure')
 
     Write-Output 'WINDOWS_INSTALLER_MATRIX_PASSED'
     Write-Output ("checks=" + $passed.Count)

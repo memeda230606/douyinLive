@@ -6,12 +6,15 @@
 
 - 安装范围固定为当前用户，不请求管理员权限，默认目录为 `%LOCALAPPDATA%\Programs\DouyinLive Desktop`。
 - 安装目录包含桌面主程序、`ffmpeg\ffmpeg.exe`、`ffmpeg\ffprobe.exe`、离线数据库回滚工具和 `licenses` 下的 SBOM、许可证清单、第三方 notices、FFmpeg 锁及本文。
+- 安装器内嵌经过版本、大小、SHA-256 和 Microsoft Authenticode 签名身份锁定的 WebView2 Evergreen Bootstrapper；它只在运行时缺失时执行，不留在程序目录。
 - 安装包只支持原生 Windows x64；不包含 Go、Node、pnpm、源码、Cookie、有效流 URL 或测试数据。
 - 业务数据固定在 `%LOCALAPPDATA%\DouyinLive`，与程序目录分离；用户选择的外部媒体目录始终由用户自行管理。
 
 ## 首次安装与 WebView2
 
-安装器会在写入任何程序文件前检查 Windows 版本、CPU 架构和 Microsoft Edge WebView2 Evergreen Runtime。WebView2 缺失时，交互安装会给出说明并只打开微软官方 Evergreen Runtime 地址；安装器随后以失败结束，用户安装运行时后需重新执行安装包。静默安装不会访问浏览器，返回退出码 `74`。安装器不从第三方镜像下载运行时。
+安装器会在写入任何程序文件前检查 Windows 版本、CPU 架构和 Microsoft Edge WebView2 Evergreen Runtime。WebView2 缺失时，安装器自动从临时目录静默运行包内的 Microsoft 官方 Evergreen Bootstrapper，并在最多 5 秒的有界窗口内复验运行时；成功后继续安装，无需用户重新启动安装包。Bootstrapper 由 Microsoft 下载并安装适合当前系统的 Evergreen Runtime。
+
+若 Bootstrapper 启动失败、下载失败或复验仍缺失，安装器返回退出码 `74` 且不写入应用安装目录或卸载注册表；交互安装同时提供 Microsoft 官方下载页作为修复入口。完全离线环境应提前安装 Microsoft 官方 x64 Evergreen Standalone Installer。
 
 安装成功后应核对“应用和功能”中的版本、安装目录、桌面/开始菜单快捷方式，以及安装目录内主程序、两项 FFmpeg 工具、回滚工具和六项合规文档。FFmpeg 的 SHA-256 必须与随附锁文件一致。
 
@@ -50,7 +53,7 @@
 | ---: | --- | --- |
 | 64 | Windows 版本不支持 | 使用 Windows 10/11 |
 | 65 | 不是原生 x64 | 使用 x64 安装包或等待独立架构版本 |
-| 74 | 缺少 WebView2 | 从微软官方地址安装 Evergreen Runtime 后重试 |
+| 74 | WebView2 自动安装失败或复验缺失 | 检查 Microsoft 下载网络，或离线安装官方 x64 Evergreen Standalone Installer 后重试 |
 | 75 | 数据清理未二次确认或未完成 | 保留数据，或明确复核后重新选择清理 |
 
 安装、升级、卸载或回滚失败时，不要手工覆盖 `app.db`、删除 WAL/SHM 或清理外部媒体；保留安装器退出码、脱敏日志和 `backups`，再使用诊断包处理。

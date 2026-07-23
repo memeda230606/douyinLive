@@ -1,6 +1,7 @@
 package releasegate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,34 @@ func TestLoadFFmpegLockFailsClosed(t *testing.T) {
 	}
 }
 
+func TestLoadAndVerifyWebView2BootstrapperLockFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, "webview2.lock.json")
+	binaryPath := filepath.Join(root, "MicrosoftEdgeWebview2Setup.exe")
+	mustWrite(t, binaryPath, "signed-bootstrapper-fixture")
+	digest, size, err := HashFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := fmt.Sprintf(`{"schemaVersion":1,"distribution":"Microsoft Edge WebView2 Evergreen Bootstrapper","version":"1.3.251.5","url":"https://go.microsoft.com/fwlink/p/?LinkId=2124703","sha256":%q,"size":%d,"authenticodeSigner":"CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US","originalFilename":"MicrosoftEdgeUpdateSetup.exe","license":"LicenseRef-Microsoft-WebView2"}`, digest, size)
+	mustWrite(t, lockPath, content)
+	lock, err := LoadWebView2BootstrapperLock(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified, err := VerifyWebView2Bootstrapper(binaryPath, lock); err != nil || verified != binaryPath {
+		t.Fatalf("VerifyWebView2Bootstrapper() = %q, %v", verified, err)
+	}
+	lock.Size++
+	if _, err := VerifyWebView2Bootstrapper(binaryPath, lock); err == nil {
+		t.Fatal("VerifyWebView2Bootstrapper accepted a changed size")
+	}
+	mustWrite(t, lockPath, strings.Replace(content, "Microsoft Corporation", "Untrusted Publisher", 1))
+	if _, err := LoadWebView2BootstrapperLock(lockPath); err == nil {
+		t.Fatal("LoadWebView2BootstrapperLock accepted an unexpected signer")
+	}
+}
+
 func TestLicenseDetectionAndPathContainment(t *testing.T) {
 	if got := detectLicense("Permission is hereby granted, free of charge, to any person"); got != "MIT" {
 		t.Fatalf("detectLicense() = %q", got)
@@ -101,22 +130,24 @@ func TestWriteJSONIsStableLFAndNoHTMLRewrite(t *testing.T) {
 
 func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 	defines := map[string]string{
-		"ARG_WAILS_AMD64_BINARY": `D:\out\desktop.exe`,
-		"ARG_FFMPEG_BINARY":      `D:\tools\ffmpeg.exe`,
-		"ARG_FFPROBE_BINARY":     `D:\tools\ffprobe.exe`,
-		"ARG_DBROLLBACK_BINARY":  `D:\out\rollback.exe`,
-		"ARG_LICENSE_FILE":       `D:\out\LICENSE.txt`,
-		"ARG_LICENSE_MANIFEST":   `D:\out\licenses.json`,
-		"ARG_NOTICES_FILE":       `D:\out\THIRD-PARTY-NOTICES.txt`,
-		"ARG_SBOM_FILE":          `D:\out\sbom.spdx.json`,
-		"ARG_FFMPEG_LOCK":        `D:\out\ffmpeg.lock.json`,
-		"ARG_INSTALLATION_GUIDE": `D:\out\INSTALLATION.md`,
-		"ARG_USER_GUIDE":         `D:\out\USER-GUIDE.md`,
-		"ARG_PRIVACY_GUIDE":      `D:\out\PRIVACY.md`,
-		"ARG_LIMITATIONS_GUIDE":  `D:\out\KNOWN-LIMITATIONS.md`,
-		"ARG_RELEASE_CHECKLIST":  `D:\out\RELEASE-CHECKLIST.md`,
-		"ARG_INSTALLER_OUTPUT":   `D:\out\installer.exe`,
-		"INFO_PRODUCTVERSION":    "0.1.0",
+		"ARG_WAILS_AMD64_BINARY":    `D:\out\desktop.exe`,
+		"ARG_FFMPEG_BINARY":         `D:\tools\ffmpeg.exe`,
+		"ARG_FFPROBE_BINARY":        `D:\tools\ffprobe.exe`,
+		"ARG_WEBVIEW2_BOOTSTRAPPER": `D:\tools\MicrosoftEdgeWebview2Setup.exe`,
+		"ARG_WEBVIEW2_LOCK":         `D:\out\webview2.lock.json`,
+		"ARG_DBROLLBACK_BINARY":     `D:\out\rollback.exe`,
+		"ARG_LICENSE_FILE":          `D:\out\LICENSE.txt`,
+		"ARG_LICENSE_MANIFEST":      `D:\out\licenses.json`,
+		"ARG_NOTICES_FILE":          `D:\out\THIRD-PARTY-NOTICES.txt`,
+		"ARG_SBOM_FILE":             `D:\out\sbom.spdx.json`,
+		"ARG_FFMPEG_LOCK":           `D:\out\ffmpeg.lock.json`,
+		"ARG_INSTALLATION_GUIDE":    `D:\out\INSTALLATION.md`,
+		"ARG_USER_GUIDE":            `D:\out\USER-GUIDE.md`,
+		"ARG_PRIVACY_GUIDE":         `D:\out\PRIVACY.md`,
+		"ARG_LIMITATIONS_GUIDE":     `D:\out\KNOWN-LIMITATIONS.md`,
+		"ARG_RELEASE_CHECKLIST":     `D:\out\RELEASE-CHECKLIST.md`,
+		"ARG_INSTALLER_OUTPUT":      `D:\out\installer.exe`,
+		"INFO_PRODUCTVERSION":       "0.1.0",
 	}
 	first := installerArguments(defines)
 	second := installerArguments(defines)
@@ -125,6 +156,7 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 	}
 	for _, required := range []string{
 		"ARG_WAILS_AMD64_BINARY", "ARG_FFMPEG_BINARY", "ARG_FFPROBE_BINARY",
+		"ARG_WEBVIEW2_BOOTSTRAPPER", "ARG_WEBVIEW2_LOCK",
 		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT", "INFO_PRODUCTVERSION",

@@ -79,7 +79,8 @@ $requiredFiles = @(
     "douyin-live-dbrollback-$Version-windows-amd64.exe",
     "douyin-live-desktop-$Version-windows-amd64-installer.exe",
     'release-manifest.json', 'sbom.spdx.json', 'licenses.json', 'THIRD-PARTY-NOTICES.txt',
-    'ffmpeg-windows-amd64.lock.json', 'sensitive-scan.json', 'LICENSE.txt', 'INSTALLATION.md',
+    'ffmpeg-windows-amd64.lock.json', 'webview2-bootstrapper-windows.lock.json',
+    'sensitive-scan.json', 'LICENSE.txt', 'INSTALLATION.md',
     'USER-GUIDE.md', 'PRIVACY.md', 'KNOWN-LIMITATIONS.md', 'RELEASE-CHECKLIST.md'
 )
 foreach ($name in $requiredFiles) {
