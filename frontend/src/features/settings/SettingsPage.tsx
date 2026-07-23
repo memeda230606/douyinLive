@@ -1,15 +1,20 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FolderLock, HardDrive, Save, Shield } from 'lucide-react'
+import { Download, FolderLock, HardDrive, RefreshCw, RotateCw, Save, Shield, X } from 'lucide-react'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 
+import { useUpdateStore } from '../../app/updateStore'
 import { settingsFormSchema, type SettingsFormValues } from '../../lib/contracts'
-import { getSettings, saveSettings, userFacingError } from '../../lib/desktop'
+import {
+  cancelUpdateDownload, checkForUpdate, getSettings, getUpdateStatus,
+  installPreparedUpdate, prepareUpdate, saveSettings, userFacingError,
+} from '../../lib/desktop'
 
 const defaults: SettingsFormValues = {
   recordingDirectory: '', defaultQuality: 'auto', defaultSegmentMinutes: 10,
   maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+  automaticUpdates: true,
 }
 
 function formValues(value: Awaited<ReturnType<typeof getSettings>>): SettingsFormValues {
@@ -20,12 +25,24 @@ function formValues(value: Awaited<ReturnType<typeof getSettings>>): SettingsFor
     maxConcurrentRecordings: value.maxConcurrentRecordings,
     minimumFreeSpaceGiB: value.minimumFreeSpaceGiB,
     saveDisplayNames: value.saveDisplayNames,
+    automaticUpdates: value.automaticUpdates,
   }
 }
 
+const updateStateLabel = {
+  disabled: '当前构建不支持更新', idle: '已是最新版本', checking: '正在检查',
+  available: '发现新版本', downloading: '正在下载', ready: '已准备安装',
+  installing: '正在退出并安装', failed: '更新操作失败',
+} as const
+
 export function SettingsPage() {
   const queryClient = useQueryClient()
+  const eventStatus = useUpdateStore((state) => state.status)
+  const setUpdateStatus = useUpdateStore((state) => state.setStatus)
   const settings = useQuery({ queryKey: ['settings'], queryFn: getSettings, retry: false })
+  const updateQuery = useQuery({
+    queryKey: ['update-status'], queryFn: getUpdateStatus, retry: false,
+  })
   const form = useForm<SettingsFormValues>({ resolver: zodResolver(settingsFormSchema), defaultValues: defaults })
   const mutation = useMutation({
     mutationFn: saveSettings,
@@ -34,10 +51,30 @@ export function SettingsPage() {
       form.reset(formValues(value))
     },
   })
+  const updateMutationOptions = {
+    onSuccess: (value: Awaited<ReturnType<typeof getUpdateStatus>>) => {
+      setUpdateStatus(value)
+      queryClient.setQueryData(['update-status'], value)
+    },
+  }
+  const checkMutation = useMutation({ mutationFn: checkForUpdate, ...updateMutationOptions })
+  const prepareMutation = useMutation({ mutationFn: prepareUpdate, ...updateMutationOptions })
+  const cancelMutation = useMutation({ mutationFn: cancelUpdateDownload, ...updateMutationOptions })
+  const installMutation = useMutation({ mutationFn: installPreparedUpdate, ...updateMutationOptions })
+  const updateStatus = eventStatus ?? updateQuery.data
+  const updateError = checkMutation.error ?? prepareMutation.error ?? cancelMutation.error ?? installMutation.error
+  const updatePending = checkMutation.isPending || prepareMutation.isPending ||
+    cancelMutation.isPending || installMutation.isPending
+  const progress = updateStatus?.totalBytes
+    ? Math.min(100, Math.round(((updateStatus.downloadedBytes ?? 0) / updateStatus.totalBytes) * 100))
+    : 0
 
   useEffect(() => {
     if (settings.data) form.reset(formValues(settings.data))
   }, [form, settings.data])
+  useEffect(() => {
+    if (updateQuery.data) setUpdateStatus(updateQuery.data)
+  }, [setUpdateStatus, updateQuery.data])
 
   return (
     <main className="page page--narrow">
@@ -55,6 +92,31 @@ export function SettingsPage() {
               <label className="field"><span>默认分片时长</span><div className="input-suffix"><input type="number" min="5" max="30" {...form.register('defaultSegmentMinutes', { valueAsNumber: true })} /><span>分钟</span></div></label>
               <label className="field"><span>并发录制上限</span><input type="number" min="1" max="4" {...form.register('maxConcurrentRecordings', { valueAsNumber: true })} /></label>
               <label className="field"><span>最小剩余空间</span><div className="input-suffix"><input type="number" min="1" max="1024" {...form.register('minimumFreeSpaceGiB', { valueAsNumber: true })} /><span>GiB</span></div></label>
+            </div>
+          </section>
+          <section className="settings-section">
+            <div className="settings-section__heading"><RefreshCw aria-hidden="true" /><div><h2>自动更新</h2><p>仅访问官方 OSS 公开只读前缀；安装始终需要你的确认。</p></div></div>
+            <label className="switch-row"><div><strong>自动检查并后台下载</strong><span>关闭后不发起后台请求，仍可手动检查。</span></div><input type="checkbox" {...form.register('automaticUpdates')} /></label>
+            <div className="update-panel">
+              <div className="update-panel__summary">
+                <div><strong>{updateStatus ? updateStateLabel[updateStatus.state] : '正在读取更新状态'}</strong><span>当前版本 {updateStatus?.currentVersion ?? '—'}{updateStatus?.availableVersion ? ` · 可用版本 ${updateStatus.availableVersion}` : ''}</span></div>
+                {updateStatus?.publishedAt && <time>{new Date(updateStatus.publishedAt).toLocaleString()}</time>}
+              </div>
+              {updateStatus?.state === 'downloading' && (
+                <div className="update-progress" aria-label={`更新下载进度 ${progress}%`}>
+                  <span style={{ width: `${progress}%` }} />
+                </div>
+              )}
+              {updateStatus?.releaseNotes && <pre className="update-notes">{updateStatus.releaseNotes}</pre>}
+              {updateStatus?.installBlocked && <div className="inline-alert">当前暂不能安装：{updateStatus.blockReason}</div>}
+              {updateError && <div className="inline-alert" role="alert">{userFacingError(updateError)}</div>}
+              {updateStatus?.errorCode && <div className="inline-alert" role="alert">错误码：{updateStatus.errorCode}</div>}
+              <div className="update-actions">
+                <button className="button" disabled={updatePending || updateStatus?.state === 'checking' || updateStatus?.state === 'downloading' || updateStatus?.state === 'installing'} type="button" onClick={() => checkMutation.mutate()}><RefreshCw aria-hidden="true" />立即检查</button>
+                {updateStatus?.state === 'available' && <button className="button button--primary" disabled={updatePending || updateStatus.installBlocked} type="button" onClick={() => prepareMutation.mutate()}><Download aria-hidden="true" />下载更新</button>}
+                {updateStatus?.state === 'downloading' && <button className="button" disabled={cancelMutation.isPending} type="button" onClick={() => cancelMutation.mutate()}><X aria-hidden="true" />取消下载</button>}
+                {updateStatus?.state === 'ready' && <button className="button button--primary" disabled={updatePending || updateStatus.installBlocked} type="button" onClick={() => installMutation.mutate()}><RotateCw aria-hidden="true" />安装并重启</button>}
+              </div>
             </div>
           </section>
           <section className="settings-section">

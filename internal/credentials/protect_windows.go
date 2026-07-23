@@ -19,7 +19,14 @@ func (platformProtector) Protect(plain []byte) ([]byte, error) {
 	}
 	in := windows.DataBlob{Size: uint32(len(plain)), Data: &plain[0]}
 	var out windows.DataBlob
-	if err := windows.CryptProtectData(&in, nil, nil, 0, nil, cryptProtectUIForbidden, &out); err != nil {
+	err := windows.CryptProtectData(&in, nil, nil, 0, nil, cryptProtectUIForbidden, &out)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		err = windows.CryptProtectData(
+			&in, nil, nil, 0, nil,
+			cryptProtectUIForbidden|windows.CRYPTPROTECT_LOCAL_MACHINE, &out,
+		)
+	}
+	if err != nil {
 		return nil, err
 	}
 	defer windows.LocalFree(windows.Handle(unsafe.Pointer(out.Data)))

@@ -106,6 +106,9 @@ RequestExecutionLevel user
 !ifndef ARG_DBROLLBACK_BINARY
     !error "ARG_DBROLLBACK_BINARY is required"
 !endif
+!ifndef ARG_UPDATE_HELPER_BINARY
+    !error "ARG_UPDATE_HELPER_BINARY is required"
+!endif
 !ifndef ARG_LICENSE_FILE
     !error "ARG_LICENSE_FILE is required"
 !endif
@@ -193,6 +196,7 @@ Section "Install ${INFO_PRODUCTNAME}" SecInstall
     SetOutPath $INSTDIR
     !insertmacro wails.files
     File "/oname=douyin-live-dbrollback.exe" "${ARG_DBROLLBACK_BINARY}"
+    File "/oname=douyin-live-updater.exe" "${ARG_UPDATE_HELPER_BINARY}"
 
     SetOutPath "$INSTDIR\ffmpeg"
     File "/oname=ffmpeg.exe" "${ARG_FFMPEG_BINARY}"

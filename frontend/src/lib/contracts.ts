@@ -144,6 +144,7 @@ export const settingsSchema = z.object({
   maxConcurrentRecordings: z.number().int().min(1).max(4),
   minimumFreeSpaceGiB: z.number().int().min(1).max(1024),
   saveDisplayNames: z.boolean(),
+  automaticUpdates: z.boolean(),
 }).strict()
 
 export const roomFormSchema = z.object({
@@ -163,7 +164,23 @@ export const settingsFormSchema = z.object({
   maxConcurrentRecordings: z.number().int().min(1).max(4),
   minimumFreeSpaceGiB: z.number().int().min(1).max(1024),
   saveDisplayNames: z.boolean(),
+  automaticUpdates: z.boolean(),
 })
+
+export const updateStatusSchema = z.object({
+  version: z.literal(1),
+  state: z.enum(['disabled', 'idle', 'checking', 'available', 'downloading', 'ready', 'installing', 'failed']),
+  currentVersion: z.string().min(1).max(64),
+  availableVersion: z.string().max(64).optional(),
+  publishedAt: z.string().max(64).optional(),
+  releaseNotes: z.string().max(8192).optional(),
+  downloadedBytes: nonnegativeSafeIntegerSchema.optional(),
+  totalBytes: nonnegativeSafeIntegerSchema.optional(),
+  checkedAt: nonnegativeSafeIntegerSchema.optional(),
+  installBlocked: z.boolean(),
+  blockReason: z.string().max(128).optional(),
+  errorCode: z.string().regex(/^[A-Z0-9_]{1,64}$/).optional(),
+}).strict()
 
 export type BootstrapDTO = z.infer<typeof bootstrapSchema>
 export type DataStatusDTO = z.infer<typeof dataStatusSchema>
@@ -172,6 +189,7 @@ export type RoomRuntimeStatus = z.infer<typeof roomStatusSchema>
 export type AppSettings = z.infer<typeof settingsSchema>
 export type RoomFormValues = z.infer<typeof roomFormSchema>
 export type SettingsFormValues = z.infer<typeof settingsFormSchema>
+export type UpdateStatus = z.infer<typeof updateStatusSchema>
 
 export function contractError(contract: string, value: unknown): Error {
   const type = Array.isArray(value) ? 'array' : typeof value

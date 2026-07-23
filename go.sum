@@ -16,6 +16,8 @@ github.com/Danny-Dasilva/fhttp v0.0.0-20260106165651-41258808b131 h1:gRgU8L1jIWP
 github.com/Danny-Dasilva/fhttp v0.0.0-20260106165651-41258808b131/go.mod h1:Hvab/V/YKCDXsEpKYKHjAXH5IFOmoq9FsfxjztEqvDc=
 github.com/Masterminds/semver/v3 v3.5.0 h1:kQceYJfbupGfZOKZQg0kou0DgAKhzDg2NZPAwZ/2OOE=
 github.com/Masterminds/semver/v3 v3.5.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
+github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3 h1:mFFeD2k8QE+pYd1uFik2XG85+vilL5uj9P5mHQTM1Xk=
+github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3/go.mod h1:FTzydeQVmR24FI0D6XWUOMKckjXehM/jgMn1xC+DA9M=
 github.com/andybalholm/brotli v1.0.5/go.mod h1:fO7iG3H7G2nSZ7m0zPUDn85XEX2GTukHGRSepvi9Eig=
 github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=
 github.com/andybalholm/brotli v1.2.2/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=

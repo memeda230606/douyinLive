@@ -2,8 +2,8 @@
 
 > 上级计划：[总开发计划](00-master-development-plan.md)
 > 相关计划：[桌面 UI](01-desktop-ui-development-plan.md) · [采集与录制](02-capture-and-recording-development-plan.md) · [数据与分析](03-data-and-analysis-development-plan.md)
-> 实施状态（2026-07-22）：用户确认目标为可直接/内部运行，不要求商店或商业签名。P5-ACC-001 的可复现构建、用户文档、安装矩阵、真实 GUI 与稳定性证据完整，项目按该范围 `DONE/100%`；签名、双引擎扫描和 Windows 10 独立矩阵保留为非阻塞增强。
-> 最近验收：[P5 最终发布验收记录](validation/2026-07-22-p5-final-release-acceptance.md)
+> 实施状态（2026-07-23）：P6-UPD-001 的 OSS、签名协议、客户端、独立更新助手、发布工具与设置 UI 已实现并通过自动化门禁；0.2.0 人工引导安装和 0.2.1 真实 canary 升级/24 小时观察仍按发布顺序执行。
+> 最近验收：[P6 OSS 自动更新实现记录](validation/2026-07-23-p6-oss-auto-update.md)
 
 ## 1. 目标
 
@@ -330,3 +330,29 @@ wails build -clean
 - 严重采集兼容问题优先通过解析器/配置更新发布补丁，不绕过签名与测试门禁。
 - 每个正式版本至少保留一个可回滚安装包和对应数据库兼容说明。
 - 发布后复盘错误码分布、恢复成功率、录制缺口和用户诊断反馈，形成下一版本输入。
+
+## 17. OSS 自动更新
+
+### 17.1 实现与验证状态
+
+- 固定杭州私有 Bucket `douyinlive-updates-cn-hangzhou-1e8d9993065b`，仅匿名开放 `channels/*` 与 `releases/*` 的 HTTPS GetObject；启用版本控制、SSE-OSS/AES256、通道非当前版本 90 天清理和未完成分片 7 天清理。
+- 发布 RAM 用户只允许指定对象前缀的 GetObject/GetObjectVersion/PutObject，不具备 Bucket 删除、策略、ACL、版本控制或生命周期权限；凭据与 Ed25519 私钥分别以 DPAPI LocalMachine 加密，并用受保护 ACL 限制为当前用户和 SYSTEM。
+- 更新协议使用单对象 Ed25519 签名信封，严格覆盖 SemVer、平台、Origin/前缀、大小、SHA-256、发布清单和 `highestSeenVersion`；客户端拒绝重定向、未知/重复字段、尾随 JSON、超限响应、同版/降级和签名回放。
+- 更新服务实现 30 秒首次检查、6 小时加抖动、设置关闭时零周期请求、录制忙状态暂停下载、ETag/Range 续传、完整 SHA-256 和无路径 DTO；Wails/React 提供状态、检查、准备、取消、确认安装和全局就绪提示。
+- 独立 `douyin-live-updater.exe` 重新验签并检查安装器，等待父进程退出，执行同卷程序目录备份、NSIS 安装、注册表/目标 EXE/健康 nonce 校验；失败恢复程序目录，schema 变化时调用精确 SQLite 备份回滚，数据库回滚失败则保留证据且拒绝启动旧版。
+- 全量 Go test/vet/build、前端 10 文件 37 项测试/typecheck/build、production Wails、0.2.0 脏树候选发布门禁和 NSIS 隔离安装矩阵 7/7 通过。完整事实见[P6 OSS 自动更新实现记录](validation/2026-07-23-p6-oss-auto-update.md)。
+
+### 17.2 发布顺序
+
+1. 只在干净工作树、精确 `vX.Y.Z` tag 和完整发布门禁通过后生成安装器、更新助手、发布清单与签名信封。
+2. 发布工具从 Windows DPAPI 文件读取 OSS 发布凭据与 Ed25519 私钥，先上传 `releases/vX.Y.Z/*`，匿名 HTTPS 回读并复核大小、SHA-256 和签名。
+3. 所有版本化对象验证完成后，最后单次覆盖 `channels/canary.json` 或 `channels/stable.json`；通道对象使用 `no-cache`，版本对象使用一年 immutable 缓存。
+4. 首次人工安装 0.2.0 引导版；0.2.1 先进入 canary，完成真实升级、重启、失败回滚与 24 小时稳定观察后，把完全相同的已验证信封提升到 stable。
+5. 通道只向更高版本前进；已升级客户端不降级，问题版本以更高 SemVer 修复。签名密钥轮换先发布同时信任新旧公钥的客户端，再切换签名方。
+
+### 17.3 发布门禁与 OSS 限制
+
+- 自动更新发布必须通过 Ed25519 信封/对象 hash、固定 Origin/前缀、OSS 匿名权限负例和敏感扫描；AccessKey、RAM 凭据与私钥不得进入仓库、产物或日志。
+- stable 提升前必须有同一 0.2.1 canary 信封完成 0.2.0→0.2.1 实机升级、活动录制拒绝、断网续传、坏签名/坏包拒绝、失败恢复与 24 小时观察证据。
+- OSS 开启版本控制后，服务端会忽略 `x-oss-forbid-overwrite`。版本化发布物采用“发布工具先 HeadObject 拒绝已存在 key + 单发布身份 + 版本历史可恢复”的受控发布门；它能防止正常流程覆盖，但不是 OSS 侧不可绕过的 WORM。
+- 若未来要求存储层强制不可变，应把版本产物与可覆盖通道指针拆到不同 Bucket，并只对发布 Bucket 启用保留策略。

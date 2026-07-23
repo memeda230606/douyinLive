@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -389,6 +390,41 @@ func TestBackupDatabaseCreatesConsistentCopy(t *testing.T) {
 		t.Fatalf("open backup: %v", err)
 	}
 	defer backupDB.Close()
+	if err := quickCheck(ctx, backupDB); err != nil {
+		t.Fatalf("backup quickCheck() error = %v", err)
+	}
+}
+
+func TestCreateUpdateBackupCreatesVersionedConsistentCopy(t *testing.T) {
+	ctx := context.Background()
+	layout, err := PrepareLayout(t.TempDir())
+	if err != nil {
+		t.Fatalf("PrepareLayout() error = %v", err)
+	}
+	store, err := Open(ctx, layout, OpenOptions{})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	now := time.Date(2026, 7, 23, 8, 9, 10, 123_000_000, time.UTC)
+	backup, err := store.CreateUpdateBackup(ctx, now)
+	if err != nil {
+		t.Fatalf("CreateUpdateBackup() error = %v", err)
+	}
+	wantName := "app-v" + strconv.Itoa(store.SchemaVersion()) + "-20260723T080910.123Z.db"
+	if filepath.Base(backup) != wantName || filepath.Dir(backup) != layout.BackupsDir {
+		t.Fatalf("backup path = %q, want %q under %q", backup, wantName, layout.BackupsDir)
+	}
+	backupDB, err := sql.Open("sqlite", sqliteDSN(backup, true))
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer backupDB.Close()
+	version, err := currentSchemaVersion(ctx, backupDB)
+	if err != nil || version != store.SchemaVersion() {
+		t.Fatalf("backup schema version = (%d, %v), want (%d, nil)", version, err, store.SchemaVersion())
+	}
 	if err := quickCheck(ctx, backupDB); err != nil {
 		t.Fatalf("backup quickCheck() error = %v", err)
 	}

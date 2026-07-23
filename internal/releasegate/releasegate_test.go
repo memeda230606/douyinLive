@@ -136,6 +136,7 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 		"ARG_WEBVIEW2_BOOTSTRAPPER": `D:\tools\MicrosoftEdgeWebview2Setup.exe`,
 		"ARG_WEBVIEW2_LOCK":         `D:\out\webview2.lock.json`,
 		"ARG_DBROLLBACK_BINARY":     `D:\out\rollback.exe`,
+		"ARG_UPDATE_HELPER_BINARY":  `D:\out\updater.exe`,
 		"ARG_LICENSE_FILE":          `D:\out\LICENSE.txt`,
 		"ARG_LICENSE_MANIFEST":      `D:\out\licenses.json`,
 		"ARG_NOTICES_FILE":          `D:\out\THIRD-PARTY-NOTICES.txt`,
@@ -157,7 +158,7 @@ func TestInstallerArgumentsAreCompleteAndStable(t *testing.T) {
 	for _, required := range []string{
 		"ARG_WAILS_AMD64_BINARY", "ARG_FFMPEG_BINARY", "ARG_FFPROBE_BINARY",
 		"ARG_WEBVIEW2_BOOTSTRAPPER", "ARG_WEBVIEW2_LOCK",
-		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
+		"ARG_DBROLLBACK_BINARY", "ARG_UPDATE_HELPER_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT", "INFO_PRODUCTVERSION",
 		"ARG_USER_GUIDE", "ARG_PRIVACY_GUIDE", "ARG_LIMITATIONS_GUIDE",

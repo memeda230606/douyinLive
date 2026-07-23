@@ -12,7 +12,10 @@ vi.mock('../lib/desktop', () => ({
   getSettings: vi.fn(async () => ({
     version: 1, storageRoot: 'C:\\Data', recordingDirectory: 'C:\\Recordings',
     defaultQuality: 'auto', defaultSegmentMinutes: 10, maxConcurrentRecordings: 1,
-    minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+    minimumFreeSpaceGiB: 10, saveDisplayNames: true, automaticUpdates: true,
+  })),
+  getUpdateStatus: vi.fn(async () => ({
+    version: 1, state: 'idle', currentVersion: '0.2.0', installBlocked: false,
   })),
   userFacingError: vi.fn(() => '操作失败'),
 }))
@@ -30,7 +33,7 @@ const bootstrap: BootstrapDTO = {
     productVersion: 'test', gitCommit: 'unknown', buildTime: 'unknown', buildSource: 'local',
     goVersion: 'go1.26.4', wailsVersion: '2.13.0', nodeVersion: 'v24.18.0',
     ffmpegVersion: '8.1.2-essentials_build-www.gyan.dev', ffmpegSHA256: 'a'.repeat(64), ffmpegLicense: 'GPL-3.0-or-later',
-    databaseSchemaVersion: 6, settingsSchemaVersion: 2, analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
+    databaseSchemaVersion: 6, settingsSchemaVersion: 3, analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
   },
   state: 'RUNNING',
   data: { ready: true, schemaVersion: 1, mode: 'READ_WRITE', loggingReady: true },

@@ -92,19 +92,22 @@ type BuildOptions struct {
 }
 
 type Result struct {
-	OutputDirectory string
-	ArtifactPath    string
-	ArtifactSHA256  string
-	ArtifactSize    int64
-	InstallerPath   string
-	InstallerSHA256 string
-	InstallerSize   int64
-	RollbackPath    string
-	RollbackSHA256  string
-	RollbackSize    int64
-	Metadata        GitMetadata
-	ComponentCount  int
-	ScanFileCount   int
+	OutputDirectory    string
+	ArtifactPath       string
+	ArtifactSHA256     string
+	ArtifactSize       int64
+	InstallerPath      string
+	InstallerSHA256    string
+	InstallerSize      int64
+	RollbackPath       string
+	RollbackSHA256     string
+	RollbackSize       int64
+	UpdateHelperPath   string
+	UpdateHelperSHA256 string
+	UpdateHelperSize   int64
+	Metadata           GitMetadata
+	ComponentCount     int
+	ScanFileCount      int
 }
 
 func FindRepoRoot() (string, error) {
@@ -318,11 +321,14 @@ func Run(options BuildOptions) (Result, error) {
 	}
 	artifact := filepath.Join(outDir, "douyin-live-desktop-"+options.Version+"-windows-amd64.exe")
 	rollback := filepath.Join(outDir, "douyin-live-dbrollback-"+options.Version+"-windows-amd64.exe")
+	updateHelper := filepath.Join(outDir, "douyin-live-updater-"+options.Version+"-windows-amd64.exe")
 	installer := filepath.Join(outDir, "douyin-live-desktop-"+options.Version+"-windows-amd64-installer.exe")
 	var artifactHash string
 	var artifactSize int64
 	var rollbackHash string
 	var rollbackSize int64
+	var updateHelperHash string
+	var updateHelperSize int64
 	var installerHash string
 	var installerSize int64
 	var webView2Bootstrapper string
@@ -342,6 +348,10 @@ func Run(options BuildOptions) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		updateHelperHash, updateHelperSize, err = reproducibleGoToolBuild(root, "./cmd/updatehelper", updateHelper)
+		if err != nil {
+			return Result{}, err
+		}
 		webView2Bootstrapper, err = VerifyWebView2Bootstrapper(options.WebView2Bootstrapper, webView2Lock)
 		if err != nil {
 			return Result{}, err
@@ -355,18 +365,22 @@ func Run(options BuildOptions) (Result, error) {
 		return Result{}, err
 	}
 	if !options.SkipBuild {
-		installerHash, installerSize, err = buildWindowsInstaller(root, outDir, installer, artifact, rollback, webView2Bootstrapper, options.Version, lock)
+		installerHash, installerSize, err = buildWindowsInstaller(
+			root, outDir, installer, artifact, rollback, updateHelper,
+			webView2Bootstrapper, options.Version, lock,
+		)
 		if err != nil {
 			return Result{}, err
 		}
-		if err := refreshInstallerManifest(outDir, installer, installerHash, installerSize, rollback, rollbackHash, rollbackSize); err != nil {
+		if err := refreshInstallerManifest(outDir, installer, installerHash, installerSize, rollback, rollbackHash, rollbackSize, updateHelper, updateHelperHash, updateHelperSize); err != nil {
 			return Result{}, err
 		}
 	}
 	return Result{OutputDirectory: outDir, ArtifactPath: artifact, ArtifactSHA256: artifactHash,
 		ArtifactSize: artifactSize, InstallerPath: installer, InstallerSHA256: installerHash,
 		InstallerSize: installerSize, RollbackPath: rollback, RollbackSHA256: rollbackHash,
-		RollbackSize: rollbackSize, Metadata: metadata, ComponentCount: len(components), ScanFileCount: scanned}, nil
+		RollbackSize: rollbackSize, UpdateHelperPath: updateHelper, UpdateHelperSHA256: updateHelperHash,
+		UpdateHelperSize: updateHelperSize, Metadata: metadata, ComponentCount: len(components), ScanFileCount: scanned}, nil
 }
 
 func reproducibleDesktopBuild(root, artifact, version string, metadata GitMetadata, source, nodeVersion string) (string, int64, error) {

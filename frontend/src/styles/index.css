@@ -377,3 +377,86 @@ button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.update-banner {
+  align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 14px;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  margin: 16px 24px 0;
+  padding: 14px 16px;
+}
+
+.update-banner div,
+.update-panel__summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.update-banner span,
+.update-panel__summary span,
+.update-panel__summary time {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.update-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.update-panel__summary {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.update-progress {
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.update-progress span {
+  background: var(--accent);
+  display: block;
+  height: 100%;
+  transition: width 180ms ease;
+}
+
+.update-notes {
+  background: color-mix(in srgb, var(--panel) 84%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .update-banner,
+  .update-panel__summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

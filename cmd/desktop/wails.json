@@ -13,7 +13,7 @@
   "info": {
     "companyName": "DouyinLive",
     "productName": "抖音直播分析",
-    "productVersion": "0.1.0",
+    "productVersion": "0.2.0",
     "copyright": "Copyright © 2026",
     "comments": "基于 Wails 的本地直播分析桌面程序"
   }

@@ -1,10 +1,15 @@
 import {
+  CancelUpdateDownload,
+  CheckForUpdate,
   ClearRoomCookie,
   CreateRoom,
   DeleteRoom,
   GetRoomStatus,
   GetSettings,
+  GetUpdateStatus,
+  InstallPreparedUpdate,
   ListRooms,
+  PrepareUpdate,
   SetRoomCookie,
   StartMonitoring,
   StopMonitoring,
@@ -18,6 +23,7 @@ import {
   roomsSchema,
   roomStatusSchema,
   settingsSchema,
+  updateStatusSchema,
   type RoomConfig,
   type RoomFormValues,
   type RoomRuntimeStatus,
@@ -81,6 +87,26 @@ export async function saveSettings(values: SettingsFormValues) {
   return parse(settingsSchema, 'settings', await UpdateSettings(values))
 }
 
+export async function getUpdateStatus() {
+  return parse(updateStatusSchema, 'update status', await GetUpdateStatus())
+}
+
+export async function checkForUpdate() {
+  return parse(updateStatusSchema, 'update status', await CheckForUpdate())
+}
+
+export async function prepareUpdate() {
+  return parse(updateStatusSchema, 'update status', await PrepareUpdate())
+}
+
+export async function cancelUpdateDownload() {
+  return parse(updateStatusSchema, 'update status', await CancelUpdateDownload())
+}
+
+export async function installPreparedUpdate() {
+  return parse(updateStatusSchema, 'update status', await InstallPreparedUpdate())
+}
+
 export function userFacingError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   if (message.includes('ROOM_ALREADY_EXISTS')) return '该直播间已经存在。'
@@ -89,5 +115,12 @@ export function userFacingError(error: unknown): string {
   if (message.includes('SETTINGS_INVALID')) return '设置值无效，请检查后重试。'
   if (message.includes('UI_CONTRACT_INVALID')) return '桌面服务返回了无法识别的数据，请重启应用。'
   if (message.includes('CAPTURE_FINALIZING')) return '直播场次正在收尾，请稍候再试。'
+  if (message.includes('UPDATE_BUSY')) return '直播、录制、重连或收尾期间不能下载或安装更新。'
+  if (message.includes('UPDATE_SIGNATURE')) return '更新签名无效，已拒绝该更新。'
+  if (message.includes('UPDATE_HASH_MISMATCH')) return '更新安装包校验失败，临时文件已删除。'
+  if (message.includes('UPDATE_DISK_FULL')) return '磁盘空间不足，无法安全安装更新。'
+  if (message.includes('UPDATE_CHECK_FAILED')) return '暂时无法连接更新服务，请稍后重试。'
+  if (message.includes('UPDATE_DOWNLOAD_CANCELLED')) return '更新下载已取消。'
+  if (message.includes('UPDATE_')) return '自动更新操作失败，请稍后重试或查看诊断信息。'
   return '操作失败，请稍后重试。'
 }

@@ -12,6 +12,7 @@ import { SettingsPage } from '../features/settings/SettingsPage'
 import { AppEventBridge } from './AppEventBridge'
 import type { BootstrapDTO } from './bootstrap'
 import { useThemeStore } from './theme'
+import { useUpdateStore } from './updateStore'
 
 const iconByCapability = {
   overview: Home,
@@ -27,6 +28,7 @@ type PageID = keyof typeof iconByCapability
 
 export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   const { resolvedTheme, toggleTheme } = useThemeStore()
+  const updateStatus = useUpdateStore((state) => state.status)
   const [activePage, setActivePage] = useState<PageID>('overview')
   const [openRoomEditor, setOpenRoomEditor] = useState(false)
   const [realtimeRoomId, setRealtimeRoomId] = useState<string>()
@@ -101,6 +103,14 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
             <span className={errors ? 'topbar__alert' : ''}>{errors ? <AlertTriangle aria-hidden="true" /> : null}{errors ? `异常 ${errors}` : '运行正常'}</span>
           </div>
         </header>
+        {updateStatus?.state === 'ready' && (
+          <div className="update-banner" role="status">
+            <div><strong>版本 {updateStatus.availableVersion} 已准备好</strong><span>安装前会再次确认没有直播、录制、重连或收尾任务。</span></div>
+            <button className="button button--primary" type="button" onClick={() => setActivePage('settings')}>
+              查看并安装
+            </button>
+          </div>
+        )}
         {activePage === 'overview' && <OverviewPage data={bootstrap.data} dashboard={dashboard} onAddRoom={addRoom} />}
         {activePage === 'rooms' && <RoomsPage dashboard={dashboard} openEditor={openRoomEditor} onEditorHandled={() => setOpenRoomEditor(false)} onOpenRealtime={openRealtime} />}
         {activePage === 'realtime' && <RealtimeRoomPage rooms={rooms} statuses={dashboard.statuses} roomId={realtimeRoomId} onRoomChange={setRealtimeRoomId} onBack={() => setActivePage('rooms')} />}

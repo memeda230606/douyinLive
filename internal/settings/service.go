@@ -14,7 +14,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 )
 
-const SettingsVersion = 2
+const SettingsVersion = 3
 
 type AppSettings struct {
 	Version                 int          `json:"version"`
@@ -25,6 +25,7 @@ type AppSettings struct {
 	MaxConcurrentRecordings int          `json:"maxConcurrentRecordings"`
 	MinimumFreeSpaceGiB     int          `json:"minimumFreeSpaceGiB"`
 	SaveDisplayNames        bool         `json:"saveDisplayNames"`
+	AutomaticUpdates        bool         `json:"automaticUpdates"`
 }
 
 type UpdateSettingsInput struct {
@@ -34,6 +35,7 @@ type UpdateSettingsInput struct {
 	MaxConcurrentRecordings int          `json:"maxConcurrentRecordings"`
 	MinimumFreeSpaceGiB     int          `json:"minimumFreeSpaceGiB"`
 	SaveDisplayNames        bool         `json:"saveDisplayNames"`
+	AutomaticUpdates        bool         `json:"automaticUpdates"`
 }
 
 type Error struct {
@@ -65,6 +67,7 @@ type persistedSettings struct {
 	MaxConcurrentRecordings int          `json:"maxConcurrentRecordings"`
 	MinimumFreeSpaceGiB     int          `json:"minimumFreeSpaceGiB"`
 	SaveDisplayNames        bool         `json:"saveDisplayNames"`
+	AutomaticUpdates        bool         `json:"automaticUpdates"`
 }
 
 type Service struct {
@@ -92,6 +95,7 @@ func Open(configDirectory, storageRoot, defaultRecordingDirectory string) (*Serv
 			MaxConcurrentRecordings: 1,
 			MinimumFreeSpaceGiB:     10,
 			SaveDisplayNames:        true,
+			AutomaticUpdates:        true,
 		},
 	}
 	data, err := os.ReadFile(service.path)
@@ -118,6 +122,7 @@ func Open(configDirectory, storageRoot, defaultRecordingDirectory string) (*Serv
 		MaxConcurrentRecordings: service.settings.MaxConcurrentRecordings,
 		MinimumFreeSpaceGiB:     service.settings.MinimumFreeSpaceGiB,
 		SaveDisplayNames:        service.settings.SaveDisplayNames,
+		AutomaticUpdates:        service.settings.AutomaticUpdates,
 	}); err != nil {
 		return nil, fmt.Errorf("validate persisted settings: %w", err)
 	}
@@ -130,17 +135,26 @@ func Open(configDirectory, storageRoot, defaultRecordingDirectory string) (*Serv
 }
 
 func migrateSettings(settings *persistedSettings) bool {
-	if settings == nil || settings.Version != 1 {
+	if settings == nil {
 		return false
 	}
-	settings.Version = SettingsVersion
-	if settings.DefaultSegmentMinutes < 5 {
-		settings.DefaultSegmentMinutes = 5
+	migrated := false
+	if settings.Version == 1 {
+		settings.Version = 2
+		if settings.DefaultSegmentMinutes < 5 {
+			settings.DefaultSegmentMinutes = 5
+		}
+		if settings.DefaultSegmentMinutes > 30 {
+			settings.DefaultSegmentMinutes = 30
+		}
+		migrated = true
 	}
-	if settings.DefaultSegmentMinutes > 30 {
-		settings.DefaultSegmentMinutes = 30
+	if settings.Version == 2 {
+		settings.Version = SettingsVersion
+		settings.AutomaticUpdates = true
+		migrated = true
 	}
-	return true
+	return migrated
 }
 
 func (s *Service) GetSettings(ctx context.Context) (AppSettings, error) {
@@ -184,6 +198,7 @@ func (s *Service) dtoLocked() AppSettings {
 		MaxConcurrentRecordings: s.settings.MaxConcurrentRecordings,
 		MinimumFreeSpaceGiB:     s.settings.MinimumFreeSpaceGiB,
 		SaveDisplayNames:        s.settings.SaveDisplayNames,
+		AutomaticUpdates:        s.settings.AutomaticUpdates,
 	}
 }
 
@@ -245,6 +260,7 @@ func validate(input UpdateSettingsInput) (persistedSettings, error) {
 		Version: SettingsVersion, RecordingDirectory: filepath.Clean(directory), DefaultQuality: input.DefaultQuality,
 		DefaultSegmentMinutes: input.DefaultSegmentMinutes, MaxConcurrentRecordings: input.MaxConcurrentRecordings,
 		MinimumFreeSpaceGiB: input.MinimumFreeSpaceGiB, SaveDisplayNames: input.SaveDisplayNames,
+		AutomaticUpdates: input.AutomaticUpdates,
 	}, nil
 }
 

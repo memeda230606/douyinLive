@@ -1208,6 +1208,7 @@ export namespace settings {
 	    maxConcurrentRecordings: number;
 	    minimumFreeSpaceGiB: number;
 	    saveDisplayNames: boolean;
+	    automaticUpdates: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -1223,6 +1224,7 @@ export namespace settings {
 	        this.maxConcurrentRecordings = source["maxConcurrentRecordings"];
 	        this.minimumFreeSpaceGiB = source["minimumFreeSpaceGiB"];
 	        this.saveDisplayNames = source["saveDisplayNames"];
+	        this.automaticUpdates = source["automaticUpdates"];
 	    }
 	}
 	export class UpdateSettingsInput {
@@ -1232,6 +1234,7 @@ export namespace settings {
 	    maxConcurrentRecordings: number;
 	    minimumFreeSpaceGiB: number;
 	    saveDisplayNames: boolean;
+	    automaticUpdates: boolean;
 
 	    static createFrom(source: any = {}) {
 	        return new UpdateSettingsInput(source);
@@ -1245,6 +1248,46 @@ export namespace settings {
 	        this.maxConcurrentRecordings = source["maxConcurrentRecordings"];
 	        this.minimumFreeSpaceGiB = source["minimumFreeSpaceGiB"];
 	        this.saveDisplayNames = source["saveDisplayNames"];
+	        this.automaticUpdates = source["automaticUpdates"];
+	    }
+	}
+
+}
+
+export namespace update {
+
+	export class StatusDTO {
+	    version: number;
+	    state: string;
+	    currentVersion: string;
+	    availableVersion?: string;
+	    publishedAt?: string;
+	    releaseNotes?: string;
+	    downloadedBytes?: number;
+	    totalBytes?: number;
+	    checkedAt?: number;
+	    installBlocked: boolean;
+	    blockReason?: string;
+	    errorCode?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new StatusDTO(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.state = source["state"];
+	        this.currentVersion = source["currentVersion"];
+	        this.availableVersion = source["availableVersion"];
+	        this.publishedAt = source["publishedAt"];
+	        this.releaseNotes = source["releaseNotes"];
+	        this.downloadedBytes = source["downloadedBytes"];
+	        this.totalBytes = source["totalBytes"];
+	        this.checkedAt = source["checkedAt"];
+	        this.installBlocked = source["installBlocked"];
+	        this.blockReason = source["blockReason"];
+	        this.errorCode = source["errorCode"];
 	    }
 	}
 

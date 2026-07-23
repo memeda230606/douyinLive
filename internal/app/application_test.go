@@ -37,7 +37,7 @@ func TestApplicationBootstrapIsSanitizedAndVersioned(t *testing.T) {
 		t.Fatalf("unexpected bootstrap: %#v", got)
 	}
 	if got.Build.ProductVersion != "test" || got.Build.DatabaseSchemaVersion != 6 ||
-		got.Build.SettingsSchemaVersion != 2 || got.Build.FFmpegSHA256 == "" {
+		got.Build.SettingsSchemaVersion != 3 || got.Build.FFmpegSHA256 == "" {
 		t.Fatalf("unexpected build metadata: %#v", got.Build)
 	}
 	if len(got.Capabilities) != 7 {

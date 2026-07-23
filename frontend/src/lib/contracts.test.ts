@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   bootstrapSchema, liveEventBatchSchema, recordingProfileSchema, recordingProgressSchema,
-  recordingStatuses, roomFormSchema, roomSchema, roomStatusSchema, settingsFormSchema,
+  recordingStatuses, roomFormSchema, roomSchema, roomStatusSchema, settingsFormSchema, updateStatusSchema,
 } from './contracts'
 
 const room = {
@@ -94,7 +94,7 @@ describe('desktop runtime contracts', () => {
       }).success).toBe(true)
       expect(settingsFormSchema.safeParse({
         recordingDirectory: 'D:\\recordings', defaultQuality: 'auto', defaultSegmentMinutes: segmentMinutes,
-        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true, automaticUpdates: true,
       }).success).toBe(true)
     }
     for (const segmentMinutes of [4, 31]) {
@@ -105,7 +105,7 @@ describe('desktop runtime contracts', () => {
       }).success).toBe(false)
       expect(settingsFormSchema.safeParse({
         recordingDirectory: 'D:\\recordings', defaultQuality: 'auto', defaultSegmentMinutes: segmentMinutes,
-        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true,
+        maxConcurrentRecordings: 1, minimumFreeSpaceGiB: 10, saveDisplayNames: true, automaticUpdates: true,
       }).success).toBe(false)
     }
     for (const segmentMinutes of [0, 61]) {
@@ -164,5 +164,18 @@ describe('desktop runtime contracts', () => {
     expect(recordingProgressSchema.safeParse({ ...progress, attemptId: 'private' }).success).toBe(false)
     expect(recordingProgressSchema.safeParse({ ...progress, state: 'finalizing' }).success).toBe(false)
     expect(recordingProgressSchema.safeParse({ ...progress, state: 'unavailable' }).success).toBe(false)
+  })
+
+  it('accepts only the path-free update status v1 allowlist', () => {
+    const status = {
+      version: 1, state: 'ready', currentVersion: '0.2.0', availableVersion: '0.2.1',
+      publishedAt: '2026-07-23T04:00:00Z', releaseNotes: '安全更新',
+      downloadedBytes: 100, totalBytes: 100, checkedAt: 1,
+      installBlocked: false,
+    }
+    expect(updateStatusSchema.safeParse(status).success).toBe(true)
+    expect(updateStatusSchema.safeParse({ ...status, state: 'unknown' }).success).toBe(false)
+    expect(updateStatusSchema.safeParse({ ...status, installerPath: 'C:\\secret\\installer.exe' }).success).toBe(false)
+    expect(updateStatusSchema.safeParse({ ...status, signature: 'secret' }).success).toBe(false)
   })
 })

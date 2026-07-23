@@ -49,5 +49,8 @@ func main() {
 		fmt.Printf("rollbackTool=%s\n", result.RollbackPath)
 		fmt.Printf("rollbackToolSHA256=%s\n", result.RollbackSHA256)
 		fmt.Printf("rollbackToolSize=%d\n", result.RollbackSize)
+		fmt.Printf("updateHelper=%s\n", result.UpdateHelperPath)
+		fmt.Printf("updateHelperSHA256=%s\n", result.UpdateHelperSHA256)
+		fmt.Printf("updateHelperSize=%d\n", result.UpdateHelperSize)
 	}
 }

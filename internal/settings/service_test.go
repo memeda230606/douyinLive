@@ -26,7 +26,8 @@ func TestSettingsDefaultsUpdateAndRestart(t *testing.T) {
 	if defaults.Version != SettingsVersion || defaults.StorageRoot != root || defaults.RecordingDirectory != defaultRecording {
 		t.Fatalf("unexpected defaults: %#v", defaults)
 	}
-	if defaults.DefaultQuality != room.QualityAuto || defaults.DefaultSegmentMinutes != 10 || defaults.MaxConcurrentRecordings != 1 {
+	if defaults.DefaultQuality != room.QualityAuto || defaults.DefaultSegmentMinutes != 10 ||
+		defaults.MaxConcurrentRecordings != 1 || !defaults.AutomaticUpdates {
 		t.Fatalf("unexpected recording defaults: %#v", defaults)
 	}
 
@@ -34,6 +35,7 @@ func TestSettingsDefaultsUpdateAndRestart(t *testing.T) {
 	updated, err := service.UpdateSettings(context.Background(), UpdateSettingsInput{
 		RecordingDirectory: customDirectory, DefaultQuality: room.QualityHigh, DefaultSegmentMinutes: 15,
 		MaxConcurrentRecordings: 2, MinimumFreeSpaceGiB: 20, SaveDisplayNames: false,
+		AutomaticUpdates: false,
 	})
 	if err != nil {
 		t.Fatalf("UpdateSettings() error = %v", err)
@@ -128,7 +130,8 @@ func TestSettingsMigratesVersionOneSegmentBounds(t *testing.T) {
 				t.Fatalf("migrated settings = (%#v, %v)", got, err)
 			}
 			persisted, err := os.ReadFile(filepath.Join(config, "settings.json"))
-			if err != nil || !json.Valid(persisted) || !strings.Contains(string(persisted), `"version": 2`) {
+			if err != nil || !json.Valid(persisted) || !strings.Contains(string(persisted), `"version": 3`) ||
+				!strings.Contains(string(persisted), `"automaticUpdates": true`) {
 				t.Fatalf("migrated settings file invalid: %v", err)
 			}
 		})

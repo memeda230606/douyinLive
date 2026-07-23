@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
 
 import { EventsOn, LogError } from '../generated/wailsjs/runtime/runtime'
-import { liveEventBatchSchema, recordingProgressSchema, roomStatusSchema } from '../lib/contracts'
+import { liveEventBatchSchema, recordingProgressSchema, roomStatusSchema, updateStatusSchema } from '../lib/contracts'
 import { useRealtimeStore } from './realtimeStore'
 import { useRoomStatusStore } from './roomStatus'
+import { useUpdateStore } from './updateStore'
 
 export function AppEventBridge() {
   useEffect(() => {
@@ -32,11 +33,20 @@ export function AppEventBridge() {
       }
       useRealtimeStore.getState().applyRecordingProgress(parsed.data)
     })
+    const offUpdateStatus = EventsOn('update:status', (payload: unknown) => {
+      const parsed = updateStatusSchema.safeParse(payload)
+      if (!parsed.success) {
+        LogError('UI_CONTRACT_INVALID: update:status payload')
+        return
+      }
+      useUpdateStore.getState().setStatus(parsed.data)
+    })
 
     return () => {
       offRoomStatus()
       offLiveEvent()
       offRecordingProgress()
+      offUpdateStatus()
     }
   }, [])
 

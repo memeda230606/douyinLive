@@ -160,6 +160,21 @@ func backupDatabase(ctx context.Context, db *sql.DB, layout Layout, version int,
 	return path, nil
 }
 
+// CreateUpdateBackup creates a transactionally consistent pre-update backup
+// while the application still owns the live database connection.
+func (s *Store) CreateUpdateBackup(ctx context.Context, now time.Time) (string, error) {
+	if s == nil || s.writer == nil || s.path == "" || s.schemaVersion <= 0 {
+		return "", errors.New("create update backup: store is not ready")
+	}
+	if ctx == nil {
+		return "", errors.New("create update backup: context is nil")
+	}
+	root := filepath.Dir(s.path)
+	return backupDatabase(ctx, s.writer, Layout{
+		Root: root, Database: s.path, BackupsDir: filepath.Join(root, "backups"),
+	}, s.schemaVersion, now)
+}
+
 func (s *Store) Writer() *sql.DB    { return s.writer }
 func (s *Store) Reader() *sql.DB    { return s.reader }
 func (s *Store) Path() string       { return s.path }

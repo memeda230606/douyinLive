@@ -3,6 +3,7 @@ module github.com/jwwsjlm/douyinLive/v2
 go 1.26.4
 
 require (
+	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3
 	github.com/codeGROOVE-dev/retry v1.3.1
 	github.com/dgraph-io/ristretto/v2 v2.4.2
 	github.com/dop251/goja v0.0.0-20260701091749-b07b74453ea9

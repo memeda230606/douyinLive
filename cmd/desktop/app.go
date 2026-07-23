@@ -13,6 +13,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/eventstore"
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
+	"github.com/jwwsjlm/douyinLive/v2/internal/update"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -25,6 +26,9 @@ type DesktopApp struct {
 	emitEvent             func(context.Context, string, ...interface{})
 	acceptingEvents       atomic.Bool
 	startupMu             sync.Mutex
+	updaterMu             sync.RWMutex
+	updater               *update.Service
+	updateCancel          context.CancelFunc
 	startupReady          chan struct{}
 	startupReadyOnce      sync.Once
 	startupArmed          bool
@@ -73,8 +77,18 @@ func (a *DesktopApp) startup(ctx context.Context) {
 			"error_code", "DATABASE_INIT_FAILED",
 			"correlation_id", "startup",
 		)
-	} else if a.acceptanceHookAllowed() {
-		a.startAcceptanceHook(startupCtx)
+	} else {
+		if err := a.initializeUpdater(startupCtx); err != nil {
+			slog.Error("自动更新服务初始化失败",
+				"component", "desktop", "error_code", update.ErrorCode(err),
+				"correlation_id", "startup",
+			)
+		} else {
+			a.acknowledgeUpdaterLaunch()
+		}
+		if a.acceptanceHookAllowed() {
+			a.startAcceptanceHook(startupCtx)
+		}
 	}
 }
 
@@ -149,6 +163,7 @@ func (a *DesktopApp) beginStartup(parent context.Context) (context.Context, bool
 }
 
 func (a *DesktopApp) beginShutdown() {
+	a.stopUpdater()
 	if a == nil {
 		return
 	}

@@ -36,7 +36,7 @@ func reproducibleGoToolBuild(root, packagePath, artifact string) (string, int64,
 	return firstHash, firstSize, nil
 }
 
-func buildWindowsInstaller(root, outDir, installer, desktop, rollback, webView2Bootstrapper, version string, lock FFmpegLock) (string, int64, error) {
+func buildWindowsInstaller(root, outDir, installer, desktop, rollback, updateHelper, webView2Bootstrapper, version string, lock FFmpegLock) (string, int64, error) {
 	makensis, err := exec.LookPath("makensis")
 	if err != nil {
 		return "", 0, fmt.Errorf("locate NSIS compiler: %w", err)
@@ -57,6 +57,7 @@ func buildWindowsInstaller(root, outDir, installer, desktop, rollback, webView2B
 		"ARG_WEBVIEW2_BOOTSTRAPPER": webView2Bootstrapper,
 		"ARG_WEBVIEW2_LOCK":         filepath.Join(outDir, "webview2-bootstrapper-windows.lock.json"),
 		"ARG_DBROLLBACK_BINARY":     rollback,
+		"ARG_UPDATE_HELPER_BINARY":  updateHelper,
 		"ARG_LICENSE_FILE":          filepath.Join(outDir, "LICENSE.txt"),
 		"ARG_LICENSE_MANIFEST":      filepath.Join(outDir, "licenses.json"),
 		"ARG_NOTICES_FILE":          filepath.Join(outDir, "THIRD-PARTY-NOTICES.txt"),
@@ -104,7 +105,7 @@ func installerArguments(defines map[string]string) []string {
 	order := []string{
 		"ARG_WAILS_AMD64_BINARY", "ARG_FFMPEG_BINARY", "ARG_FFPROBE_BINARY",
 		"ARG_WEBVIEW2_BOOTSTRAPPER", "ARG_WEBVIEW2_LOCK",
-		"ARG_DBROLLBACK_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
+		"ARG_DBROLLBACK_BINARY", "ARG_UPDATE_HELPER_BINARY", "ARG_LICENSE_FILE", "ARG_LICENSE_MANIFEST",
 		"ARG_NOTICES_FILE", "ARG_SBOM_FILE", "ARG_FFMPEG_LOCK",
 		"ARG_INSTALLATION_GUIDE", "ARG_INSTALLER_OUTPUT",
 		"ARG_USER_GUIDE", "ARG_PRIVACY_GUIDE", "ARG_LIMITATIONS_GUIDE",
@@ -125,7 +126,7 @@ func installerArguments(defines map[string]string) []string {
 	return arguments
 }
 
-func refreshInstallerManifest(outDir, installer, installerHash string, installerSize int64, rollback, rollbackHash string, rollbackSize int64) error {
+func refreshInstallerManifest(outDir, installer, installerHash string, installerSize int64, rollback, rollbackHash string, rollbackSize int64, updateHelper, updateHelperHash string, updateHelperSize int64) error {
 	manifestPath := filepath.Join(outDir, "release-manifest.json")
 	content, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -140,6 +141,7 @@ func refreshInstallerManifest(outDir, installer, installerHash string, installer
 	}
 	manifest["installer"] = map[string]any{"path": filepath.Base(installer), "sha256": installerHash, "size": installerSize, "scope": "user"}
 	manifest["rollbackTool"] = map[string]any{"path": filepath.Base(rollback), "sha256": rollbackHash, "size": rollbackSize}
+	manifest["updateHelper"] = map[string]any{"path": filepath.Base(updateHelper), "sha256": updateHelperHash, "size": updateHelperSize}
 	files, err := manifestFiles(outDir)
 	if err != nil {
 		return err

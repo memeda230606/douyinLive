@@ -6,6 +6,14 @@ export function AnalyzeSession(arg1) {
   return window['go']['main']['DesktopApp']['AnalyzeSession'](arg1);
 }
 
+export function CancelUpdateDownload() {
+  return window['go']['main']['DesktopApp']['CancelUpdateDownload']();
+}
+
+export function CheckForUpdate() {
+  return window['go']['main']['DesktopApp']['CheckForUpdate']();
+}
+
 export function ClearRoomCookie(arg1) {
   return window['go']['main']['DesktopApp']['ClearRoomCookie'](arg1);
 }
@@ -54,6 +62,14 @@ export function GetState() {
   return window['go']['main']['DesktopApp']['GetState']();
 }
 
+export function GetUpdateStatus() {
+  return window['go']['main']['DesktopApp']['GetUpdateStatus']();
+}
+
+export function InstallPreparedUpdate() {
+  return window['go']['main']['DesktopApp']['InstallPreparedUpdate']();
+}
+
 export function ListPlaybackEvents(arg1, arg2) {
   return window['go']['main']['DesktopApp']['ListPlaybackEvents'](arg1, arg2);
 }
@@ -76,6 +92,10 @@ export function ListRooms() {
 
 export function LocatePlaybackMedia(arg1) {
   return window['go']['main']['DesktopApp']['LocatePlaybackMedia'](arg1);
+}
+
+export function PrepareUpdate() {
+  return window['go']['main']['DesktopApp']['PrepareUpdate']();
 }
 
 export function SetRoomCookie(arg1) {

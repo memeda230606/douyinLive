@@ -38,9 +38,10 @@ $ffprobePath = (Get-Command ffprobe.exe -ErrorAction Stop).Source
 $makensisPath = (Get-Command makensis.exe -ErrorAction Stop).Source
 $desktopPath = [IO.Path]::Combine($releaseRoot, "douyin-live-desktop-$CurrentVersion-windows-amd64.exe")
 $rollbackPath = [IO.Path]::Combine($releaseRoot, "douyin-live-dbrollback-$CurrentVersion-windows-amd64.exe")
+$updateHelperPath = [IO.Path]::Combine($releaseRoot, "douyin-live-updater-$CurrentVersion-windows-amd64.exe")
 
 foreach ($required in @(
-    $installerScript, $desktopPath, $rollbackPath, $ffmpegPath, $ffprobePath, $WebView2Bootstrapper,
+    $installerScript, $desktopPath, $rollbackPath, $updateHelperPath, $ffmpegPath, $ffprobePath, $WebView2Bootstrapper,
     [IO.Path]::Combine($releaseRoot, 'LICENSE.txt'),
     [IO.Path]::Combine($releaseRoot, 'licenses.json'),
     [IO.Path]::Combine($releaseRoot, 'THIRD-PARTY-NOTICES.txt'),
@@ -122,6 +123,7 @@ function New-MatrixInstaller {
         ARG_WEBVIEW2_BOOTSTRAPPER = $WebView2Bootstrapper
         ARG_WEBVIEW2_LOCK = $webView2LockPath
         ARG_DBROLLBACK_BINARY = $rollbackPath
+        ARG_UPDATE_HELPER_BINARY = $updateHelperPath
         ARG_LICENSE_FILE = [IO.Path]::Combine($releaseRoot, 'LICENSE.txt')
         ARG_LICENSE_MANIFEST = [IO.Path]::Combine($releaseRoot, 'licenses.json')
         ARG_NOTICES_FILE = [IO.Path]::Combine($releaseRoot, 'THIRD-PARTY-NOTICES.txt')
@@ -155,7 +157,8 @@ function New-MatrixInstaller {
 function Assert-InstalledPayload {
     param([Parameter(Mandatory)][string]$ExpectedVersion)
     foreach ($relative in @(
-        'douyin-live-desktop.exe', 'douyin-live-dbrollback.exe', 'uninstall.exe',
+        'douyin-live-desktop.exe', 'douyin-live-dbrollback.exe',
+        'douyin-live-updater.exe', 'uninstall.exe',
         'ffmpeg\ffmpeg.exe', 'ffmpeg\ffprobe.exe', 'licenses\LICENSE.txt',
         'licenses\licenses.json', 'licenses\THIRD-PARTY-NOTICES.txt',
         'licenses\sbom.spdx.json', 'licenses\ffmpeg-windows-amd64.lock.json',
