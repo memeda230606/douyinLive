@@ -16,6 +16,7 @@ import (
 	"github.com/jwwsjlm/douyinLive/v2/internal/room"
 	"github.com/jwwsjlm/douyinLive/v2/internal/settings"
 	"github.com/jwwsjlm/douyinlive-proto/generated/new_douyin"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -273,6 +274,43 @@ func TestDesktopAppEmitterFenceDropsEventsAfterShutdownStarts(t *testing.T) {
 	desktop.emit(context.Background(), capture.RecordingProgressEventName, capture.RecordingProgressDTO{})
 	if got := emitted.Load(); got != 1 {
 		t.Fatalf("post-shutdown emitter calls = %d, want 1", got)
+	}
+}
+
+func TestDesktopSelectRecordingDirectoryUsesSystemPickerAndMasksFailures(t *testing.T) {
+	core := application.New(application.Options{Name: "directory-picker", Version: "test"})
+	desktop := newDesktopApp(core, application.InfrastructureOptions{})
+	want := filepath.Join(t.TempDir(), "recordings")
+	var captured wailsruntime.OpenDialogOptions
+	desktop.openDirectoryDialog = func(_ context.Context, options wailsruntime.OpenDialogOptions) (string, error) {
+		captured = options
+		return want, nil
+	}
+	current := filepath.Join(t.TempDir(), "current")
+	selected, err := desktop.SelectRecordingDirectory(current)
+	if err != nil || selected != filepath.Clean(want) {
+		t.Fatalf("SelectRecordingDirectory() = (%q, %v), want %q", selected, err, want)
+	}
+	if captured.Title != "选择录制存储目录" || !captured.CanCreateDirectories ||
+		captured.DefaultDirectory != filepath.Clean(current) {
+		t.Fatalf("dialog options = %#v", captured)
+	}
+
+	desktop.openDirectoryDialog = func(_ context.Context, options wailsruntime.OpenDialogOptions) (string, error) {
+		captured = options
+		return "", nil
+	}
+	if selected, err := desktop.SelectRecordingDirectory("relative"); err != nil || selected != "" ||
+		captured.DefaultDirectory != "" {
+		t.Fatalf("cancelled relative picker = (%q, %v), options=%#v", selected, err, captured)
+	}
+
+	desktop.openDirectoryDialog = func(context.Context, wailsruntime.OpenDialogOptions) (string, error) {
+		return "", os.ErrPermission
+	}
+	if selected, err := desktop.SelectRecordingDirectory(current); selected != "" ||
+		err == nil || err.Error() != "STORAGE_DIRECTORY_PICKER_FAILED" {
+		t.Fatalf("picker failure = (%q, %v)", selected, err)
 	}
 }
 

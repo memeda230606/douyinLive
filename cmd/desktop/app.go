@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,7 @@ type DesktopApp struct {
 	application           *application.Application
 	infrastructureOptions application.InfrastructureOptions
 	emitEvent             func(context.Context, string, ...interface{})
+	openDirectoryDialog   func(context.Context, runtime.OpenDialogOptions) (string, error)
 	acceptingEvents       atomic.Bool
 	startupMu             sync.Mutex
 	updaterMu             sync.RWMutex
@@ -46,7 +49,8 @@ func NewDesktopApp(app *application.Application) *DesktopApp {
 func newDesktopApp(app *application.Application, options application.InfrastructureOptions) *DesktopApp {
 	return &DesktopApp{
 		application: app, infrastructureOptions: options,
-		emitEvent: runtime.EventsEmit,
+		emitEvent:           runtime.EventsEmit,
+		openDirectoryDialog: runtime.OpenDirectoryDialog,
 	}
 }
 
@@ -362,6 +366,32 @@ func (a *DesktopApp) GetSettings() (settings.AppSettings, error) {
 		return settings.AppSettings{}, err
 	}
 	return service.GetSettings(a.application.Context())
+}
+
+func (a *DesktopApp) SelectRecordingDirectory(current string) (string, error) {
+	if a == nil || a.application == nil || a.openDirectoryDialog == nil {
+		return "", errors.New("STORAGE_DIRECTORY_PICKER_FAILED")
+	}
+	options := runtime.OpenDialogOptions{
+		Title:                "选择录制存储目录",
+		CanCreateDirectories: true,
+	}
+	current = strings.TrimSpace(current)
+	if filepath.IsAbs(current) {
+		options.DefaultDirectory = filepath.Clean(current)
+	}
+	selected, err := a.openDirectoryDialog(a.application.Context(), options)
+	if err != nil {
+		return "", errors.New("STORAGE_DIRECTORY_PICKER_FAILED")
+	}
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(selected) {
+		return "", errors.New("STORAGE_DIRECTORY_PICKER_FAILED")
+	}
+	return filepath.Clean(selected), nil
 }
 
 func (a *DesktopApp) UpdateSettings(input settings.UpdateSettingsInput) (settings.AppSettings, error) {

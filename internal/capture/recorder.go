@@ -133,6 +133,7 @@ type FFmpegDependencyInfo struct {
 type FFmpegRecorderFactoryOptions struct {
 	DataRoot                string
 	RecordingRoot           string
+	RecordingRootProvider   func(context.Context) (string, error)
 	ExplicitFFmpeg          string
 	ExplicitProbe           string
 	BundledDir              string
@@ -361,9 +362,9 @@ func newFFmpegRecorderFactoryWithTools(
 			return nil, FFmpegDependencyInfo{}, ErrRecorderConfiguration
 		}
 	}
-	recordingRoot := options.RecordingRoot
-	if recordingRoot == "" {
-		recordingRoot = filepath.Join(dataRoot, "rooms")
+	defaultRecordingRoot := options.RecordingRoot
+	if defaultRecordingRoot == "" {
+		defaultRecordingRoot = filepath.Join(dataRoot, "rooms")
 	}
 	capacity := make(chan struct{}, maximum)
 	proxyCapacity := make(chan struct{}, 1)
@@ -387,6 +388,17 @@ func newFFmpegRecorderFactoryWithTools(
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		recordingRoot := defaultRecordingRoot
+		if options.RecordingRootProvider != nil {
+			providedRoot, providerErr := options.RecordingRootProvider(ctx)
+			if providerErr != nil || !validRecorderFactoryPath(providedRoot, true, true) {
+				return nil, errors.Join(ErrRecordingUnavailable, ErrRecorderConfiguration)
+			}
+			recordingRoot = filepath.Clean(providedRoot)
+		}
+		if !validRecorderFactoryPath(recordingRoot, true, true) {
+			return nil, errors.Join(ErrRecordingUnavailable, ErrRecorderConfiguration)
 		}
 		select {
 		case capacity <- struct{}{}:

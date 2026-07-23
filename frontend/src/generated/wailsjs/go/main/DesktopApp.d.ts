@@ -55,6 +55,8 @@ export function LocatePlaybackMedia(arg1:playback.MediaLocationRequest):Promise<
 
 export function PrepareUpdate():Promise<update.StatusDTO>;
 
+export function SelectRecordingDirectory(arg1:string):Promise<string>;
+
 export function SetRoomCookie(arg1:room.SetRoomCookieInput):Promise<room.CookieStatus>;
 
 export function StartMonitoring(arg1:string):Promise<void>;

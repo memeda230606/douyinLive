@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, FolderLock, HardDrive, RefreshCw, RotateCw, Save, Shield, X } from 'lucide-react'
+import { Download, FolderLock, FolderOpen, HardDrive, RefreshCw, RotateCw, Save, Shield, X } from 'lucide-react'
 import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 
@@ -8,7 +8,7 @@ import { useUpdateStore } from '../../app/updateStore'
 import { settingsFormSchema, type SettingsFormValues } from '../../lib/contracts'
 import {
   cancelUpdateDownload, checkForUpdate, getSettings, getUpdateStatus,
-  installPreparedUpdate, prepareUpdate, saveSettings, userFacingError,
+  installPreparedUpdate, prepareUpdate, saveSettings, selectRecordingDirectory, userFacingError,
 } from '../../lib/desktop'
 
 const defaults: SettingsFormValues = {
@@ -51,6 +51,12 @@ export function SettingsPage() {
       form.reset(formValues(value))
     },
   })
+  const directoryPicker = useMutation({
+    mutationFn: () => selectRecordingDirectory(form.getValues('recordingDirectory')),
+    onSuccess: (selected) => {
+      if (selected) form.setValue('recordingDirectory', selected, { shouldDirty: true, shouldTouch: true, shouldValidate: true })
+    },
+  })
   const updateMutationOptions = {
     onSuccess: (value: Awaited<ReturnType<typeof getUpdateStatus>>) => {
       setUpdateStatus(value)
@@ -84,10 +90,19 @@ export function SettingsPage() {
       {settings.data && (
         <form className="settings-layout" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
           <section className="settings-section">
-            <div className="settings-section__heading"><HardDrive aria-hidden="true" /><div><h2>存储与录制</h2><p>目录必须是 Windows 绝对路径，并在保存时验证可写性。</p></div></div>
+            <div className="settings-section__heading"><HardDrive aria-hidden="true" /><div><h2>存储与录制</h2><p>目录必须是 Windows 绝对路径；保存时会创建目录并验证可写性。</p></div></div>
             <div className="form-grid">
-              <p className="field field--wide">当前录制仅支持应用数据目录内的场次媒体目录；外部录制根将在媒体清单阶段启用。</p>
-              <label className="field field--wide"><span>录制目录</span><input {...form.register('recordingDirectory')} /><small>{form.formState.errors.recordingDirectory?.message || `应用数据目录：${settings.data.storageRoot}`}</small></label>
+              <div className="field field--wide">
+                <label htmlFor="recording-directory">录制目录</label>
+                <div className="directory-control">
+                  <input id="recording-directory" {...form.register('recordingDirectory')} />
+                  <button className="button" disabled={directoryPicker.isPending} type="button" onClick={() => directoryPicker.mutate()}>
+                    <FolderOpen aria-hidden="true" />选择文件夹
+                  </button>
+                </div>
+                <small>{form.formState.errors.recordingDirectory?.message || '新启动的录制会使用保存后的目录；正在录制的场次不受影响。'}</small>
+              </div>
+              {directoryPicker.isError && <div className="inline-alert field--wide" role="alert">{userFacingError(directoryPicker.error)}</div>}
               <label className="field"><span>默认录制质量</span><select {...form.register('defaultQuality')}><option value="auto">自动选择</option><option value="original">原画</option><option value="ultra">超清</option><option value="high">高清</option><option value="standard">标清</option></select></label>
               <label className="field"><span>默认分片时长</span><div className="input-suffix"><input type="number" min="5" max="30" {...form.register('defaultSegmentMinutes', { valueAsNumber: true })} /><span>分钟</span></div></label>
               <label className="field"><span>并发录制上限</span><input type="number" min="1" max="4" {...form.register('maxConcurrentRecordings', { valueAsNumber: true })} /></label>

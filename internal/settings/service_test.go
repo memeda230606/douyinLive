@@ -26,7 +26,8 @@ func TestSettingsDefaultsUpdateAndRestart(t *testing.T) {
 	if defaults.Version != SettingsVersion || defaults.StorageRoot != root || defaults.RecordingDirectory != defaultRecording {
 		t.Fatalf("unexpected defaults: %#v", defaults)
 	}
-	if defaults.DefaultQuality != room.QualityAuto || defaults.DefaultSegmentMinutes != 10 ||
+	if defaults.RecordingDirectoryConfirmed ||
+		defaults.DefaultQuality != room.QualityAuto || defaults.DefaultSegmentMinutes != 10 ||
 		defaults.MaxConcurrentRecordings != 1 || !defaults.AutomaticUpdates {
 		t.Fatalf("unexpected recording defaults: %#v", defaults)
 	}
@@ -40,7 +41,8 @@ func TestSettingsDefaultsUpdateAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UpdateSettings() error = %v", err)
 	}
-	if updated.RecordingDirectory != customDirectory || updated.DefaultQuality != room.QualityHigh || updated.SaveDisplayNames {
+	if updated.RecordingDirectory != customDirectory || !updated.RecordingDirectoryConfirmed ||
+		updated.DefaultQuality != room.QualityHigh || updated.SaveDisplayNames {
 		t.Fatalf("unexpected updated settings: %#v", updated)
 	}
 	if _, err := os.Stat(customDirectory); err != nil {
@@ -129,11 +131,45 @@ func TestSettingsMigratesVersionOneSegmentBounds(t *testing.T) {
 			if err != nil || got.Version != SettingsVersion || got.DefaultSegmentMinutes != test.want {
 				t.Fatalf("migrated settings = (%#v, %v)", got, err)
 			}
+			if !got.RecordingDirectoryConfirmed {
+				t.Fatalf("existing settings did not migrate as confirmed: %#v", got)
+			}
 			persisted, err := os.ReadFile(filepath.Join(config, "settings.json"))
-			if err != nil || !json.Valid(persisted) || !strings.Contains(string(persisted), `"version": 3`) ||
+			if err != nil || !json.Valid(persisted) || !strings.Contains(string(persisted), `"version": 4`) ||
+				!strings.Contains(string(persisted), `"recordingDirectoryConfirmed": true`) ||
 				!strings.Contains(string(persisted), `"automaticUpdates": true`) {
 				t.Fatalf("migrated settings file invalid: %v", err)
 			}
 		})
+	}
+}
+
+func TestSettingsMigratesVersionThreeWithoutForcingExistingUserThroughOnboarding(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	if err := os.MkdirAll(config, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := persistedSettings{
+		Version: 3, RecordingDirectory: filepath.Join(root, "existing-recordings"),
+		DefaultQuality: room.QualityAuto, DefaultSegmentMinutes: 10,
+		MaxConcurrentRecordings: 1, MinimumFreeSpaceGiB: 10, SaveDisplayNames: true,
+		AutomaticUpdates: false,
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config, "settings.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := Open(config, root, filepath.Join(root, "rooms"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := service.GetSettings(context.Background())
+	if err != nil || got.Version != SettingsVersion || !got.RecordingDirectoryConfirmed ||
+		got.AutomaticUpdates {
+		t.Fatalf("version three migration = (%#v, %v)", got, err)
 	}
 }

@@ -10,10 +10,13 @@ vi.mock('../lib/desktop', () => ({
   listRooms: vi.fn(async () => []),
   getRoomStatus: vi.fn(),
   getSettings: vi.fn(async () => ({
-    version: 1, storageRoot: 'C:\\Data', recordingDirectory: 'C:\\Recordings',
+    version: 4, storageRoot: 'C:\\Data', recordingDirectory: 'C:\\Recordings',
+    recordingDirectoryConfirmed: true,
     defaultQuality: 'auto', defaultSegmentMinutes: 10, maxConcurrentRecordings: 1,
     minimumFreeSpaceGiB: 10, saveDisplayNames: true, automaticUpdates: true,
   })),
+  selectRecordingDirectory: vi.fn(),
+  saveSettings: vi.fn(),
   getUpdateStatus: vi.fn(async () => ({
     version: 1, state: 'idle', currentVersion: '0.2.0', installBlocked: false,
   })),
@@ -33,7 +36,7 @@ const bootstrap: BootstrapDTO = {
     productVersion: 'test', gitCommit: 'unknown', buildTime: 'unknown', buildSource: 'local',
     goVersion: 'go1.26.4', wailsVersion: '2.13.0', nodeVersion: 'v24.18.0',
     ffmpegVersion: '8.1.2-essentials_build-www.gyan.dev', ffmpegSHA256: 'a'.repeat(64), ffmpegLicense: 'GPL-3.0-or-later',
-    databaseSchemaVersion: 6, settingsSchemaVersion: 3, analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
+    databaseSchemaVersion: 6, settingsSchemaVersion: 4, analysisAlgorithmVersion: 'basic-analysis/v1', exportSchemaVersion: 'analysis-export/v1',
   },
   state: 'RUNNING',
   data: { ready: true, schemaVersion: 1, mode: 'READ_WRITE', loggingReady: true },

@@ -98,6 +98,10 @@ export function PrepareUpdate() {
   return window['go']['main']['DesktopApp']['PrepareUpdate']();
 }
 
+export function SelectRecordingDirectory(arg1) {
+  return window['go']['main']['DesktopApp']['SelectRecordingDirectory'](arg1);
+}
+
 export function SetRoomCookie(arg1) {
   return window['go']['main']['DesktopApp']['SetRoomCookie'](arg1);
 }

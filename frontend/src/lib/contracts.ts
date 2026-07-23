@@ -139,6 +139,7 @@ export const settingsSchema = z.object({
   version: z.number().int().positive(),
   storageRoot: z.string().min(1),
   recordingDirectory: z.string().min(1),
+  recordingDirectoryConfirmed: z.boolean(),
   defaultQuality: qualitySchema,
   defaultSegmentMinutes: z.number().int().min(5).max(30),
   maxConcurrentRecordings: z.number().int().min(1).max(4),

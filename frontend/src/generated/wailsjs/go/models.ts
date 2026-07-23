@@ -1203,6 +1203,7 @@ export namespace settings {
 	    version: number;
 	    storageRoot: string;
 	    recordingDirectory: string;
+	    recordingDirectoryConfirmed: boolean;
 	    defaultQuality: string;
 	    defaultSegmentMinutes: number;
 	    maxConcurrentRecordings: number;
@@ -1219,6 +1220,7 @@ export namespace settings {
 	        this.version = source["version"];
 	        this.storageRoot = source["storageRoot"];
 	        this.recordingDirectory = source["recordingDirectory"];
+	        this.recordingDirectoryConfirmed = source["recordingDirectoryConfirmed"];
 	        this.defaultQuality = source["defaultQuality"];
 	        this.defaultSegmentMinutes = source["defaultSegmentMinutes"];
 	        this.maxConcurrentRecordings = source["maxConcurrentRecordings"];

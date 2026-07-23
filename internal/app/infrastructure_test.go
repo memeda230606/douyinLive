@@ -420,6 +420,12 @@ func TestInitializeInfrastructureWiresRecorderFactoryWithoutExposingPaths(t *tes
 	if received.BundledDir != "" && !filepath.IsAbs(received.BundledDir) {
 		t.Fatalf("bundled directory is not absolute")
 	}
+	if received.RecordingRootProvider == nil {
+		t.Fatal("recording root provider was not wired")
+	}
+	if _, err := received.RecordingRootProvider(context.Background()); err == nil {
+		t.Fatal("unconfirmed fresh recording root was accepted")
+	}
 	logData, err := os.ReadFile(filepath.Join(root, "logs", time.Now().Format("app-2006-01-02.jsonl")))
 	if err != nil {
 		t.Fatalf("ReadFile(log) error = %v", err)
@@ -494,6 +500,28 @@ func TestInitializeInfrastructureWiresCustomRecordingRoot(t *testing.T) {
 	}
 	if strings.Contains(string(logData), customRoot) {
 		t.Fatalf("custom recording root leaked to diagnostics: %s", logData)
+	}
+	if received.RecordingRootProvider == nil {
+		t.Fatal("recording root provider was not wired")
+	}
+	nextRoot := filepath.Join(t.TempDir(), "next-recordings")
+	runtimeSettings, err := application.SettingsService().GetSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := application.SettingsService().UpdateSettings(ctx, settings.UpdateSettingsInput{
+		RecordingDirectory: nextRoot, DefaultQuality: runtimeSettings.DefaultQuality,
+		DefaultSegmentMinutes:   runtimeSettings.DefaultSegmentMinutes,
+		MaxConcurrentRecordings: runtimeSettings.MaxConcurrentRecordings,
+		MinimumFreeSpaceGiB:     runtimeSettings.MinimumFreeSpaceGiB,
+		SaveDisplayNames:        runtimeSettings.SaveDisplayNames,
+		AutomaticUpdates:        runtimeSettings.AutomaticUpdates,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resolvedRoot, err := received.RecordingRootProvider(ctx)
+	if err != nil || resolvedRoot != filepath.Clean(nextRoot) {
+		t.Fatalf("runtime recording root = (%q, %v), want %q", resolvedRoot, err, nextRoot)
 	}
 }
 

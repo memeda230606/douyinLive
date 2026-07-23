@@ -194,6 +194,16 @@ func (a *Application) InitializeInfrastructure(ctx context.Context, options Infr
 	var dependencyInfo capture.FFmpegDependencyInfo
 	recorderOptions := capture.FFmpegRecorderFactoryOptions{
 		DataRoot: layout.Root, RecordingRoot: appSettings.RecordingDirectory,
+		RecordingRootProvider: func(providerCtx context.Context) (string, error) {
+			current, settingsErr := settingsService.GetSettings(providerCtx)
+			if settingsErr != nil {
+				return "", settingsErr
+			}
+			if !current.RecordingDirectoryConfirmed {
+				return "", errors.New("recording directory is not confirmed")
+			}
+			return current.RecordingDirectory, nil
+		},
 		BundledDir: recorderBundledDirectory(), Repository: captureRepository,
 		MaxConcurrentRecordings: appSettings.MaxConcurrentRecordings,
 	}

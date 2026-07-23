@@ -11,6 +11,7 @@ import { SessionsPage } from '../features/sessions/SessionsPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 import { AppEventBridge } from './AppEventBridge'
 import type { BootstrapDTO } from './bootstrap'
+import { FirstRunStorageSetup } from './FirstRunStorageSetup'
 import { useThemeStore } from './theme'
 import { useUpdateStore } from './updateStore'
 
@@ -58,6 +59,7 @@ export function AppShell({ bootstrap }: { bootstrap: BootstrapDTO }) {
   return (
     <div className="app-shell">
       <AppEventBridge />
+      <FirstRunStorageSetup />
       <aside className="sidebar" aria-label="主导航">
         <div className="brand">
           <div className="brand__mark" aria-hidden="true"><Activity /></div>

@@ -153,6 +153,21 @@ button:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 45%, 
 .field input, .field select { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--border); border-radius: 8px; outline: 0; color: var(--text); background: var(--surface-muted); }
 .field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
 .field small { min-height: 15px; color: var(--muted); font-weight: 400; line-height: 1.4; }
+.directory-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.directory-control > input { width: 100%; min-width: 0; height: 42px; padding: 0 11px; border: 1px solid var(--border); border-radius: 8px; outline: 0; color: var(--text); background: var(--surface-muted); }
+.directory-control > input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.directory-control > .button { min-width: 122px; }
+.first-run-backdrop { z-index: 50; }
+.first-run-storage { width: min(640px, 100%); padding: 34px; }
+.first-run-storage__icon { display: grid; width: 50px; height: 50px; place-items: center; margin-bottom: 18px; border-radius: 14px; color: var(--accent); background: var(--accent-soft); }
+.first-run-storage__icon svg { width: 25px; }
+.first-run-storage > h2 { margin: 5px 0 0; font-size: 24px; }
+.first-run-storage__intro { margin: 10px 0 24px; color: var(--muted); line-height: 1.65; }
+.first-run-storage__hint { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.first-run-storage__note { display: flex; gap: 10px; margin-top: 18px; padding: 13px; border-radius: 9px; color: var(--success); background: color-mix(in srgb, var(--success) 8%, var(--surface)); font-size: 11px; line-height: 1.55; }
+.first-run-storage__note svg { width: 18px; flex: 0 0 auto; }
+.first-run-storage__error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border)); border-radius: 9px; color: var(--danger); }
+.first-run-storage__actions > span { max-width: 300px; line-height: 1.5; }
 .check-row { display: flex; gap: 28px; margin-top: 18px; }
 .check-row label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .check-row input, .switch-row input { width: 17px; height: 17px; accent-color: var(--accent); }

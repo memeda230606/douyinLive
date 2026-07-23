@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  bootstrapSchema, liveEventBatchSchema, recordingProfileSchema, recordingProgressSchema,
+  bootstrapSchema, liveEventBatchSchema, recordingProfileSchema, recordingProgressSchema, settingsSchema,
   recordingStatuses, roomFormSchema, roomSchema, roomStatusSchema, settingsFormSchema, updateStatusSchema,
 } from './contracts'
 
@@ -111,6 +111,18 @@ describe('desktop runtime contracts', () => {
     for (const segmentMinutes of [0, 61]) {
       expect(recordingProfileSchema.safeParse({ quality: 'auto', segmentMinutes }).success).toBe(false)
     }
+  })
+
+  it('requires the first-run recording directory confirmation marker', () => {
+    const settings = {
+      version: 4, storageRoot: 'C:\\Data', recordingDirectory: 'D:\\recordings',
+      recordingDirectoryConfirmed: false,
+      defaultQuality: 'auto', defaultSegmentMinutes: 10, maxConcurrentRecordings: 1,
+      minimumFreeSpaceGiB: 10, saveDisplayNames: true, automaticUpdates: true,
+    }
+    expect(settingsSchema.safeParse(settings).success).toBe(true)
+    const { recordingDirectoryConfirmed: _omitted, ...withoutMarker } = settings
+    expect(settingsSchema.safeParse(withoutMarker).success).toBe(false)
   })
 
   it('strictly bounds live event batches and rejects private fields', () => {
